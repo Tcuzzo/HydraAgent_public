@@ -1,0 +1,6 @@
+recursive-include hydra *.yaml *.yml *.json *.md
+recursive-include hydra/_vendor *.so
+recursive-include gateways *.yaml *.yml *.json *.md
+recursive-include skills *.md *.yaml *.yml *.json
+recursive-include core *.yaml *.yml *.json *.md
+include README.md NOTICE.md PROVENANCE.md LICENSE.md .env.example

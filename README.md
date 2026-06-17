@@ -35,15 +35,32 @@ multi-machine swarm, or operator data. See [PROVENANCE.md](PROVENANCE.md).
 
 ## Install
 
+**Quickest — install the `hydra` CLI straight from GitHub (one command):**
+
 ```bash
-git clone <your-fork-url> hydra
-cd hydra
+pipx install git+https://github.com/Tcuzzo/HydraAgent_public.git
+# ...or into your current environment:
+pip install git+https://github.com/Tcuzzo/HydraAgent_public.git
+```
+
+**Or from a clone (for development):**
+
+```bash
+git clone https://github.com/Tcuzzo/HydraAgent_public.git
+cd HydraAgent_public
 python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -e .
-# optional capabilities:
+```
+
+**Optional capabilities:**
+
+```bash
 pip install sqlite-vec        # full vector memory (otherwise keyword-only recall)
 pip install playwright && playwright install chromium   # browser tools
 ```
+
+Then run `hydra setup` to configure a model provider (or drop keys in
+`~/.hydraAgent/workspace/.env.<provider>`) and you're ready: `hydra ask "..."`.
 
 **Cross-platform notes**
 

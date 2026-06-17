@@ -17,6 +17,7 @@ dependencies = [
   "qrcode>=7.4",
   "rich>=13.0",
   "textual>=0.80",
+  "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -45,12 +46,18 @@ browser = [
 [project.scripts]
 hydra = "hydra.__main__:main"
 
+[tool.setuptools]
+include-package-data = true
+
 [tool.setuptools.packages.find]
 include = ["hydra*", "gateways*", "skills*", "core*"]
 
 [tool.setuptools.package-data]
-# Pinned vec0 extension for the unified memory store (PEP-668 fallback).
-"hydra" = ["_vendor/sqlite_vec/vec0.so"]
+# Ship config + skill data next to the code (the agent loads these by package path).
+"hydra" = ["**/*.yaml", "**/*.yml", "**/*.json", "**/*.md", "_vendor/sqlite_vec/vec0.so"]
+"gateways" = ["**/*.yaml", "**/*.yml", "**/*.json", "**/*.md"]
+"skills" = ["**/*.md", "**/*.yaml", "**/*.yml", "**/*.json"]
+"core" = ["**/*.yaml", "**/*.yml", "**/*.json", "**/*.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -59,6 +66,8 @@ norecursedirs = [
   ".pytest_cache",
   "__pycache__",
   "worktrees",
+  "build",
+  "dist",
 ]
 markers = [
   "smoke: real bounded end-to-end smoke (opt-in via env, may hit external hosts)",
