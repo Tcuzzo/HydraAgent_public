@@ -25,6 +25,8 @@ multi-machine swarm, or operator data. See [PROVENANCE.md](PROVENANCE.md).
 - **Browse** (optional) — headless browser tools when Playwright is installed.
 - **Drive it remotely** (optional) — a Telegram bot to chat, approve risky actions,
   and unlock unattended mode with a 2FA code.
+- **Stay secure** — `hydra doctor` checks every dependency for updates and known
+  vulnerabilities (PyPI + OSV) and upgrades them with `--fix`.
 
 ## Requirements
 
@@ -78,6 +80,7 @@ python -m hydra chat                                    # interactive
 python -m hydra tools                                   # list the tool set
 python -m hydra providers                               # show configured models
 python -m hydra setup                                   # guided provider setup
+python -m hydra doctor                                  # check deps for updates + CVEs
 ```
 
 By default the agent's filesystem scope is the **current directory** and risky
@@ -105,6 +108,87 @@ Triggers (use either or both): `--every <30s|10m|2h>` and/or `--watch <path>`
 `--yolo` (or `--approval-policy`). Stop with `Ctrl-C` (or by creating the
 `--stop-file`). It's a plain CLI — for OS-level scheduling, point `cron` / a
 `systemd` timer / Windows Task Scheduler at `hydra ask` or `hydra watch`.
+
+## Command reference
+
+Run any command as `hydra <cmd>` (installed) or `python -m hydra <cmd>`, and add
+`-h` to any command for its full flags. Flags common to the agent commands:
+`--provider`, `--model`, `--root <dir>` (filesystem scope), `--timeout`,
+`--max-iterations`, `--approval-policy {ask,allow,deny}`.
+
+**Run the agent**
+
+| Command | What it does |
+|---|---|
+| `ask "<prompt>"` | One-shot — work the prompt to completion. |
+| `chat` | Interactive multi-turn session with persistent history + memory. |
+| `watch ...` | Run on a timer and/or on file change — see [Watch](#watch--recurring--triggered-runs). |
+| `execute "<mission>"` | Planner → doer → auditor loop for larger missions. |
+
+`ask` is the workhorse. Key flags: `--profile {auto,cloud,local}` ·
+`--provider`/`--model` override · `--root <dir>` scope (default: current dir) ·
+`--approval-policy {ask,allow,deny}` (default `ask`) · `--with-context` /
+`--truth-context` inject memory · `--auto-route` pick the model by task type ·
+`--trace-out <file>` write a JSON trace · `--runtime-only` show the resolved
+model/route without calling the model.
+
+**Set up & discover**
+
+| Command | What it does |
+|---|---|
+| `setup` | Guided provider setup (local Ollama or a cloud key). |
+| `providers` | List configured providers. |
+| `models --provider <name>` | List a provider's models. |
+| `roles` | Show planner/doer/auditor model routing. |
+| `tools` | List the agent's tool set. |
+
+**Skills & memory**
+
+| Command | What it does |
+|---|---|
+| `skills list \| show <name> \| route "<prompt>" \| search "<q>"` | Inspect & route the skill library. |
+| `remember "<lesson>" --source <path>` | Save a sourced lesson to durable memory. |
+| `local-memory [--query "<q>"]` | Show or query durable memory. |
+
+**Inspect (read-only — no model, no mutation)**
+
+| Command | What it does |
+|---|---|
+| `audit <dir>` | Deterministic repo audit: evidence, hot files, hints. |
+| `locate "<name>"` | Find files/dirs by name under a root. |
+| `status` | Repo verification verdict. |
+| `code <file>` | Run a source file with syntax highlighting. |
+| `undo [--list]` | Restore the most recent file-edit snapshot(s). |
+| `ops recall "<q>"` | Keyword recall over saved lessons & evidence. |
+
+**Health, security & control**
+
+| Command | What it does |
+|---|---|
+| `doctor [--fix]` | Check deps for updates + known CVEs (see [below](#keeping-your-install-secure-hydra-doctor)). |
+| `self-audit` | Run the agent's own classify→route→execute invariant checks. |
+| `telegram health \| listen \| send-proof` | Drive & approve from Telegram (see [below](#telegram-remote-optional)). |
+
+**Advanced** — `mission`, `continuation`, `declarative`, `capabilities`,
+`source`, `wiki`, `capability-score`, `competitive-score`, `task-eval`,
+`domain-pack`, `trace-bundle`, `aci`, `autonomy`: mission orchestration,
+capability scoring, and deeper introspection. Run `hydra <cmd> -h` for each.
+
+## Keeping your install secure (`hydra doctor`)
+
+`hydra doctor` checks every dependency (and `pip` itself) against PyPI for newer
+releases and against the [OSV](https://osv.dev) advisory database for known
+vulnerabilities — so you can keep your install current and safe.
+
+```bash
+hydra doctor              # report installed vs latest + any known CVEs
+hydra doctor --fix        # upgrade outdated / vulnerable packages to the latest
+hydra doctor --format json
+```
+
+Read-only unless you pass `--fix`. It exits non-zero when a known vulnerability is
+found (useful in CI). Hydra ships current, vulnerability-free dependency floors;
+`doctor --fix` keeps them that way over time.
 
 ## Configuration
 

@@ -10,14 +10,15 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 dependencies = [
-  "jsonschema>=4.0",
-  "prompt_toolkit>=3.0",
-  "psutil>=5.9",
-  "pyfiglet>=1.0",
-  "qrcode>=7.4",
-  "rich>=13.0",
-  "textual>=0.80",
-  "pyyaml>=6.0",
+  "jsonschema>=4.23",
+  "prompt_toolkit>=3.0.48",
+  "psutil>=6.0",
+  "pyfiglet>=1.0.2",
+  "qrcode>=8.0",
+  "rich>=13.9",
+  "textual>=1.0",
+  "pyyaml>=6.0.2",
+  "packaging>=24.0",
 ]
 
 [project.optional-dependencies]

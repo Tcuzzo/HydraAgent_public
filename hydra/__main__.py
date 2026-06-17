@@ -56,6 +56,7 @@ from hydra.policy import POLICY_CHOICES  # noqa: E402
 from hydra.providers import DEFAULT_ENV_DIR  # noqa: E402
 from hydra.cli.cmd_ask import cmd_ask, register_ask_command  # noqa: E402
 from hydra.cli.cmd_watch import cmd_watch, register_watch_command  # noqa: E402
+from hydra.cli.cmd_doctor import cmd_doctor, register_doctor_command  # noqa: E402
 from hydra.cli.cmd_code import cmd_code, register_code_command  # noqa: E402
 # Optional loop and swarm subcommands were removed in the public build.
 from hydra.cli.cmd_chat import (  # noqa: E402
@@ -151,6 +152,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     register_watch_command(sub)
+    register_doctor_command(sub)
 
     register_chat_commands(
         sub,
@@ -194,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     return {
         "ask": cmd_ask,
         "watch": cmd_watch,
+        "doctor": cmd_doctor,
         "chat": cmd_chat,
         "tools": cmd_tools,
         # SLICE 2 CUT: "input" command removed (loop_runtime stripped).
