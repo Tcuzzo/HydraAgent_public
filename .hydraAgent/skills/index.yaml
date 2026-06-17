@@ -1,0 +1,52 @@
+schema: hydra.skills.index.v1
+skills:
+  - skill_id: systematic-debugging
+    name: Systematic Debugging
+    path: skills/systematic_debugging/SKILL.md
+    description: Root-cause bugs, failures, and unexpected behavior before proposing fixes.
+    trigger_summary: bug, failure, unexpected behavior, failing test, regression
+    allowed_tools:
+      - fs_read
+      - list_directory
+      - grep
+      - shell
+  - skill_id: subagent-driven-development
+    name: Subagent Driven Development
+    path: skills/subagent_driven_development/SKILL.md
+    description: Split independent implementation slices across subagents and review their outputs.
+    trigger_summary: multi-slice implementation, independent workers, parallel review
+    allowed_tools:
+      - fs_read
+      - list_directory
+      - grep
+      - spawn_subagent
+  - skill_id: software-design
+    name: Software Design
+    path: hydra/schemes/bundles/software-design/SKILL.md
+    description: Design software systems, APIs, schemas, and architecture patterns.
+    trigger_summary: software design, REST API, schema, architecture, system design
+    allowed_tools:
+      - fs_read
+      - list_directory
+      - grep
+  - skill_id: code-review
+    name: Code Review
+    path: hydra/schemes/bundles/code-review/SKILL.md
+    description: Review code for correctness, security, and quality.
+    trigger_summary: code review, diff review, PR review, security audit
+    allowed_tools:
+      - fs_read
+      - list_directory
+      - grep
+      - shell
+  - skill_id: task_planner
+    name: Task Planner
+    path: skills/task_planner/SKILL.md
+    description: Planning engine that breaks large tasks into skill-dispatched slices.
+    trigger_summary: task planner, delegate slices, working memory, build plan
+    allowed_tools:
+      - fs_read
+      - list_directory
+      - grep
+      - skill_route
+      - spawn_subagent

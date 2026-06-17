@@ -1,0 +1,97 @@
+schema: hydra.tool_contract_set.v1
+tools:
+  - tool_id: fs_read
+    name: Filesystem Read
+    description: Read a file inside the workspace for context or evidence.
+    risk: read_only
+    executor: skills.fs_read:run
+    input_schema:
+      type: object
+      required:
+        - path
+      properties:
+        path:
+          type: string
+    approval:
+      required: false
+    policy:
+      workspace_only: true
+      secret_contents_forbidden: true
+  - tool_id: list_directory
+    name: List Directory
+    description: List files and directories inside the workspace.
+    risk: read_only
+    executor: skills.list_directory:run
+    input_schema:
+      type: object
+      properties:
+        path:
+          type: string
+          default: .
+    approval:
+      required: false
+    policy:
+      workspace_only: true
+  - tool_id: grep
+    name: Grep
+    description: Search workspace files for matching text.
+    risk: read_only
+    executor: skills.grep_files:run
+    input_schema:
+      type: object
+      required:
+        - pattern
+      properties:
+        pattern:
+          type: string
+        path_pattern:
+          type: string
+          default: .
+    approval:
+      required: false
+    policy:
+      workspace_only: true
+      secret_contents_forbidden: true
+  - tool_id: glob
+    name: Glob Files
+    description: List workspace files matching a bounded glob pattern.
+    risk: read_only
+    executor: skills.glob_files:run
+    input_schema:
+      type: object
+      required:
+        - pattern
+      properties:
+        pattern:
+          type: string
+        max_results:
+          type: integer
+          default: 1000
+        include_dirs:
+          type: boolean
+          default: false
+    approval:
+      required: false
+    policy:
+      workspace_only: true
+      traversal_forbidden: true
+  - tool_id: git_diff
+    name: Git Diff
+    description: Return git diff --stat for the workspace or a ref.
+    risk: read_only
+    executor: skills.git_diff:run
+    input_schema:
+      type: object
+      properties:
+        worktree:
+          type: string
+          default: .
+        ref:
+          type: string
+        timeout:
+          type: number
+          default: 15
+    approval:
+      required: false
+    policy:
+      read_only_git: true

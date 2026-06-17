@@ -1,0 +1,66 @@
+# Skill index — what the §10.7 agent runtime discovers at startup.
+#
+# A skill enters this index only after its slice has been loop-promoted
+# (a PROVEN row in STATUS.md). The verifier could additionally cross-check
+# this against the promotion log; that's a planned §10.7 invariant.
+
+skills:
+  - name: fs_read
+    module: skills.fs_read
+    entry: run
+    proven_by: "§10.6-fs-read"
+    summary: Bounded filesystem read within a declared root.
+
+  - name: http_fetch
+    module: skills.http_fetch
+    entry: run
+    proven_by: "§10.6-http-fetch"
+    summary: Bounded HTTP GET against an allow-listed host.
+
+  - name: git_diff
+    module: skills.git_diff
+    entry: run
+    proven_by: "§10.6-git-diff"
+    summary: "`git diff --stat` inside a verified worktree."
+
+  - name: fs_write
+    module: skills.fs_write
+    entry: run
+    proven_by: "§10.21-fs-write"
+    summary: Bounded, atomic write under a declared root (overwrite is opt-in).
+
+  - name: bash
+    module: skills.bash
+    entry: run
+    proven_by: "§10.26-bash"
+    summary: Bounded shell command execution under a scoped cwd, with process-group kill on timeout.
+
+  - name: glob
+    module: skills.glob_files
+    entry: run
+    proven_by: "§10.27-glob"
+    summary: List files under a declared root matching a glob pattern (refuses absolute / traversal patterns).
+
+  - name: grep
+    module: skills.grep_files
+    entry: run
+    proven_by: "§10.28-grep"
+    summary: Regex / literal search across files under a declared root, scoped by path_pattern.
+
+  - name: fs_edit
+    module: skills.fs_edit
+    entry: run
+    proven_by: "§10.30-fs-edit"
+    summary: Surgical search/replace inside a file under a declared root (atomic, refuses ambiguous edits).
+
+  - name: list_directory
+    module: skills.list_directory
+    entry: run
+    proven_by: "§10.31-list-directory"
+    summary: Enumerate immediate children of a directory under a declared root (with name/type/size).
+
+  - name: todo
+    module: skills.todo
+    entry: run
+    proven_by: "§10.32-todo"
+    summary: Persistent per-workspace task list (list/add/done/undone/remove/clear), monotonic ids.

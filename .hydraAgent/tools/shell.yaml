@@ -1,0 +1,23 @@
+schema: hydra.tool_contract.v1
+tool_id: shell
+name: Shell
+description: Run a local shell command from the workspace when policy allows it.
+risk: guarded_write
+executor: skills.bash:run
+input_schema:
+  type: object
+  required:
+    - command
+  properties:
+    command:
+      type: string
+    cwd:
+      type: string
+      default: .
+approval:
+  required: true
+  policy_ref: hydra.policy.ApprovalPolicy
+policy:
+  workspace_default: true
+  single_gate: destructive_action
+  non_destructive_auto_allow: true

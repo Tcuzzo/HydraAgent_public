@@ -1,0 +1,48 @@
+# Secrets / config — never commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.totp
+auth/
+
+# Runtime state / memory / logs (never ship operator state)
+*.jsonl
+*.log
+*.sqlite
+*.sqlite-*
+*.db
+.hydra/
+.hydra-memory/
+.hydra-sessions/
+# ship the declarative catalog under .hydraAgent/{tools,policies,skills,ux};
+# ignore only operator runtime state:
+.hydraAgent/memory/
+.hydraAgent/sessions/
+.hydraAgent/workspace/
+.hydraAgent/current_mission
+current_mission
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

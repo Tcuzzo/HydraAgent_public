@@ -1,0 +1,57 @@
+version: "1.1"
+generated: "2026-06-16"
+status: MATERIALIZED
+implemented_skill_docs: 17
+runtime_tool_modules: 16
+catalog_entries_claimed: 0
+catalog_entries_scaffolded: 17
+truth_policy: "Only implemented SKILL.md files with activation, procedure, verification, and refusal boundaries may be counted as materialized procedural capability; runtime tools are counted separately."
+bundles:
+  - name: document-processing
+    path: ./bundles/document-processing
+    status: SCAFFOLDED
+    implemented_skill_docs: 2
+    catalog_entries_scaffolded: 2
+    description: Document processing catalog plus sample implementation.
+  - name: web-testing
+    path: ./bundles/web-testing
+    status: SCAFFOLDED
+    implemented_skill_docs: 2
+    catalog_entries_scaffolded: 2
+    description: Web testing catalog plus sample implementation.
+  - name: code-review
+    path: ./bundles/code-review
+    status: SCAFFOLDED
+    implemented_skill_docs: 3
+    catalog_entries_scaffolded: 3
+    description: Code review catalog plus sample implementations.
+  - name: ci-cd
+    path: ./bundles/ci-cd
+    status: SCAFFOLDED
+    implemented_skill_docs: 2
+    catalog_entries_scaffolded: 2
+    description: CI/CD catalog plus sample implementation.
+  - name: security
+    path: ./bundles/security
+    status: SCAFFOLDED
+    implemented_skill_docs: 2
+    catalog_entries_scaffolded: 2
+    description: Security catalog plus sample implementation.
+  - name: research
+    path: ./bundles/research
+    status: SCAFFOLDED
+    implemented_skill_docs: 2
+    catalog_entries_scaffolded: 2
+    description: Research catalog plus sample implementation.
+  - name: software-design
+    path: ./bundles/software-design
+    status: SCAFFOLDED
+    implemented_skill_docs: 3
+    catalog_entries_scaffolded: 3
+    description: Software design catalog plus two sample implementations.
+  - name: template
+    path: ./bundles/template
+    status: SCAFFOLDED
+    implemented_skill_docs: 1
+    catalog_entries_scaffolded: 1
+    description: Template bundle for authoring new skill bundles.

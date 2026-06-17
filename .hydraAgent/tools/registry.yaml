@@ -1,0 +1,6 @@
+schema: hydra.tools.registry.v1
+tools:
+  - .hydraAgent/tools/filesystem.yaml
+  - .hydraAgent/tools/skill-library.yaml
+  - .hydraAgent/tools/subagents.yaml
+  - .hydraAgent/tools/shell.yaml

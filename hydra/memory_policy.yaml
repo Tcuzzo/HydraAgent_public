@@ -1,0 +1,18 @@
+schema: hydra.memory_policy.v1
+
+score_weights:
+  cosine: 0.55
+  recency: 0.15
+  access: 0.10
+  importance: 0.20
+
+recency_half_life_days: 30
+
+always_include_core: true
+core_max_rows: 8
+
+min_similarity_floor: 0.62
+
+distill:
+  enabled: true
+  extractor: ollama-cloud

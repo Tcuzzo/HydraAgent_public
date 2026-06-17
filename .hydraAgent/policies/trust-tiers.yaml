@@ -1,0 +1,34 @@
+schema: hydra.policies.trust_tiers.v1
+tiers:
+  read_only:
+    description: Observes workspace or runtime state without modifying it.
+    default_requires_approval: false
+  guarded_write:
+    description: May modify local workspace state; only destructive command shapes use the single ApprovalPolicy gate.
+    default_requires_approval: false
+  remote_write:
+    description: May modify remote systems, repositories, services, or APIs; approval is decided by the single destructive-action policy path.
+    default_requires_approval: false
+  destructive:
+    description: May delete data, discard history, or irreversibly change state.
+    default_requires_approval: true
+tool_risks:
+  fs_read: read_only
+  skill_list: read_only
+  skill_library.search: read_only
+  skill_search: read_only
+  skill_show: read_only
+  skill_route: read_only
+  hydra.skill_list: read_only
+  hydra.skill_search: read_only
+  hydra.skill_show: read_only
+  hydra.skill_route: read_only
+  list_directory: read_only
+  grep: read_only
+  glob: read_only
+  git_diff: read_only
+  spawn_subagent: guarded_write
+  spawn_subagents: guarded_write
+  hydra.spawn_subagent: guarded_write
+  hydra.spawn_subagents: guarded_write
+  shell: guarded_write

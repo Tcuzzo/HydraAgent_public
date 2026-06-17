@@ -1,0 +1,122 @@
+# Intake classifier rules (fabric §5 step 1).
+#
+# Every incoming text is classified into exactly one of:
+#   convo    — operator/peer is just talking. No gate.
+#   collab   — a peer wants to work jointly. Mission lifecycle (§6).
+#   steering — operator is directing real work. Loop ends at the gate (§8).
+#
+# Rules are evaluated in order. First match wins. If nothing matches, the
+# default is `convo` — safer to under-classify than to gate a chat turn.
+#
+# Match types:
+#   prefix      — case-insensitive prefix of the trimmed text
+#   contains    — case-insensitive substring anywhere in the text
+#   regex       — full Python regex against the text
+#   source      — exact match on the calling source ("operator" / "peer:alpha" / "peer:beta")
+
+schema: hydra.intake.rules.v1
+default: convo
+
+rules:
+  # ── COLLAB (peer-driven) ─────────────────────────────────────────────
+  - id: collab_source
+    classification: collab
+    when:
+      source_prefix: "peer:"
+    why: "incoming source identifies a peer collaborator"
+
+  - id: collab_designation_at
+    classification: collab
+    when:
+      regex: "(?i)^@(peer[a-z]*|agent[a-z]*)\\b"
+    why: "explicit @-mention of a peer agent designation"
+
+  - id: collab_designation_colon
+    classification: collab
+    when:
+      regex: "(?i)^(peer[a-z]*|agent[a-z]*):\\s"
+    why: "peer addressing in agent:/peer: form"
+
+  # ── STEERING (operator wants real work) ──────────────────────────────
+  # NOTE: each verb group is preceded by an optional LEAD-IN group so natural
+  # phrasings reach steering — "go build", "can you build", "i need you to build",
+  # "now finish", "please fix". Without this, only a bare first-word verb matched
+  # and everything else fell into the gagged convo profile (1 iteration, no work)
+  # where the agent narrates/confabulates instead of doing. (operator fix 2026-06-10)
+  - id: steering_imperative_build
+    classification: steering
+    when:
+      regex: "(?i)^(?:(?:go|now|then|just|first|please|pls|hey|ok|okay|alright|yo|can|could|would|will|cant|can'?t|you|i|we|let'?s|lets|need|want|to)\\s+){0,6}(build|create|generate|scaffold|implement|finish|complete)\\b"
+    why: "imperative verb requesting new work product"
+
+  - id: steering_imperative_modify
+    classification: steering
+    when:
+      regex: "(?i)^(?:(?:go|now|then|just|first|please|pls|hey|ok|okay|alright|yo|can|could|would|will|cant|can'?t|you|i|we|let'?s|lets|need|want|to)\\s+){0,6}(fix|patch|refactor|rewrite|update|migrate|port|optimize|harden)\\b"
+    why: "imperative verb requesting modification"
+
+  - id: steering_imperative_destructive
+    classification: steering
+    when:
+      regex: "(?i)^(?:(?:go|now|then|just|first|please|pls|hey|ok|okay|alright|yo|can|could|would|will|cant|can'?t|you|i|we|let'?s|lets|need|want|to)\\s+){0,6}(delete|remove|drop|kill|rm|reset|reformat|wipe)\\b"
+    why: "destructive imperative — always treat as steering, gate applies"
+
+  - id: steering_imperative_run
+    classification: steering
+    when:
+      regex: "(?i)^(?:(?:go|now|then|just|first|please|pls|hey|ok|okay|alright|yo|can|could|would|will|cant|can'?t|you|i|we|let'?s|lets|need|want|to)\\s+){0,6}(run|deploy|publish|push|ship|release|restart|reboot|start)\\b"
+    why: "imperative requesting execution of a live action"
+
+  - id: steering_imperative_connect
+    classification: steering
+    when:
+      regex: "(?i)^(?:(?:go|now|then|just|first|please|pls|hey|ok|okay|alright|yo|can|could|would|will|cant|can'?t|you|i|we|let'?s|lets|need|want|to)\\s+){0,6}(ssh|connect|build)\\b"
+    why: "imperative requesting remote access, connection, or build work"
+
+  - id: steering_imperative_inspect
+    classification: steering
+    when:
+      regex: "(?i)^(?:(?:go|now|then|just|first|please|pls|hey|ok|okay|alright|yo|can|could|would|will|cant|can'?t|you|i|we|let'?s|lets|need|want|to)\\s+){0,6}(audit|verify|test|check|review|inspect|profile|measure|benchmark)\\b"
+    why: "imperative requesting analysis/audit work"
+
+  # Work-STATUS questions → steering, so the agent VERIFIES with tools instead of
+  # confabulating (it lied about a browser tool because gagged convo had no tools
+  # to check with). (operator fix 2026-06-10)
+  - id: steering_work_blocker
+    classification: steering
+    when:
+      regex: "(?i)\\b(stopping|blocking|preventing) you\\b"
+    why: "operator asking what blocks the work — the agent must check, not guess"
+
+  - id: steering_work_status
+    classification: steering
+    when:
+      regex: "(?i)^(are|is|did|have|has)\\s+(you|the|it|that|this|your)\\b[^?]*\\b(built|build|building|done|finish|finished|finishing|made|making|create|created|creating|wired|working|running|implement|implemented|fixed)\\b"
+    why: "operator asking the STATUS of work — verify with tools, never confabulate"
+
+  - id: steering_slash_command
+    classification: steering
+    when:
+      prefix: "/"
+    why: "slash commands are operator steering by definition"
+
+  # ── CONVO — everything else (default fallback handles this) ──────────
+  # Explicit catchers (optional clarity, do not change semantics):
+
+  - id: convo_greeting
+    classification: convo
+    when:
+      regex: "(?i)^(hi|hello|hey|yo|sup|peace|gm|gn|wassup|wagwan)\\b"
+    why: "greeting / social opener"
+
+  - id: convo_question_mark
+    classification: convo
+    when:
+      regex: "\\?$"
+    why: "ends with a question mark — clarifying/info question"
+
+  - id: convo_meta_about_self
+    classification: convo
+    when:
+      regex: "(?i)^(what|who|how|why|when|where) (are|is|do|did|does|can|should)"
+    why: "open question about state, identity, or knowledge"

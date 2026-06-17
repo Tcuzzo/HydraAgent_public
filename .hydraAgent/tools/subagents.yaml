@@ -1,0 +1,61 @@
+schema: hydra.tool_contract_set.v1
+tools:
+  - tool_id: spawn_subagent
+    name: Spawn Subagent
+    description: Spawn one real Hydra ask subagent for an isolated audit, review, planning, or implementation slice.
+    risk: guarded_write
+    executor: hydra.skill_connectors:spawn_one
+    input_schema:
+      type: object
+      required:
+        - task
+      properties:
+        task:
+          type: string
+        model:
+          type: string
+          # No default: model=None in executor -> SSOT planner (hydra/model_routing.yaml cloud-planner, slice-audit-01)
+        timeout:
+          type: integer
+          default: 300
+        runtime_only:
+          type: boolean
+          default: false
+    approval:
+      required: false
+      delegated_policy: ask
+    policy:
+      delegated_destructive_gate: true
+      bounded_timeout: true
+  - tool_id: spawn_subagents
+    name: Spawn Subagents
+    description: Spawn multiple real Hydra ask subagents under bounded parallelism.
+    risk: guarded_write
+    executor: hydra.skill_connectors:spawn_many
+    input_schema:
+      type: object
+      required:
+        - tasks
+      properties:
+        tasks:
+          type: array
+          items:
+            type: string
+        model:
+          type: string
+          # No default: model=None in executor -> SSOT planner (hydra/model_routing.yaml cloud-planner, slice-audit-01)
+        max_workers:
+          type: integer
+          default: 4
+        timeout:
+          type: integer
+          default: 300
+        runtime_only:
+          type: boolean
+          default: false
+    approval:
+      required: false
+      delegated_policy: ask
+    policy:
+      delegated_destructive_gate: true
+      bounded_timeout: true

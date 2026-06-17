@@ -1,0 +1,78 @@
+schema: hydra.model_routing.v1
+# SINGLE SOURCE OF TRUTH for the model roster + routing policy.
+# Read by hydra/model_routing.py (typed loader). Editing a model name here
+# changes the resolved model everywhere — no Python edit. If this file is
+# missing/invalid the loader falls back to the frozen DEFAULT in code (same
+# values), so the agent never crashes and never silently picks a different model.
+
+# ── ROSTER: every model the agent can route to. id is referenced by rules. ──
+roster:
+  # CHAT / conversation brain — qwen2.5:32b cloud (responsive reasoning).
+  - id: cloud-doer
+    provider: ollama-cloud
+    model: qwen2.5:32b
+    role_tags: [chat, conversation, doer, moderate, intent]
+    base_url: https://api.ollama.cloud
+  # CLOUD planner — strongest reasoning. Drives WORK turns + audits + verify.
+  - id: cloud-planner
+    provider: ollama-cloud
+    model: qwen2.5:72b
+    role_tags: [planner, complex, critical, auditor, verifier, work]
+    base_url: https://api.ollama.cloud
+  # FREE CLOUD tier — no quota; tried between paid-cloud failures and local.
+  # nemotron-mini: Nvidia open-weight, strong reasoning, zero cost on ollama-cloud.
+  - id: cloud-free-nemotron
+    provider: ollama-cloud
+    model: nemotron-mini
+    role_tags: [free, cloud, fallback]
+    base_url: https://api.ollama.cloud
+  # phi3:mini: compact open-weight, zero cost on ollama-cloud. Second free rung.
+  - id: cloud-free-phi
+    provider: ollama-cloud
+    model: phi3:mini
+    role_tags: [free, cloud, fallback]
+    base_url: https://api.ollama.cloud
+  # LOCAL worker — reads, memory RAG, cheap parallel jobs, skill lookup (free).
+  - id: local-worker
+    provider: ollama
+    model: qwen2.5-coder:7b
+    role_tags: [worker, local, router, read]
+    base_url: http://127.0.0.1:11434
+
+# ── ROUTING RULES: role -> roster id, with provider-level fallback ladder. ──
+routing:
+  # Chat profiles (consumed by cmd_chat.CHAT_PROFILE_DEFAULTS).
+  chat_profiles:
+    auto:  cloud-doer       # qwen2.5:32b cloud — responsive reasoning chat brain
+    cloud: cloud-planner    # qwen2.5:72b — max-capability cloud chat
+    local: local-worker     # forced --local (qwen2.5-coder on local machine)
+  # Complexity->role for ModelRouter._select_model defaults.
+  complexity:
+    simple:   local-worker  # reads run LOCAL (free)
+    moderate: cloud-doer
+    complex:  cloud-planner
+    critical: cloud-planner
+  # Named role defaults for ModelRouter._load_defaults / _load_config.
+  roles:
+    router:   local-worker
+    worker:   local-worker
+    doer:     cloud-doer
+    planner:  cloud-planner
+    auditor:  cloud-planner  # cloud verification
+    # WORK EXECUTOR: tool-capable CLOUD planner.
+    work:     cloud-planner
+    # INTENT: per-turn task-vs-chat classifier, runs in PARALLEL with the chat
+    # draft so its latency is hidden. cloud doer (lighter/faster).
+    intent:   cloud-doer
+  # Verifier model for runtime_route.DEFAULT_RUNTIME_ROUTE ("provider/model").
+  verifier: cloud-planner
+  # CLOUD-only ladder tried (in order) BEFORE any local downgrade. Providers,
+  # not models — mirrors ModelRouter.CLOUD_FALLBACKS. NEVER silently downgrade
+  # cloud->local; the downgrade is logged at WARNING in _create_client.
+  cloud_fallback_ladder: [ollama-cloud]
+  # Provider used as the local last-resort after the cloud ladder is exhausted.
+  local_fallback_provider: ollama
+  # FREE cloud models tried (in order) BETWEEN paid-cloud failure and local last-resort.
+  # Both run on the ollama-cloud provider (no separate API key, zero quota).
+  # NEVER silently change this order — the ladder is logged at WARNING per step.
+  free_fallback_models: [nemotron-mini, phi3:mini]

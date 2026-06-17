@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  secret-scan:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  unsafe-code-scan:
+    name: unsafe-code scan (no pickle / eval-on-data)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: scan for unsafe deserialization / dynamic exec
+        run: |
+          set -e
+          hits=$(grep -rnE '\b(pickle|cPickle|dill|marshal|shelve|jsonpickle)\b|yaml\.load\(|allow_pickle|__reduce__' \
+            --include='*.py' . | grep -v '/test' | grep -viE 'docstring|# ' || true)
+          if [ -n "$hits" ]; then
+            echo "Unsafe deserialization patterns found:"; echo "$hits"; exit 1
+          fi
+          echo "clean: no pickle/unsafe-deserialization in shipped code"
+
+  smoke:
+    name: smoke (${{ matrix.os }} / py${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: install
+        run: pip install -e .
+      - name: import + CLI smoke (cross-platform)
+        run: |
+          python -m hydra --help
+          python -m hydra tools
+          python -c "import hydra.cli.cmd_ask, hydra.cli.cmd_chat, hydra.loop, hydra.proc"
+      - name: tests
+        run: |
+          pip install pytest
+          pytest -q

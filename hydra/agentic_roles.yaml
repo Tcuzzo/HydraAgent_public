@@ -1,0 +1,19 @@
+# Schema: which agentic-library pattern(s) make each Hydra engine ROLE elite.
+# Read by hydra/agentic_library.py (for_role / prompt_for_role). Re-route a role to a
+# different pattern by editing here — no Python change (polyglot / declarative).
+# The patterns live as SKILL.md under skills/agentic_build_library/skills/.
+schema: hydra.agentic_roles.v1
+roles:
+  planner:      [task-decomposition-graph, plan-execute-replan-loop]
+  builder:      [autonomous-debug-loop, tool-contract-builder]
+  critic:       [reflection-critic-loop]
+  auditor:      [red-team-reviewer-agent]
+  verifier:     [test-runner-agent, eval-monitor-harness]
+  consensus:    [consensus-disagreement-resolver]
+  model_router: [budget-model-router, local-cloud-failover, token-budget-router]
+  orchestrator: [hive-mind-orchestrator, multi-agent-collaboration]
+  memory:       [memory-stratifier]
+  artifact:     [artifact-packager]
+  approval:     [human-approval-gate, guardrail-policy-layer]
+  scout:        [repo-cartographer, exploration-discovery-scout]
+  debug:        [autonomous-debug-loop]

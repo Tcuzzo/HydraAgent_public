@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Spawn Hydra — single launch command.
+
+Usage:
+    spawn-hydra                          # interactive chat
+    spawn-hydra "build a web scraper"    # interactive chat seeded with this request
+    spawn-hydra -c                       # interactive chat (explicit flag)
+    spawn-hydra --chat "design an API"   # same as positional
+    spawn-hydra --help
+
+Both with-request and without-request paths go through the same EliteTUI.
+A positional request is consumed as the first turn, then the REPL stays open.
+"""
+import sys
+import argparse
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from hydra.telegram_listener_runtime import start_telegram_listener_if_configured
+from hydra.cli.cmd_chat import (
+    DEFAULT_ENV_DIR,
+    DEFAULT_MEMORY_ROOT,
+    LOCAL_MEMORY_MAX_CHARS,
+    cmd_chat,
+)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="🐉 Spawn Hydra — your personal developer",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  spawn-hydra                            # interactive chat
+  spawn-hydra "build me a web scraper"   # seeded chat
+  spawn-hydra -c                         # interactive chat (explicit)
+""",
+    )
+    parser.add_argument(
+        "request",
+        nargs="?",
+        help="Optional first turn — chat REPL stays open after.",
+    )
+    parser.add_argument(
+        "-c", "--chat",
+        action="store_true",
+        help="Interactive chat mode (default when no request).",
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path("/"),
+        help="Filesystem scope (default: /).",
+    )
+
+    args = parser.parse_args()
+    _start_telegram_listener()
+    return _launch_elite_chat(args)
+
+
+def _launch_elite_chat(args):
+    """Single chat path. Initial request (if any) becomes first turn."""
+    chat_args = argparse.Namespace(
+        profile="auto",
+        provider=None,
+        model=None,
+        env_dir=DEFAULT_ENV_DIR,
+        setup_if_needed=False,
+        root=str(args.root),
+        memory_root=str(DEFAULT_MEMORY_ROOT),
+        memory_workspace_root=str(REPO_ROOT),
+        no_local_memory=False,
+        local_memory_chars=LOCAL_MEMORY_MAX_CHARS,
+        max_iterations=200,  # UNLOCKED: iterate like Claude Code/Codex (operator: no iteration gates)
+        timeout=120.0,
+        session_history_limit=40,
+        approval_policy="allow",  # UNLOCKED: execute without gating
+        with_context=False,
+        truth_context=False,
+        context_budget_bytes=4096,
+        trace_out=None,
+        initial_request=args.request if args.request else None,
+    )
+    return cmd_chat(chat_args)
+
+
+def _start_telegram_listener():
+    try:
+        report = start_telegram_listener_if_configured(repo_root=REPO_ROOT)
+    except Exception as exc:
+        print(f"• Telegram listener: not started | {exc}", file=sys.stderr)
+        return
+    state = report.get("status")
+    if state == "started":
+        print(f"• Telegram listener: started | pid {report.get('pid')}")
+    elif state == "already_running":
+        print(f"• Telegram listener: active | pid {report.get('pid')}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n• Peace — use /q or Ctrl+C to exit\n")
+        sys.exit(0)

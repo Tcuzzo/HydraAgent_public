@@ -1,0 +1,12 @@
+schema: hydra.policies.danger_gates.v1
+gates:
+  - gate_id: destructive_action
+    description: Destructive or authority-class actions are the only approval gate; all non-destructive inspection and execution runs without Telegram approval.
+    requires_approval: true
+    examples:
+      - rm
+      - sudo
+      - git reset --hard
+      - git push --force
+      - curl -X POST
+      - systemctl restart

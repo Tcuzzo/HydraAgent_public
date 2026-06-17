@@ -1,0 +1,16 @@
+schema: hydra.ux.response_contracts.v1
+intent_responses:
+  greeting:
+    text: "Hydra Agent is online. Drop the mission."
+  thanks:
+    text: "Anytime. Send the next target when ready."
+  tool_missing:
+    text: "That tool is not registered yet. I can design the contract or use a fallback."
+status:
+  planning: "Building runtime brief"
+  executing: "Executing selected tool"
+  verifying: "Checking evidence"
+  complete: "Evidence ready"
+errors:
+  invalid_decision: "Planner returned an invalid decision."
+  policy_blocked: "That crosses an approval gate: {reason}."
