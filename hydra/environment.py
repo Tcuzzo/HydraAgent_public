@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import datetime as _dt
 import difflib
+import ipaddress
 import json
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 import urllib.request
 
 
@@ -156,6 +159,41 @@ def write_session_file(
     return packet
 
 
+def _is_ip_allowed(host: str) -> tuple[bool, str | None]:
+    """Check if a host resolves to allowed (public) IPs only.
+    
+    Returns (True, None) if all resolved IPs are public.
+    Returns (False, reason) if any IP is private/internal.
+    """
+    try:
+        addr_info = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        return False, f"DNS resolution failed: {e}"
+    
+    for family, _, _, _, sockaddr in addr_info:
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        
+        # Check for private/internal ranges
+        if ip.is_loopback:
+            return False, f"loopback address {ip_str}"
+        if ip.is_link_local:
+            return False, f"link-local address {ip_str}"
+        if ip.is_private:
+            return False, f"private address {ip_str}"
+        if ip.is_multicast:
+            return False, f"multicast address {ip_str}"
+        # Check for 169.254.0.0/16 explicitly (link-local for IPv4)
+        if isinstance(ip, ipaddress.IPv4Address):
+            if ip in ipaddress.ip_network("169.254.0.0/16"):
+                return False, f"link-local metadata address {ip_str}"
+    
+    return True, None
+
+
 def fetch_session_url(
     env_root: str | Path,
     session_id: str,
@@ -164,6 +202,15 @@ def fetch_session_url(
     timeout_seconds: int = 20,
     max_chars: int = 50000,
 ) -> dict[str, Any]:
+    # SSRF guard: resolve and reject private/internal IPs BEFORE any network activity
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if host is None:
+        raise EnvironmentError("invalid URL: missing host")
+    allowed, reason = _is_ip_allowed(host)
+    if not allowed:
+        raise EnvironmentError(f"refusing to fetch private/internal address: {host} ({reason})")
+    
     session = session_status(env_root, session_id)
     if not isinstance(url, str) or not url.startswith(("http://", "https://")):
         raise EnvironmentError("url must start with http:// or https://")
