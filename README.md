@@ -83,6 +83,29 @@ python -m hydra setup                                   # guided provider setup
 By default the agent's filesystem scope is the **current directory** and risky
 tools require approval (see below).
 
+## Watch — recurring & triggered runs
+
+Run a task automatically on a timer, when files change, or both — no daemon, no
+cron required. **Read-only by default** (the agent can analyze but not change
+anything); add `--yolo` to let it act.
+
+```bash
+# every 10 minutes (read-only):
+python -m hydra watch --every 10m "audit the repo for new TODOs and summarize them"
+
+# when code or tests change, re-run the suite and fix failures (allowed to act):
+python -m hydra watch --watch ./src --watch ./tests --yolo "run the tests; if any fail, fix them"
+
+# read the task fresh each cycle from a file, stop after 5 runs:
+python -m hydra watch --task-file task.md --every 1h --max-cycles 5
+```
+
+Triggers (use either or both): `--every <30s|10m|2h>` and/or `--watch <path>`
+(repeatable). Controls: `--poll`, `--debounce`, `--max-cycles`, `--stop-file`,
+`--yolo` (or `--approval-policy`). Stop with `Ctrl-C` (or by creating the
+`--stop-file`). It's a plain CLI — for OS-level scheduling, point `cron` / a
+`systemd` timer / Windows Task Scheduler at `hydra ask` or `hydra watch`.
+
 ## Configuration
 
 Copy `.env.example` to `.env` and fill in what you use. Everything is environment-
