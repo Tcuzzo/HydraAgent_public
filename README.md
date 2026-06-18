@@ -165,6 +165,7 @@ model/route without calling the model.
 
 | Command | What it does |
 |---|---|
+| `update` | Pull the latest Hydra from GitHub in one command (see [below](#updating)). |
 | `doctor [--fix]` | Check deps for updates + known CVEs (see [below](#keeping-your-install-secure-hydra-doctor)). |
 | `self-audit` | Run the agent's own classify→route→execute invariant checks. |
 | `telegram health \| listen \| send-proof` | Drive & approve from Telegram (see [below](#telegram-remote-optional)). |
@@ -189,6 +190,20 @@ hydra doctor --format json
 Read-only unless you pass `--fix`. It exits non-zero when a known vulnerability is
 found (useful in CI). Hydra ships current, vulnerability-free dependency floors;
 `doctor --fix` keeps them that way over time.
+
+## Updating
+
+Get the latest Hydra in **one command**:
+
+```bash
+hydra update            # pull + reinstall the newest version from GitHub
+hydra update --check    # show the update command without running it
+```
+
+`hydra update` reinstalls from the public repo's latest commit (force-reinstall,
+since the version pin is stable). Prefer pipx? `pipx install --force
+git+https://github.com/Tcuzzo/HydraAgent_public.git` does the same. After updating,
+run `hydra doctor` to confirm your dependencies are current and safe.
 
 ## Configuration
 
