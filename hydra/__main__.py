@@ -139,11 +139,21 @@ def _cmd_self_audit(_args) -> int:
                 print(f"       {v.detail}")
         return 1
 
+def _hydra_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("hydraagent")
+    except Exception:
+        return "1.0.0"
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="hydra",
         description="Hydra operator CLI — run the agent loop with default tools.",
     )
+    p.add_argument("--version", action="version", version=f"hydra {_hydra_version()}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     register_ask_command(

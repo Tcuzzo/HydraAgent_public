@@ -2,6 +2,8 @@
 
 **A powerful, no-frills autonomous coding & ops agent you run on your own machine.**
 
+**Version 1.0.0** · MIT · Linux / macOS / Windows · check yours with `hydra --version`
+
 Hydra reads and writes code, runs shell commands, searches your repo, fetches the
 web, remembers what it learns, and routes work across local or cloud models — all
 from your terminal, with a clear safety model and an optional Telegram remote.
