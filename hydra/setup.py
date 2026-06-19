@@ -220,19 +220,16 @@ def setup_cloud_provider(
 
 def setup_codex_oauth(
     *,
-    oauth_path: str,
+    oauth_path: str | None = None,
     env_dir: str | Path | None = None,
 ) -> SetupResult:
-    if not oauth_path:
-        raise SetupError("Codex OAuth path is required")
-    return write_env_file(
-        "codex",
-        {
-            "CODEX_OAUTH_PATH": oauth_path,
-            "CODEX_PROVIDER_FAMILY": "openai-codex",
-        },
-        env_dir=env_dir,
-    )
+    # Generic "Sign in with ChatGPT" flow: the OAuth lives in the user's own Codex
+    # CLI (they run `codex login`), so no path is needed here — we just mark the
+    # provider selected. A path is still accepted for non-default CLI installs.
+    values = {"CODEX_PROVIDER_FAMILY": "openai-codex"}
+    if oauth_path:
+        values["CODEX_OAUTH_PATH"] = oauth_path
+    return write_env_file("codex", values, env_dir=env_dir)
 
 
 def setup_operator_policy(
@@ -379,13 +376,15 @@ def prompt_setup(
     else:
         skipped.append("api_providers")
 
-    codex = _yes_no(input_fn, "Configure Codex evaluator OAuth path?", default=False)
+    codex = _yes_no(
+        input_fn,
+        "Sign in with ChatGPT? (use your ChatGPT subscription via the Codex CLI — no API key)",
+        default=False,
+    )
     if codex:
-        links.append(SETUP_LINKS["codex"])
-        print("Codex setup link:", SETUP_LINKS["codex"])
-        print("Use your Codex login flow, then paste the local OAuth path.")
-        oauth_path = input_fn("Codex OAuth path ").strip()
-        results.append(setup_codex_oauth(oauth_path=oauth_path, env_dir=env_dir))
+        print("Install OpenAI's Codex CLI, then run `codex login` (it opens your browser).")
+        print("Once logged in, Hydra runs on your ChatGPT subscription via `--provider codex` — no API key needed.")
+        results.append(setup_codex_oauth(env_dir=env_dir))
     else:
         skipped.append("codex_oauth")
 

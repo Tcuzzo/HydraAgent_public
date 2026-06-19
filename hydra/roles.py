@@ -142,7 +142,17 @@ def _load_hydra_yaml_roles(config_path: Path, original_error: ConfigError) -> di
 
 def provider_available(role: RoleSpec, *, env_dir: str | Path | None = None) -> tuple[bool, str]:
     if role.provider == "codex":
-        return False, "EVALUATOR_UNAVAILABLE: Codex adapter is configured but not callable in this runtime"
+        # The codex provider shells the official `codex` CLI ("Sign in with
+        # ChatGPT"). It is callable iff the binary resolves on PATH (or via
+        # HYDRA_CODEX_BIN). The user must also have run `codex login` once; the
+        # CLI itself reports a clear error at call time if not signed in.
+        try:
+            from hydra.codex_client import resolve_codex_bin
+
+            bin_path = resolve_codex_bin()
+        except Exception as e:  # noqa: BLE001
+            return False, f"EVALUATOR_UNAVAILABLE: {e}"
+        return True, f"available (codex CLI: {bin_path})"
     try:
         client_cfg = resolve(role.provider, env_dir=env_dir)
     except ProviderError as e:

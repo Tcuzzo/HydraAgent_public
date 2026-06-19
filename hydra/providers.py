@@ -76,6 +76,20 @@ _BUILTINS: dict[str, _ProviderSpec] = {
         model_default="MiniMax-Text-01",
         requires_key=True,
     ),
+    # codex: the official `codex` CLI ("Sign in with ChatGPT"). NOT an HTTP
+    # provider — it shells the local Codex CLI, which runs on the user's ChatGPT
+    # subscription via browser OAuth (run `codex login` once). No endpoint and no
+    # api_key (requires_key=False; the OAuth lives in the CLI, never copied).
+    # `make_client` returns a CodexClient for it instead of the HTTP OllamaClient.
+    # Not on FORBIDDEN_PROVIDER_NAMES — only anthropic/claude_api/claude are
+    # blocked — so this is allowed.
+    "codex": _ProviderSpec(
+        name="codex",
+        env_file=".env.codex",
+        endpoint_default="",
+        model_default="codex",
+        requires_key=False,
+    ),
 }
 
 _PROVIDER_ALIASES: dict[str, str] = {
@@ -201,8 +215,28 @@ def make_client(
     """Build a configured client for `name` and return it along with the
     resolved `ProviderConfig` (so callers know which model/endpoint they got).
 
-    Returns an `OllamaClient` (OpenAI-compat HTTP client) for all HTTP providers.
+    For every HTTP provider this is an `OllamaClient` (OpenAI-compat). For the
+    `codex` provider it is a `CodexClient` instead — the official `codex` CLI
+    ("Sign in with ChatGPT"), which runs on the user's ChatGPT subscription with
+    no API key. Same duck-typed `.chat()` / `.list_models()` surface, so
+    model_router, roles, and the CLI reach it unchanged.
+
+    The codex path raises `LlmError` with a clear install/login hint when the
+    `codex` binary is not found (PATH or `HYDRA_CODEX_BIN`) — not an import
+    crash.
     """
     cfg = resolve(name, env_dir=env_dir)
+    if cfg.name == "codex":
+        # Imported lazily so the HTTP path never pays for the codex module and
+        # there is no import cycle.
+        from hydra.codex_client import CodexClient
+
+        kwargs: dict = {}
+        if cfg.model:
+            kwargs["model"] = cfg.model
+        # CodexClient.__init__ resolves the binary (HYDRA_CODEX_BIN or
+        # shutil.which), raising the clear install/login error if absent.
+        client = CodexClient(**kwargs)
+        return client, cfg
     client = OllamaClient(endpoint=cfg.endpoint, api_key=cfg.api_key)
     return client, cfg
