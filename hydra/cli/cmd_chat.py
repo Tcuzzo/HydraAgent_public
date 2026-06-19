@@ -21,7 +21,6 @@ from hydra.providers import (
 )
 from hydra.identity import build_identity, render_identity_text, render_runtime_text
 from hydra.roles import RoleError, resolve_roles
-from hydra.setup import prompt_setup
 # SEAM CUT: a stripped remote-audit module is stripped; remote-audit intent handler removed below.
 from hydra.skill_spine import (
     build_agent_system_prompt,
@@ -434,9 +433,25 @@ def _make_client_or_setup(args: argparse.Namespace):
                 file=sys.stderr,
             )
             raise
-        print(f"Provider {args.provider!r} needs setup. Starting setup.", file=sys.stderr)
-        prompt_setup(env_dir=env_dir)
-        return make_client(args.provider, env_dir=env_dir)
+        # In-surface setup panel — built for non-programmers. Renders on the same
+        # Rich canvas the chat uses, so it's one seamless surface. Returns the
+        # provider the person connected (or None if they skipped).
+        import getpass
+
+        from rich.console import Console
+
+        from hydra.setup_panel import run_setup_panel
+
+        provider = run_setup_panel(
+            Console(),
+            ask=lambda prompt="": input(prompt),
+            secret_ask=lambda prompt="": getpass.getpass(prompt),
+            env_dir=env_dir,
+        )
+        if not provider:
+            raise  # they skipped — let the caller report no provider is configured
+        args.provider = provider
+        return make_client(provider, env_dir=env_dir)
 
 
 def _local_gpu_fallback_client(args: argparse.Namespace):

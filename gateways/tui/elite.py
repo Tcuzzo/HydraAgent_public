@@ -647,6 +647,9 @@ class EliteTUI:
                     self.console.clear()
                     self._print_header()
                     continue
+                if stripped == "/setup":
+                    self._cmd_setup()
+                    continue
                 if self._handle_auth_command(stripped):
                     continue
                 if self._handle_session_command(stripped):
@@ -1118,6 +1121,46 @@ class EliteTUI:
             except Exception:
                 pass
 
+    def _cmd_setup(self) -> None:
+        """Re-run the in-surface 'connect a model' panel and switch live.
+
+        The non-programmer setup panel, but reachable any time from inside the chat
+        with ``/setup`` — pick Local / Cloud / ChatGPT, and the new model takes over
+        without leaving the conversation.
+        """
+        import getpass
+
+        from hydra.providers import ProviderError, make_client
+        from hydra.setup_panel import run_setup_panel
+
+        def _ask(prompt: str = "") -> str:
+            if self._prompt_session is not None:
+                try:
+                    return self._prompt_session.prompt(prompt)
+                except (EOFError, KeyboardInterrupt):
+                    return "q"
+            return input(prompt)
+
+        provider = run_setup_panel(
+            self.console,
+            ask=_ask,
+            secret_ask=lambda prompt="": getpass.getpass(prompt),
+        )
+        if not provider:
+            return
+        try:
+            client, cfg = make_client(provider)
+        except ProviderError as exc:
+            self.console.print(
+                f"[yellow]Saved your choice, but couldn't connect right now: {exc}\n"
+                f"Restart hydra and it'll use {provider}.[/yellow]"
+            )
+            return
+        self.reconfigure_runtime(
+            client=client, cfg=cfg, model=getattr(cfg, "model", self.model) or self.model
+        )
+        self.console.print(f"[green]✓ Now chatting with {self.provider_name}.[/green]")
+
     def reconfigure_runtime(
         self, *, client, cfg, model: str, runtime: dict | None = None
     ) -> None:
@@ -1524,6 +1567,7 @@ class EliteTUI:
             ("/mfa setup",                     "Print Google Authenticator QR/URI"),
             ("/runtime  /providers",           "Show routing/provider state"),
             ("/cloud  /local",                 "Switch chat profile"),
+            ("/setup",                         "Connect or switch your AI model"),
             ("/skill NAME",                    "Load a trusted skill into context"),
             ("/clear",                         "Clear screen"),
             ("/help",                          "Show this help"),
