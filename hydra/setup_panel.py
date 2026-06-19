@@ -9,8 +9,24 @@ if the person skipped.
 from __future__ import annotations
 
 import shutil
+import urllib.request
 
 from hydra.setup import setup_cloud_provider, setup_codex_oauth, setup_local_ollama
+
+_LOCAL_ENDPOINT = "http://localhost:11434"
+
+
+def _default_local_probe(endpoint: str) -> bool:
+    """True if a local model server actually answers at ``endpoint``.
+
+    We can't assume the customer has a local model running — so we check before
+    claiming a connection, instead of writing a config that points at nothing.
+    """
+    try:
+        with urllib.request.urlopen(endpoint, timeout=0.6):  # nosec - localhost only
+            return True
+    except Exception:
+        return False
 
 try:  # rich ships as a dependency; degrade to plain text if ever absent
     from rich.panel import Panel
@@ -53,14 +69,14 @@ def _render_menu(console) -> None:
         t = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
         t.add_column(justify="right", style="bold cyan", no_wrap=True)
         t.add_column()
-        t.add_row("1", "[bold]Local (Ollama)[/bold]   [dim]Free. Runs on your computer. No account, no key.[/dim]")
+        t.add_row("1", "[bold]Local[/bold]   [dim]Run a model on your own computer. Free & private.[/dim]")
         t.add_row("2", "[bold]Cloud API key[/bold]    [dim]Paste a key from OpenAI, Groq, MiniMax, etc.[/dim]")
         t.add_row("3", "[bold]Sign in with ChatGPT[/bold]   [dim]Use your ChatGPT subscription. No API key.[/dim]")
         console.print(Panel(t, title="[bold]Connect an AI model[/bold]",
                             subtitle="[dim]pick one to start chatting[/dim]", border_style="cyan"))
     else:  # pragma: no cover
         console.print("Connect an AI model:")
-        console.print("  1) Local (Ollama) — free, no key")
+        console.print("  1) Local — a model on your own computer, free & private")
         console.print("  2) Cloud API key — OpenAI / Groq / MiniMax / ...")
         console.print("  3) Sign in with ChatGPT — your subscription, no key")
 
@@ -70,9 +86,24 @@ def _ok(console, provider: str, detail: str) -> None:
     console.print(Panel(f"[green]✓[/green] {msg}", border_style="green") if _RICH else f"✓ {msg}")
 
 
-def _do_local(console, env_dir) -> str:
+def _do_local(console, env_dir, local_probe) -> str | None:
+    # We don't know the customer has a local model running — check first, and
+    # guide them if not, rather than saving a config that points at nothing.
+    if not local_probe(_LOCAL_ENDPOINT):
+        console.print(Panel(
+            "No local AI model is running on this computer yet.\n"
+            "To use Local, start a local model server, then pick Local again.\n"
+            "A free one is Ollama (https://ollama.com): install it, then run\n"
+            "  ollama pull qwen3:8b\n"
+            "Or choose Cloud or Sign in with ChatGPT to use a model online.",
+            title="[bold]Local model[/bold]", border_style="yellow",
+        ) if _RICH else
+        "No local AI model is running on this computer yet. Start a local model "
+        "server (a free one is Ollama, https://ollama.com), then pick Local again — "
+        "or choose Cloud or ChatGPT to use a model online.")
+        return None
     setup_local_ollama(env_dir=env_dir)
-    _ok(console, "ollama", "using local Ollama (qwen3:8b at localhost:11434)")
+    _ok(console, "ollama", "your local model is connected")
     return "ollama"
 
 
@@ -114,7 +145,8 @@ def _do_chatgpt(console, ask, env_dir, which) -> str | None:
     return "codex"
 
 
-def run_setup_panel(console, *, ask, secret_ask, env_dir=None, which=shutil.which) -> str | None:
+def run_setup_panel(console, *, ask, secret_ask, env_dir=None, which=shutil.which,
+                    local_probe=_default_local_probe) -> str | None:
     """Render the panel and walk the person through connecting one model.
 
     Returns the configured provider name, or None if they skipped.
@@ -129,7 +161,10 @@ def run_setup_panel(console, *, ask, secret_ask, env_dir=None, which=shutil.whic
             console.print("  Please type 1, 2, 3, or q.")
             continue
         if choice == "local":
-            return _do_local(console, env_dir)
+            result = _do_local(console, env_dir, local_probe)
+            if result is None:
+                continue
+            return result
         if choice == "cloud":
             result = _do_cloud(console, ask, secret_ask, env_dir)
             if result is None:

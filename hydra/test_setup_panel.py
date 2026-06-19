@@ -49,12 +49,24 @@ def test_parse_choice(raw, expected):
 # ── each provider path writes the right config + returns the provider ───────
 
 
-def test_local_path_configures_ollama(tmp_path):
+def test_local_path_connects_when_a_model_is_running(tmp_path):
     con = FakeConsole()
     ask, secret = _scripted(["1"])
-    prov = run_setup_panel(con, ask=ask, secret_ask=secret, env_dir=tmp_path)
+    prov = run_setup_panel(con, ask=ask, secret_ask=secret, env_dir=tmp_path,
+                           local_probe=lambda endpoint: True)  # a local model answers
     assert prov == "ollama"
     assert (tmp_path / ".env.ollama").exists()
+    assert "ollama" not in con.text().lower()  # never brand it to the customer
+
+
+def test_local_path_when_no_model_running_guides_not_fake_green(tmp_path):
+    con = FakeConsole()
+    ask, secret = _scripted(["1", "q"])  # pick Local, then skip after guidance
+    prov = run_setup_panel(con, ask=ask, secret_ask=secret, env_dir=tmp_path,
+                           local_probe=lambda endpoint: False)  # nothing running
+    assert prov is None  # did NOT claim connected
+    assert not (tmp_path / ".env.ollama").exists()  # did NOT write a broken config
+    assert "local model" in con.text().lower()  # told them how to get one
 
 
 def test_cloud_path_openai_writes_key(tmp_path):
@@ -95,4 +107,5 @@ def test_cancel_returns_none(tmp_path):
 def test_reprompts_on_garbage_then_accepts(tmp_path):
     con = FakeConsole()
     ask, secret = _scripted(["wat", "1"])  # garbage, then local
-    assert run_setup_panel(con, ask=ask, secret_ask=secret, env_dir=tmp_path) == "ollama"
+    assert run_setup_panel(con, ask=ask, secret_ask=secret, env_dir=tmp_path,
+                           local_probe=lambda endpoint: True) == "ollama"
