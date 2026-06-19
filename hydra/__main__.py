@@ -148,13 +148,25 @@ def _hydra_version() -> str:
         return "1.0.0"
 
 
+def resolve_default_action(*, has_subcommand: bool, is_tty: bool) -> str:
+    """What bare `hydra` (no subcommand) should do.
+
+    A subcommand always passes through. With no subcommand, open the chat surface
+    on an interactive terminal; otherwise (piped / no TTY) fall back to the help /
+    command list, since a TUI can't be drawn without a terminal.
+    """
+    if has_subcommand:
+        return "subcommand"
+    return "chat" if is_tty else "help"
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="hydra",
         description="Hydra operator CLI — run the agent loop with default tools.",
     )
     p.add_argument("--version", action="version", version=f"hydra {_hydra_version()}")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(dest="cmd", required=False)
 
     register_ask_command(
         sub,
@@ -205,6 +217,13 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "cmd", None) is None:
+        # Bare `hydra`: open the chat surface on a terminal, else show the commands.
+        if resolve_default_action(has_subcommand=False, is_tty=sys.stdin.isatty()) == "help":
+            parser.print_help()
+            return 0
+        args = parser.parse_args(["chat"])
+        args.setup_if_needed = True
     return {
         "ask": cmd_ask,
         "watch": cmd_watch,
