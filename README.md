@@ -270,8 +270,36 @@ tool calls, runs them through the approval gate, feeds results back, and iterate
 until done — with the skill spine choosing context, the model router choosing the
 model, and the memory kernel remembering across runs.
 
+```mermaid
+flowchart TD
+    Prompt[Your Prompt] --> Ask[Hydra Ask]
+    Ask --> Runtime[Resolve Runtime Model And Optional Route]
+    Runtime --> PromptBuild[Build System Prompt And Skill Context]
+    Ask -. With Context Or Truth Context .-> MemoryContext[Optional Memory Context]
+    MemoryContext -.-> PromptBuild
+    PromptBuild --> Tools[Bind Tools]
+    Tools -. Available If Called .-> MemoryTools[Memory Recall And Remember Tools]
+    Tools --> Loop[Agent Loop]
+    Loop --> Model[Model Call]
+    Model --> Parser[Tool Call Parser]
+    Parser -- Tool Call --> Risk{Risky Tool?}
+    Parser -- No Tool Call --> Exit[Answer Delivered]
+    Risk -- No --> Runner[Tool Runner]
+    Risk -- Yes --> Gate[Approval Gate]
+    Gate -- Ask --> Runner
+    Gate -- Allow --> Runner
+    Gate -- Deny --> Feedback[Result Feedback]
+    Runner --> Feedback
+    Feedback --> Loop
+```
+
 ## License
 
 **MIT** — see [LICENSE.md](LICENSE.md). Free for any use, including commercial.
 See [NOTICE.md](NOTICE.md) for third-party attributions and
 [PROVENANCE.md](PROVENANCE.md) for derivation.
+
+## Part of a family
+
+Hydra is one of a family of local-first, operator-owned, bring-your-own-model agents: [OpenMontage](https://github.com/Tcuzzo/OpenMontage), an agentic video-production studio, and [bucks](https://github.com/Tcuzzo/bucks), a local-first trading agent that is paper-first and keeps you holding the keys.
+The shared philosophy is your machine, your keys, your models, a clear safety model, and a Telegram remote.
