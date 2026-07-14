@@ -25,10 +25,12 @@ security fixes to older tags — update to current `main` to receive fixes.
 - **Local agent, your machine.** Hydra is a local CLI agent. It has no hosted
   service, no telemetry, and ships **no credentials** — you bring your own
   keys (`BYO keys`), and they stay in your environment files.
-- **Approval-gated shell.** Shell execution sits behind an approval gate, and
-  the public edition ships with `non_destructive_auto_allow: false` — a fresh
-  install asks before running commands until you explicitly loosen the
-  contract in `.hydraAgent/tools/shell.yaml`.
+- **Approval-gated shell.** Shell execution sits behind an approval gate.
+  Destructive commands always require approval. The public edition also ships
+  `non_destructive_auto_allow: false` — a flag the runtime **enforces** (not just
+  documentation), so a fresh install asks before running *non-destructive*
+  commands too, until you explicitly set it `true` in
+  `.hydraAgent/tools/shell.yaml`.
 - **Telegram remote with 2FA.** The optional Telegram remote gates unattended
   mode behind a 6-digit 2FA code; approving risky actions is an explicit tap.
 - **Bounded file tools.** File read/write/edit are workspace-scoped with

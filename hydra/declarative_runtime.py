@@ -152,7 +152,11 @@ def execute_agent_decision(
             raise DeclarativeRuntimeError(f"unknown declarative tool: {tool_id}")
         arguments = step.get("arguments") or {}
         if _contract_requires_approval(contract):
-            policy.require(_policy_tool_name(contract), arguments)
+            policy.require(
+                _policy_tool_name(contract),
+                arguments,
+                non_destructive_auto_allow=_contract_non_destructive_auto_allow(contract),
+            )
         results.append(_invoke_tool(contract, arguments, root=root))
     validation = _validate_execution_results(decision, catalog, results)
     return {"schema": "hydra.execution_result.v1", "results": results, "validation": validation}
@@ -698,6 +702,17 @@ def _contract_requires_approval(contract: dict[str, Any]) -> bool:
     if not isinstance(approval, dict):
         return True
     return bool(approval.get("required", True))
+
+
+def _contract_non_destructive_auto_allow(contract: dict[str, Any]) -> bool:
+    """Whether this tool contract lets the classifier auto-allow a non-destructive
+    command. Default True preserves historical behavior; the public shell contract
+    ships ``policy.non_destructive_auto_allow: false`` so a fresh install asks
+    before running even a benign command."""
+    policy = contract.get("policy") or {}
+    if not isinstance(policy, dict):
+        return True
+    return bool(policy.get("non_destructive_auto_allow", True))
 
 
 def _policy_tool_name(contract: dict[str, Any]) -> str:
