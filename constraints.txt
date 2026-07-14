@@ -1,0 +1,25 @@
+# Exact pins for every runtime dependency (direct + transitive).
+# Install with: pip install -e . -c constraints.txt
+# Regenerate: fresh venv -> pip install -e . -> pip freeze --exclude-editable
+attrs==26.1.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+linkify-it-py==2.1.0
+markdown-it-py==4.2.0
+mdit-py-plugins==0.6.1
+mdurl==0.1.2
+packaging==26.2
+platformdirs==4.10.0
+prompt_toolkit==3.0.52
+psutil==7.2.2
+pyfiglet==1.0.4
+Pygments==2.20.0
+PyYAML==6.0.3
+qrcode==8.2
+referencing==0.37.0
+rich==15.0.0
+rpds-py==2026.6.3
+textual==8.2.8
+typing_extensions==4.16.0
+uc-micro-py==2.0.0
+wcwidth==0.8.2
