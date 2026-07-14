@@ -287,6 +287,15 @@ def test_declarative_spawn_subagent_executes_when_contract_delegates_gate(monkey
 
 def test_declarative_safe_shell_executes_without_approval_queue_or_telegram(tmp_path, monkeypatch):
     catalog = load_runtime_catalog(Path("."))
+    # This test proves the non-destructive auto-allow property, which holds when
+    # the shell contract permits it. The PUBLIC edition now ships
+    # non_destructive_auto_allow: false (gated path covered by
+    # test_public_baseline_hardening), so pin the flag true here to exercise the
+    # auto-allow-enabled posture this test was written for.
+    catalog.tools["shell"] = {
+        **catalog.tools["shell"],
+        "policy": {**(catalog.tools["shell"].get("policy") or {}), "non_destructive_auto_allow": True},
+    }
     policy = ApprovalPolicy(
         "ask",
         stdin_is_tty=lambda: False,
@@ -377,6 +386,14 @@ def test_declarative_destructive_shell_uses_single_policy_approval_path(tmp_path
 
 def test_declarative_planner_approval_flag_is_not_a_second_gate(tmp_path):
     catalog = load_runtime_catalog(Path("."))
+    # The planner's requires_approval flag must not add a gate on a safe command.
+    # That property is exercised with non-destructive auto-allow enabled; the
+    # PUBLIC edition ships the flag false (covered by test_public_baseline_hardening),
+    # so pin it true here to isolate the planner-flag behavior under test.
+    catalog.tools["shell"] = {
+        **catalog.tools["shell"],
+        "policy": {**(catalog.tools["shell"].get("policy") or {}), "non_destructive_auto_allow": True},
+    }
     policy = ApprovalPolicy(
         "ask",
         stdin_is_tty=lambda: False,
