@@ -16,7 +16,12 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
+
+from hydra.declarative_runtime import execute_agent_decision, load_runtime_catalog
+from hydra.policy import ApprovalDenied, ApprovalPolicy
+from hydra.workbench_approvals import load_records
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -88,3 +93,92 @@ def test_security_policy_documents_private_disclosure() -> None:
     text = (REPO_ROOT / "SECURITY.md").read_text(encoding="utf-8")
     assert "Security Advisories" in text, "SECURITY.md must route reports to GitHub Security Advisories"
     assert "advisories/new" in text or "security/advisories" in text
+
+
+def test_ci_test_toolchain_ships_pytest_asyncio() -> None:
+    """The suite uses asyncio_mode='auto' and ships async tests, so the CI test
+    toolchain MUST provide pytest-asyncio — pinned in constraints.txt AND
+    installed by ci.yml. Without it 4 async tests fail on every push with
+    'async def functions are not natively supported'."""
+    pinned: dict[str, str] = {}
+    for line in (REPO_ROOT / "constraints.txt").read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==(\S+)$", line)
+        if match:
+            pinned[_canonical(match.group(1))] = match.group(2)
+    assert "pytest-asyncio" in pinned, (
+        "constraints.txt must pin pytest-asyncio (==) — the CI async tests need it"
+    )
+    assert "pytest" in pinned, "constraints.txt must pin pytest (==) for reproducible CI test installs"
+    ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "pytest-asyncio" in ci, "ci.yml's test-install step must install pytest-asyncio"
+
+
+def _shell_decision(command: str) -> dict:
+    return {
+        "schema": "hydra.agent_decision.v1",
+        "intent": {"kind": "operate", "confidence": 0.9, "target": "shell"},
+        "selected_skills": [],
+        "selected_tools": [{"tool_id": "shell", "reason": "run a command"}],
+        "execution_mode": "direct",
+        "requires_approval": False,
+        "approval_reason": "",
+        "plan": [
+            {
+                "id": "sh",
+                "action": "run shell",
+                "tool_id": "shell",
+                "arguments": {"command": command},
+                "expected_evidence": "stdout",
+            }
+        ],
+        "verification": [{"check": "ran", "command": "none", "required": True}],
+    }
+
+
+def test_shell_flag_false_gates_non_destructive_bash_end_to_end(tmp_path) -> None:
+    """The headline hardening flip must be WIRED, not advisory. With the shipped
+    shell contract's ``non_destructive_auto_allow: false``, a benign,
+    non-destructive command (``echo hi``) must REQUIRE approval through the real
+    runtime path: contract -> execute_agent_decision -> policy.require."""
+    catalog = load_runtime_catalog(REPO_ROOT)
+    shell_policy = catalog.tools["shell"].get("policy") or {}
+    assert shell_policy.get("non_destructive_auto_allow") is False  # shipped safe default
+
+    policy = ApprovalPolicy(
+        "ask",
+        stdin_is_tty=lambda: False,
+        approval_path=tmp_path / "approvals.jsonl",
+        run_path=tmp_path / "runs.jsonl",
+    )
+    with pytest.raises(ApprovalDenied):
+        execute_agent_decision(
+            _shell_decision("echo hi"), catalog, root=tmp_path, approval_policy=policy
+        )
+    approvals = load_records(tmp_path / "approvals.jsonl")
+    assert approvals and approvals[0].tool_name == "bash"
+
+
+def test_approval_policy_respects_non_destructive_auto_allow_flag(tmp_path) -> None:
+    """The policy honours the threaded flag. TRUE (private-edition default) keeps
+    EXACTLY today's behavior — a non-destructive command auto-allows. FALSE (the
+    public safe default) makes even a benign command require approval."""
+
+    def _policy() -> ApprovalPolicy:
+        return ApprovalPolicy(
+            "ask",
+            stdin_is_tty=lambda: False,
+            approval_path=tmp_path / "approvals.jsonl",
+            run_path=tmp_path / "runs.jsonl",
+        )
+
+    # TRUE — auto-allow preserved; nothing is queued.
+    _policy().require("bash", {"command": "echo hi"}, non_destructive_auto_allow=True)
+    assert not (tmp_path / "approvals.jsonl").exists()
+
+    # FALSE — even a benign, non-destructive command requires approval.
+    with pytest.raises(ApprovalDenied):
+        _policy().require("bash", {"command": "echo hi"}, non_destructive_auto_allow=False)
+    assert (tmp_path / "approvals.jsonl").exists()
