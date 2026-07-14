@@ -20,4 +20,6 @@ approval:
 policy:
   workspace_default: true
   single_gate: destructive_action
-  non_destructive_auto_allow: true
+  # Public-edition safe default: a fresh install ASKS before running shell
+  # commands. Flip to true only as an explicit operator choice.
+  non_destructive_auto_allow: false
