@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import io
+import logging
 import os
 from types import SimpleNamespace
+
+import pytest
 
 from gateways.tui import elite
 from gateways.tui.elite import (
@@ -11,6 +15,11 @@ from gateways.tui.elite import (
     _coalesce_pasted_lines,
     _drain_ready_stdin_lines,
 )
+
+# A pty is the only way to hand the drain a real fd with lines already queued on
+# it. Windows has no pty (and no pollable console stdin), so the capability -- not
+# the platform name -- decides whether that test can run at all.
+_HAS_PTY = hasattr(os, "openpty")
 
 
 def test_coalesce_pasted_lines_keeps_multiline_prompt_as_one_turn() -> None:
@@ -45,6 +54,14 @@ def test_coalesce_pasted_lines_strips_bracketed_paste_markers() -> None:
     assert user_input == "first line\nsecond line\nthird line"
 
 
+@pytest.mark.skipif(
+    not _HAS_PTY,
+    reason=(
+        "needs a pty (os.openpty) to queue lines on a real fd; Windows has "
+        "neither a pty nor a pollable console stdin -- the platform behaviour is "
+        "covered by the two tests below and documented in the README"
+    ),
+)
 def test_drain_ready_stdin_lines_reads_queued_tty_paste_lines() -> None:
     master_fd, slave_fd = os.openpty()
     try:
@@ -118,3 +135,34 @@ def test_prompt_session_created_on_tty(tmp_path, monkeypatch) -> None:
     if PROMPT_TOOLKIT_AVAILABLE:
         # _prompt_session is None only if stdin is not a tty (CI); otherwise it's set
         pass  # presence depends on test runner tty; just ensure no crash on init
+
+
+def test_drain_ready_stdin_lines_yields_nothing_when_stdin_cannot_be_polled() -> None:
+    """A stdin with no pollable OS handle must yield no extra lines.
+
+    Runs on every platform and exercises each one's real path: on Windows the
+    console guard, on POSIX the fileno() failure. It must not hang, raise, or
+    invent lines -- and the line the operator actually typed still reaches the
+    turn, which is what makes returning nothing here safe rather than lossy.
+    """
+    assert _drain_ready_stdin_lines(io.StringIO("second line\nthird line\n"), idle_timeout=0.01) == []
+    assert _coalesce_pasted_lines("first line\n", []) == "first line"
+
+
+def test_drain_ready_stdin_lines_says_out_loud_that_it_cannot_poll(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The missing capability is announced, once -- never a silent no-op."""
+    monkeypatch.setattr(elite, "_HAS_SELECT", False)
+    monkeypatch.setattr(elite, "_PASTE_DRAIN_WARNED", False)
+
+    with caplog.at_level(logging.WARNING, logger=elite.__name__):
+        assert _drain_ready_stdin_lines(io.StringIO("queued\n"), idle_timeout=0.01) == []
+        assert _drain_ready_stdin_lines(io.StringIO("queued\n"), idle_timeout=0.01) == []
+
+    warnings = [r for r in caplog.records if "paste" in r.getMessage().lower()]
+    assert len(warnings) == 1, (
+        "the paste limitation must be announced exactly once per process, "
+        f"got {len(warnings)}"
+    )
+    assert "Nothing is dropped" in warnings[0].getMessage()
