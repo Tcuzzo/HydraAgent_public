@@ -25,9 +25,20 @@ def test_mission_loop_runs_runtime_validation_harnesses(tmp_path: Path) -> None:
     )
 
     report = run_mission_loop(root=tmp_path, operator_prompt="runtime validation proof")
+    import json as _j
+    _bad = [
+        {"step": s["kind"], "id": r["id"], "command": r["command"],
+         "status": r["status"], "rc": r["returncode"],
+         "stdout": r["stdout"][:400], "stderr": r["stderr"][:400]}
+        for s in report["steps"]
+        if isinstance(s.get("data"), dict) and isinstance(s["data"].get("results"), list)
+        for r in s["data"]["results"]
+        if r.get("status") != "ok"
+    ]
+    _why = "DIAG non-ok rows:\n" + _j.dumps(_bad, indent=2)
 
     validation = next(step for step in report["steps"] if step["kind"] == "runtime_validation")
-    assert report["summary"]["verdict"] == "GREEN"
+    assert report["summary"]["verdict"] == "GREEN", _why
     assert validation["data"]["succeeded"] == 2
     assert {row["id"] for row in validation["data"]["results"]} == {
         "validate-integrity",
