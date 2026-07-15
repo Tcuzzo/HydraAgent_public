@@ -5,6 +5,7 @@ Secrets live outside the repo. Runtime state stores timestamps and nonces only.
 from __future__ import annotations
 
 import base64
+import getpass
 import hmac
 import hashlib
 import json
@@ -12,6 +13,7 @@ import os
 import secrets
 import socket
 import struct
+import subprocess
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -31,6 +33,7 @@ DEFAULT_YOLO_TTL_SECONDS = 3600
 EXTENSION_POLL_WINDOW_SECONDS = 300
 EXTENSION_NONCE_TTL_SECONDS = 600
 VALID_MODES = frozenset({"operator", "iteration", "yolo"})
+_IS_WINDOWS = os.name == "nt"
 
 
 class OperatorAuthError(Exception):
@@ -308,15 +311,86 @@ class OperatorAuth:
 
     def _write_json_private(self, path: Path, data: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        _restrict_to_owner(path.parent, mode=0o700, directory=True)
+        _write_text_private(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+# -- private-file primitives ---------------------------------------------------
+#
+# The operator's TOTP secret must be readable by the operator's own account and
+# nothing else. POSIX and Windows spell that property differently, so both
+# spellings live here -- and both fail LOUDLY, because a secret we could not make
+# private is a secret we must not silently write.
+
+
+def _restrict_to_owner(path: Path, *, mode: int, directory: bool = False) -> None:
+    """Make ``path`` accessible to the current account only.
+
+    POSIX gets ``mode`` (0o600 / 0o700). Windows has no POSIX permission bits:
+    ``os.chmod(path, 0o600)`` there only toggles the read-only attribute and
+    leaves the *inherited* DACL -- which normally grants ``BUILTIN\\Users`` --
+    fully intact, so a chmod'd secret stays readable by every other local
+    account. ``icacls`` is Windows' own mechanism for what 0o600 means on POSIX:
+    drop the inherited ACEs, then grant exactly one principal.
+    """
+    if not _IS_WINDOWS:
         try:
-            path.parent.chmod(0o700)
-        except OSError:
-            pass
-        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        try:
-            path.chmod(0o600)
-        except OSError:
-            pass
+            os.chmod(path, mode)
+        except OSError as exc:
+            raise OperatorAuthError(
+                f"could not restrict {path} to mode {mode:#o}: {exc}; refusing to "
+                "leave operator auth state readable by other accounts"
+            ) from exc
+        return
+
+    account = getpass.getuser()
+    # (OI)(CI): a directory's restriction inherits to the files created inside it.
+    grant = f"{account}:(OI)(CI)(F)" if directory else f"{account}:(F)"
+    try:
+        proc = subprocess.run(
+            ["icacls", str(path), "/inheritance:r", "/grant:r", grant],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise OperatorAuthError(
+            f"could not restrict {path} to {account}: icacls unusable ({exc}); "
+            "refusing to leave operator auth state readable by other accounts"
+        ) from exc
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise OperatorAuthError(
+            f"could not restrict {path} to {account}: icacls exited "
+            f"{proc.returncode}: {detail}; refusing to leave operator auth state "
+            "readable by other accounts"
+        )
+
+
+def _write_text_private(path: Path, text: str) -> None:
+    """Write ``text`` to ``path``, private from the moment the file exists.
+
+    The restriction is applied to an *empty* file first, so the secret bytes are
+    never on disk under a permissive mode/ACL -- closing the window that the old
+    write-then-chmod order left open.
+    """
+    if _IS_WINDOWS:
+        path.write_text("", encoding="utf-8")
+        _restrict_to_owner(path, mode=0o600)
+        path.write_text(text, encoding="utf-8")
+        return
+
+    # O_CREAT applies `mode` only to a newly created file, so fchmod covers the
+    # already-exists case. Both land before a single secret byte is written.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+    except BaseException:
+        os.close(fd)
+        raise
+    with handle:
+        handle.write(text)
 
 
 def generate_secret_base32(byte_count: int = 20) -> str:
