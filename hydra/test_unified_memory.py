@@ -27,8 +27,10 @@ claim (A4/A5) is proven against live nomic + vec0.
 """
 from __future__ import annotations
 
+import platform
 import sqlite3
 import struct
+import sys
 import urllib.error
 
 import pytest
@@ -36,6 +38,22 @@ import pytest
 from hydra import unified_memory as um
 from hydra.local_memory import LocalMemoryResult
 from hydra.semantic_recall import build_semantic_memory_context, embed_nomic
+
+
+# ── real vec0 capability probe (NOT an OS-name check) ──────────────────────
+#
+# Some CPython builds ship sqlite3 compiled WITHOUT extension loading (proven
+# on this repo's own macos-latest CI legs), and the vendored vec0.so is Linux
+# x86-64 only.  Either way the vec0 lane genuinely cannot run.  We ask the
+# PRODUCT's own probe -- the exact check UnifiedMemory._open enforces -- so the
+# skip can never drift from what the product actually requires, and so it is
+# conditioned on the ACTUAL capability rather than on a platform name.
+_VEC0_UNAVAILABLE = um.vec0_unavailable_reason()
+
+requires_vec0 = pytest.mark.skipif(
+    _VEC0_UNAVAILABLE is not None,
+    reason=f"real vec0 capability absent here: {_VEC0_UNAVAILABLE}",
+)
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -76,6 +94,7 @@ def _fake_embedder(dim: int = 768):
 # ── A1: sqlite-vec backend smoke (REAL) ─────────────────────────────────────
 
 
+@requires_vec0
 def test_a1_vec0_extension_loads_and_creates_table():
     path = um.resolve_vec0_extension()
     assert path, "no vec0 extension resolved"
@@ -113,6 +132,7 @@ def test_a2_real_nomic_embedding_is_768_floats():
 # ── A3: persistence across connections (fast, fake embedder) ────────────────
 
 
+@requires_vec0
 def test_a3_persistence_across_connections(tmp_path):
     db = tmp_path / "memory.sqlite"
     embed = _fake_embedder()
@@ -161,6 +181,7 @@ def test_a4_relevance_with_real_nomic(tmp_path):
 
 @pytest.mark.network
 @pytest.mark.live
+@requires_vec0
 def test_a5_hybrid_keyword_catch(tmp_path):
     if not _ollama_up():
         pytest.skip("ollama unreachable, cannot run hybrid keyword test")
@@ -183,6 +204,7 @@ def test_a5_hybrid_keyword_catch(tmp_path):
 # ── A6: add-only dedup + audit (fast, fake embedder) ────────────────────────
 
 
+@requires_vec0
 def test_a6_dedup_and_history(tmp_path):
     db = tmp_path / "memory.sqlite"
     mem = um.UnifiedMemory(path=db, embedder=_fake_embedder())
@@ -200,6 +222,7 @@ def test_a6_dedup_and_history(tmp_path):
 # ── A7: scope isolation (fast, fake embedder) ───────────────────────────────
 
 
+@requires_vec0
 def test_a7_scope_isolation(tmp_path):
     db = tmp_path / "memory.sqlite"
     mem = um.UnifiedMemory(path=db, embedder=_fake_embedder())
@@ -240,6 +263,7 @@ def test_fts_query_keeps_literal_ids():
 # ── Hit.score is the TRUE cosine + min_similarity floor ──────────────────────
 
 
+@requires_vec0
 def test_hit_score_is_true_cosine_not_rrf(tmp_path):
     """Hit.score now carries the real query↔hit cosine (0..1), NOT the tiny
     unusable RRF fusion value (~0.03). A self-query scores near 1.0."""
@@ -254,6 +278,7 @@ def test_hit_score_is_true_cosine_not_rrf(tmp_path):
     assert hits[0].score > 0.9
 
 
+@requires_vec0
 def test_min_similarity_floor_drops_below_threshold(tmp_path):
     """search(min_similarity=...) drops any fused hit whose TRUE cosine is below
     the floor BEFORE it is appended."""
@@ -393,6 +418,7 @@ def _expected_chunk_count(root, workspace_root):
 # ── M1: migration runs, idempotent (fake embedder, tmp store) ───────────────
 
 
+@requires_vec0
 def test_m1_migration_idempotent(tmp_path):
     root, ws = _seed_tree(tmp_path)
     db = tmp_path / "store.sqlite"
@@ -427,6 +453,7 @@ def test_m1_migration_idempotent(tmp_path):
 # ── M2: migrated rows carry source + scope ──────────────────────────────────
 
 
+@requires_vec0
 def test_m2_rows_carry_source_and_scope(tmp_path):
     root, ws = _seed_tree(tmp_path)
     db = tmp_path / "store.sqlite"
@@ -450,6 +477,7 @@ def test_m2_rows_carry_source_and_scope(tmp_path):
 
 @pytest.mark.network
 @pytest.mark.live
+@requires_vec0
 def test_m3_real_recall_from_store(tmp_path, monkeypatch):
     if not _ollama_up():
         pytest.skip("ollama unreachable, cannot run real recall-from-store smoke")
@@ -479,6 +507,7 @@ def test_m3_real_recall_from_store(tmp_path, monkeypatch):
 # ── M4: live path is the UNCHANGED LocalMemoryResult contract ───────────────
 
 
+@requires_vec0
 def test_m4_live_path_unchanged_contract(tmp_path, monkeypatch):
     root, ws = _seed_tree(tmp_path)
     db = tmp_path / "store.sqlite"
@@ -540,6 +569,7 @@ def test_m5_vec0_missing_falls_back(tmp_path, monkeypatch):
 # ── M6: anti-tautology — the live path TRULY switched to one KNN ────────────
 
 
+@requires_vec0
 def test_m6_store_path_taken_one_query_embed(tmp_path, monkeypatch):
     root, ws = _seed_tree(tmp_path)
     db = tmp_path / "store.sqlite"
@@ -674,6 +704,7 @@ def _seed_full_corpus(tmp_path, monkeypatch):
     return memory_root, repo_root, claude_relpaths
 
 
+@requires_vec0
 def test_default_migration_covers_full_corpus_not_one_source(tmp_path, monkeypatch):
     """A NO-ARG migration must cover the FULL corpus (>=25 sources incl. .claude).
 
@@ -744,4 +775,48 @@ def test_migration_default_corpus_equals_live_recall_corpus(tmp_path, monkeypatc
     # And the chunk set is the FULL corpus, not 1 source.
     assert len({rel for rel, _ in mig_chunks}) >= 25, (
         "shared resolver must yield the full corpus for the live defaults"
+    )
+
+
+# ── capability contract: loud failure, never a silent degrade ──────────────
+
+
+def test_capability_probe_reports_missing_sqlite3_extension_support(monkeypatch):
+    """A sqlite3 without extension support must be REPORTED, precisely.
+
+    Simulates the macOS CI interpreter on any host: its sqlite3 is built
+    without extension loading, so ``sqlite3.Connection`` has no
+    ``enable_load_extension`` at all.  That attribute cannot be deleted from
+    the immutable C type, so we override the product's own probe seam -- the
+    same function the product itself calls.
+    """
+    monkeypatch.setattr(um, "_sqlite3_supports_extension_loading", lambda: False)
+    reason = um.vec0_unavailable_reason()
+    assert reason is not None, "probe must report the capability as absent"
+    assert "enable_load_extension" in reason, f"must name the capability: {reason}"
+    assert "keyword" in reason.lower(), f"must name the real degrade: {reason}"
+
+
+def test_store_fails_loudly_when_sqlite3_lacks_extension_support(tmp_path, monkeypatch):
+    """No silent degrade: the store raises a typed, precise BackendUnavailable."""
+    monkeypatch.setattr(um, "_sqlite3_supports_extension_loading", lambda: False)
+    with pytest.raises(um.BackendUnavailable) as excinfo:
+        um.UnifiedMemory(path=tmp_path / "m.sqlite", embedder=_fake_embedder())
+    msg = str(excinfo.value)
+    assert "enable_load_extension" in msg, f"must name the capability: {msg}"
+    assert "sqlite3" in msg, f"must name the subsystem: {msg}"
+
+
+def test_vec0_capability_present_on_linux_x86_64():
+    """Anti-fake-green guard: the skip must never quietly eat Linux coverage.
+
+    Linux x86-64 ships the vendored vec0.so, so the vec0 lane MUST really run
+    there.  If that tier ever loses the capability, this goes RED instead of
+    letting ``requires_vec0`` silently turn 11 real tests into skips.
+    """
+    if not (sys.platform.startswith("linux") and platform.machine() == "x86_64"):
+        pytest.skip("guard covers the Linux x86-64 tier that ships the vendored vec0.so")
+    assert _VEC0_UNAVAILABLE is None, (
+        "Linux x86-64 ships hydra/_vendor/sqlite_vec/vec0.so and MUST exercise the "
+        f"real vec0 lane, not skip it: {_VEC0_UNAVAILABLE}"
     )
