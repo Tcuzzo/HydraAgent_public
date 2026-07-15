@@ -80,6 +80,14 @@ knows how each operating system starts a program. On Linux and macOS it uses the
 Unix shell. On Windows it uses `cmd.exe`, or Git-Bash if you have that installed. There
 is nothing for you to configure.
 
+There is one Windows trap Hydra steps around for you. Windows ships a program called
+`bash`, but it is really a doorway into the Windows Subsystem for Linux: a separate world
+with its own filing system, where your `C:` folders are not where they normally are. A
+command sent through that doorway would run in the wrong place, or simply fail if you
+never installed a Linux to put behind it. Hydra ignores that doorway and looks for a real
+Git-Bash instead. If a job needs a Unix shell and you have no Git-Bash, Hydra says so
+plainly rather than running your command somewhere you did not mean.
+
 ### Vector memory: needs the right Python
 
 **The short version.** Hydra remembers what you tell it, and it can look those memories
@@ -117,6 +125,26 @@ Hydra memory: vector lane OFF - <the exact reason>
 
 and falls back to keyword search. You lose "find notes about this idea" and you keep
 "find notes containing this word". Nothing breaks, and nothing goes quiet.
+
+### Pasting several lines at once: Linux and macOS only
+
+**The short version.** Paste a block of text into Hydra's chat on Linux or macOS and it
+arrives as one message. On Windows the same paste arrives as one message per line. Every
+line still gets through -- nothing is dropped or reordered -- but a pasted paragraph
+becomes several turns instead of one, and Hydra tells you so the first time it happens.
+
+**The detailed version.** When you paste, the terminal drops all of the lines into Hydra's
+input at once. Hydra reads the first line and then asks the operating system "is there
+more already waiting?", so it can gather the rest into the same message. That question is
+a mechanism called `select`, and on Windows it can only be asked about network
+connections, never about a console window. So on Windows Hydra cannot find out that more
+lines are waiting, and it takes the first one. The rest are not lost: the console holds
+them and hands them to Hydra as the next messages.
+
+If you want a pasted block to land as a single turn on Windows, save the text to a file
+and point Hydra at the file. The test that proves the gathering works needs a
+pseudo-terminal -- a fake keyboard-and-screen that Windows does not have -- so that one
+test skips there, and only there.
 
 ### Noticing a busy graphics card: Linux and macOS only
 
