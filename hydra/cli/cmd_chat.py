@@ -702,7 +702,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
         # at startup.  The call is idempotent — 0-cost NOOP after the first run,
         # so this adds no latency to subsequent startups.
         try:
-            from hydra.unified_memory import UnifiedMemory, BackendUnavailable
+            from hydra.unified_memory import UnifiedMemory
             from hydra.memory_distill import seed_core_block
             from hydra.semantic_recall import _default_store_path
 
@@ -714,7 +714,10 @@ def cmd_chat(args: argparse.Namespace) -> int:
             finally:
                 _store.close()
         except Exception as _exc:
-            pass  # backend unavailable or vec0 absent — non-fatal at startup
+            # Vector memory is optional -- recall falls back to keyword search --
+            # so this stays non-fatal at startup. But the operator must be TOLD
+            # the vector lane is off, and why: a silent degrade is a hidden gate.
+            print(f"Hydra memory: vector lane OFF — {_exc}")
 
         probe = build_semantic_memory_context(
             "startup memory probe",

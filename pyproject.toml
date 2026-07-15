@@ -35,6 +35,15 @@ memory = [
 gateway = [
   "pynvml>=11.5",
 ]
+# Test suite. CI installs this extra before running pytest.
+#   pytest-asyncio: hydra/test_route_queue.py and hydra/test_gateway_e2e.py define
+#   `async def` tests, and [tool.pytest.ini_options] below sets asyncio_mode="auto".
+#   Without the plugin pytest cannot run them ("async def functions are not
+#   natively supported") and asyncio_mode is an unknown config option.
+test = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.24",
+]
 # Browser (skills/browser.py + skills/browse_agent.py). HydraAgent's OWN headless
 # browser: Playwright driving a system Chrome via executable_path (resolved by
 # skills.browser.resolve_chrome, override via HYDRA_CHROME_PATH). Playwright's
