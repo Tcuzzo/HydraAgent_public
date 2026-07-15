@@ -33,6 +33,7 @@ from hydra.ops_packs import (
     parse_target,
     render_plan,
 )
+from hydra.proc import resolve_bash
 
 
 SCHEMA = "hydra.ops_audit.v1"
@@ -242,7 +243,7 @@ def _execute_command(
                 }
         else:
             proc = subprocess.run(
-                ["bash", "-c", command_str],
+                [resolve_bash(), "-c", command_str],
                 cwd=str(cwd),
                 capture_output=True,
                 text=True,

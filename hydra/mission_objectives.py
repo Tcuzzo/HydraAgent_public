@@ -7,6 +7,7 @@ from pathlib import Path
 
 from hydra.autonomy import SAFE_BASH_COMMANDS, classify_tool_call
 from hydra.orchestrate import SubagentTask
+from hydra.proc import resolve_bash
 
 
 SCHEMA = "hydra.mission_objectives.v1"
@@ -41,7 +42,7 @@ class MissionObjective:
         self.validate()
         return SubagentTask(
             id=f"objective-{self.id}",
-            command=["bash", "-lc", " ".join(self.command.split())],
+            command=[resolve_bash(), "-lc", " ".join(self.command.split())],
             cwd=str(root),
             timeout_seconds=20,
             success_pattern=self.success_pattern,

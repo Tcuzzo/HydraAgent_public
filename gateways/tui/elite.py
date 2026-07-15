@@ -33,6 +33,9 @@ sys.path.insert(0, str(REPO_ROOT))
 
 _LOG = logging.getLogger(__name__)
 
+# Set once the first time a paste drain is skipped for lack of a pollable stdin.
+_PASTE_DRAIN_WARNED = False
+
 
 def _startup_self_audit() -> None:
     """Run hydra self-audit at TUI startup and log results.
@@ -347,10 +350,21 @@ def _coalesce_pasted_lines(first_line: str, extra_lines: list[str]) -> str:
 def _drain_ready_stdin_lines(
     stdin, *, idle_timeout: float = 0.05, max_lines: int = 1000
 ) -> list[str]:
-    # select.select() works on arbitrary fds on POSIX; on Windows it only
-    # works on sockets, so we skip the drain (bracketed-paste is a terminal
-    # feature and doesn't apply on Windows cmd/PowerShell anyway).
+    # select.select() polls arbitrary fds on POSIX, but on Windows it accepts
+    # only sockets -- a console stdin has no pollable handle there, so the lines
+    # queued behind a multi-line paste cannot be drained into a single turn.
+    # Nothing is lost: the console hands each pasted line to the next
+    # readline(), so the paste arrives as consecutive turns instead of one.
+    # Say so once, out loud, rather than quietly behaving differently.
+    global _PASTE_DRAIN_WARNED
     if not _HAS_SELECT or sys.platform == "win32":
+        if not _PASTE_DRAIN_WARNED:
+            _PASTE_DRAIN_WARNED = True
+            _LOG.warning(
+                "multi-line paste will arrive as one turn per line on this "
+                "platform: stdin cannot be polled here (select() does not accept "
+                "a console handle). Nothing is dropped."
+            )
         return []
     try:
         fd = stdin.fileno()
