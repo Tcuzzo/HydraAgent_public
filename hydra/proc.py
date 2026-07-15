@@ -17,8 +17,9 @@ POSIX (Linux, macOS)
       tree, not just the shell.
 
 Windows
-    * Shell: ``cmd.exe /c`` normally.  If bash is on PATH (WSL/Git-Bash/Cygwin),
-      ``run_shell(..., prefer_bash=True)`` will use ``bash -lc`` instead.
+    * Shell: ``cmd.exe /c`` normally.  ``run_shell(..., prefer_bash=True)`` uses
+      ``bash -lc`` when a *real* bash (Git for Windows / Cygwin) exists.  The
+      System32 WSL launcher is never used -- see ``resolve_bash``.
     * Process isolation: ``CREATE_NEW_PROCESS_GROUP`` flag (equivalent to POSIX
       new-session from the scheduling perspective).
     * Kill: ``proc.terminate()`` sends CTRL_BREAK_EVENT to the group, then
@@ -34,6 +35,10 @@ Public API
 ``run_shell(command, *, cwd, env, timeout, max_output_bytes, prefer_bash)``
     Run a shell string and return a :class:`ShellResult` (ok, exit_code,
     stdout, stderr, timed_out, duration_s).
+
+``resolve_bash()``
+    Absolute path to a real bash for *this* host, or ``ShellUnavailableError``.
+    Every local ``bash`` invocation in the codebase resolves through this.
 
 ``popen_portable(args, *, cwd, env, text, **kwargs)``
     subprocess.Popen wrapper that applies the correct process-isolation flag
@@ -73,22 +78,97 @@ else:
 # ── Shell resolution ──────────────────────────────────────────────────────────
 
 
+class ShellUnavailableError(RuntimeError):
+    """Raised when this host has no bash that can run a command in a given cwd."""
+
+
+def _is_wsl_launcher(path: Path) -> bool:
+    """True if ``path`` is Windows' System32 WSL stub rather than a real bash.
+
+    Windows ships ``C:\\Windows\\System32\\bash.exe``, a launcher for the Windows
+    Subsystem for Linux, and it sits first on PATH -- so a bare ``bash`` (and
+    therefore ``shutil.which("bash")``) silently resolves to it. With no WSL
+    distro installed it just fails; with one installed it is *worse*, because it
+    runs the command inside the WSL filesystem namespace, where a Windows cwd
+    like ``C:\\Users\\...`` does not exist. It is never the shell that a
+    Windows working directory belongs to.
+    """
+    system_root = os.environ.get("SystemRoot") or r"C:\Windows"
+    parent = str(path.parent).rstrip("\\/").lower()
+    return any(
+        parent == str(Path(system_root) / sub).rstrip("\\/").lower()
+        for sub in ("System32", "Sysnative", "SysWOW64")
+    )
+
+
+def _windows_bash_candidates() -> list[Path]:
+    """Real Windows bash executables, best first. Git for Windows ships one."""
+    candidates: list[Path] = []
+    git = shutil.which("git")
+    if git:
+        # ...\Git\cmd\git.exe -> ...\Git\bin\bash.exe
+        git_root = Path(git).parent.parent
+        candidates.append(git_root / "bin" / "bash.exe")
+        candidates.append(git_root / "usr" / "bin" / "bash.exe")
+    for var in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        base = os.environ.get(var)
+        if base:
+            candidates.append(Path(base) / "Git" / "bin" / "bash.exe")
+            candidates.append(Path(base) / "Git" / "usr" / "bin" / "bash.exe")
+    on_path = shutil.which("bash")
+    if on_path and not _is_wsl_launcher(Path(on_path)):
+        candidates.append(Path(on_path))
+    return candidates
+
+
+def resolve_bash() -> str:
+    """Absolute path to a bash that can run a command in this host's filesystem.
+
+    Callers must use this instead of the bare literal ``"bash"``: on Windows that
+    literal resolves to the WSL launcher (see :func:`_is_wsl_launcher`). Raises
+    :class:`ShellUnavailableError` rather than falling back to a shell that would
+    run the command somewhere other than the caller's declared cwd.
+    """
+    if _IS_WINDOWS:
+        for candidate in _windows_bash_candidates():
+            if candidate.is_file():
+                return str(candidate)
+        raise ShellUnavailableError(
+            "no usable bash on this Windows host: the only 'bash' on PATH is the "
+            "System32 WSL launcher, which cannot run a command in a Windows "
+            "working directory. Install Git for Windows (it ships bash.exe)."
+        )
+    bash = shutil.which("bash")
+    if not bash:
+        raise ShellUnavailableError("bash not found on PATH")
+    return bash
+
+
 def _posix_shell(prefer_bash: bool) -> list[str]:
-    """Return the argv prefix for the POSIX shell invocation."""
-    if prefer_bash or True:  # default: always try bash first on POSIX
-        bash = shutil.which("bash")
-        if bash:
-            return [bash, "-lc"]  # login shell: sources profile
-    sh = shutil.which("sh") or "sh"
-    return [sh, "-c"]
+    """Return the argv prefix for the POSIX shell invocation.
+
+    POSIX always prefers bash, so ``prefer_bash`` is accepted only for signature
+    symmetry with :func:`_windows_shell`; ``sh`` is used when bash is genuinely
+    absent from the host.
+    """
+    del prefer_bash
+    try:
+        return [resolve_bash(), "-lc"]  # login shell: sources profile
+    except ShellUnavailableError:
+        sh = shutil.which("sh") or "sh"
+        return [sh, "-c"]
 
 
 def _windows_shell(prefer_bash: bool) -> list[str]:
     """Return the argv prefix for the Windows shell invocation."""
     if prefer_bash:
-        bash = shutil.which("bash")
-        if bash:
-            return [bash, "-lc"]
+        try:
+            return [resolve_bash(), "-lc"]
+        except ShellUnavailableError:
+            # Documented `prefer_bash` semantics: cmd.exe is the Windows default
+            # and remains correct here -- unlike the WSL launcher, it runs in the
+            # caller's cwd.
+            pass
     return ["cmd.exe", "/c"]
 
 
