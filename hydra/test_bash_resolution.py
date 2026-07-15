@@ -6,6 +6,11 @@ distributions"), and with one installed it is worse -- it runs the command insid
 the WSL filesystem namespace, where a Windows ``cwd`` like ``C:\\Users\\...`` does
 not exist. Either way the mission loop's proof commands do not run where the
 mission says they run.
+
+Note that ``shutil.which("bash")`` does *not* reveal this: it searches PATH, where
+Git-Bash usually wins, while ``CreateProcess`` -- what ``subprocess`` actually uses
+for a bare ``"bash"`` -- searches System32 *before* PATH and so gets the launcher.
+The two disagree, which is why only an absolute path is safe to hand to Popen.
 """
 from __future__ import annotations
 
@@ -86,8 +91,16 @@ def test_resolve_bash_prefers_git_for_windows_bash(
     assert resolve_bash() == str(git_bash)
 
 
-def test_resolve_bash_returns_path_bash_on_posix() -> None:
-    """POSIX keeps its existing behaviour: whatever bash is on PATH."""
+def test_resolve_bash_returns_path_bash_when_not_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The non-Windows branch keeps its behaviour: whatever bash is on PATH.
+
+    Exercises the branch rather than the host, so it runs everywhere instead of
+    skipping on Windows -- and cannot be fooled by PATH lookup differing from the
+    host's own resolution.
+    """
+    monkeypatch.setattr(proc, "_IS_WINDOWS", False)
     expected = shutil.which("bash")
     if expected is None:
         pytest.skip("no bash on PATH on this host")
