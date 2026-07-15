@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import stat
 import subprocess
 from pathlib import Path
@@ -11,6 +12,33 @@ def _write_executable(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+def _failing_commands(report: dict) -> str:
+    """Every dispatched command that did not succeed, with its real output.
+
+    A bare ``assert verdict == "GREEN"`` reports the symptom and hides the cause,
+    which is worth a whole CI round to anyone debugging this from a red run.
+    """
+    rows = [
+        {
+            "step": step["kind"],
+            "id": row["id"],
+            "command": row["command"],
+            "status": row["status"],
+            "returncode": row["returncode"],
+            "stdout": row["stdout"][:400],
+            "stderr": row["stderr"][:400],
+        }
+        for step in report["steps"]
+        if isinstance(step.get("data"), dict)
+        and isinstance(step["data"].get("results"), list)
+        for row in step["data"]["results"]
+        if row.get("status") != "ok"
+    ]
+    return "mission verdict RED; commands that did not succeed:\n" + json.dumps(
+        rows, indent=2
+    )
 
 
 def test_mission_loop_runs_runtime_validation_harnesses(tmp_path: Path) -> None:
@@ -25,20 +53,9 @@ def test_mission_loop_runs_runtime_validation_harnesses(tmp_path: Path) -> None:
     )
 
     report = run_mission_loop(root=tmp_path, operator_prompt="runtime validation proof")
-    import json as _j
-    _bad = [
-        {"step": s["kind"], "id": r["id"], "command": r["command"],
-         "status": r["status"], "rc": r["returncode"],
-         "stdout": r["stdout"][:400], "stderr": r["stderr"][:400]}
-        for s in report["steps"]
-        if isinstance(s.get("data"), dict) and isinstance(s["data"].get("results"), list)
-        for r in s["data"]["results"]
-        if r.get("status") != "ok"
-    ]
-    _why = "DIAG non-ok rows:\n" + _j.dumps(_bad, indent=2)
 
     validation = next(step for step in report["steps"] if step["kind"] == "runtime_validation")
-    assert report["summary"]["verdict"] == "GREEN", _why
+    assert report["summary"]["verdict"] == "GREEN", _failing_commands(report)
     assert validation["data"]["succeeded"] == 2
     assert {row["id"] for row in validation["data"]["results"]} == {
         "validate-integrity",
