@@ -73,6 +73,19 @@ Then run `hydra setup` to configure a model provider (or drop keys in
 - The bundled vector extension (`vec0.so`) is Linux x86-64 only. On macOS/Windows,
   `pip install sqlite-vec` for full vector memory; without it, recall gracefully
   falls back to keyword search.
+- **Vector memory also needs a Python whose `sqlite3` can load extensions.** Some
+  CPython builds -- notably several macOS builds, including the one this repo's own
+  macOS CI runs on -- compile `sqlite3` *without* extension support, so `vec0` can
+  never load there no matter which extension binary is installed. Check yours:
+
+  ```bash
+  python -c "import sqlite3; print(hasattr(sqlite3.Connection, 'enable_load_extension'))"
+  ```
+
+  If that prints `False`, use a Python whose `sqlite3` enables extension loading, or
+  run without vector memory: Hydra says so at startup
+  (`Hydra memory: vector lane OFF - <reason>`) and recall falls back to keyword
+  search. It never degrades silently.
 
 ## Quickstart
 
