@@ -73,6 +73,11 @@ Then run `hydra setup` to configure a model provider (or drop keys in
 - The bundled vector extension (`vec0.so`) is Linux x86-64 only. On macOS/Windows,
   `pip install sqlite-vec` for full vector memory; without it, recall gracefully
   falls back to keyword search.
+- GPU-busy detection (`hydra/model_router.py`) reads a POSIX advisory lock
+  (`fcntl.flock`) to tell whether a local GPU job already holds the card. Native
+  Windows has no `fcntl`, so **on Windows a busy GPU cannot be detected**: the
+  router logs a loud warning and routes as if the GPU were free. Linux/macOS are
+  unaffected. The tests covering that seam skip on Windows for the same reason.
 
 ## Quickstart
 
