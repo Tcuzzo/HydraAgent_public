@@ -25,6 +25,7 @@ from hydra.memory_kernel import assemble_memory_briefing, assemble_truth_context
 from hydra.mission import create_mission
 from hydra.mission_objectives import load_objectives
 from hydra.orchestrate import SubagentTask, dispatch
+from hydra.proc import resolve_bash
 from hydra.skill_spine import route_capability_cards, route_skill_records
 from hydra.wiki_memory import write_mission_page
 
@@ -200,7 +201,7 @@ def _safe_command_plan(root: Path) -> list[SubagentTask]:
         tasks.append(
             SubagentTask(
                 id=_command_id(command),
-                command=["bash", "-lc", command],
+                command=[resolve_bash(), "-lc", command],
                 cwd=str(root),
                 timeout_seconds=20,
             )
@@ -224,7 +225,7 @@ def _runtime_validation_plan(root: Path) -> list[SubagentTask]:
     return [
         SubagentTask(
             id=f"validate-{name}",
-            command=["bash", "-lc", command],
+            command=[resolve_bash(), "-lc", command],
             cwd=str(root),
             timeout_seconds=60,
         )

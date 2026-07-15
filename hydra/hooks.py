@@ -8,6 +8,7 @@ from typing import Any
 
 from hydra.autonomy import SAFE_BASH_COMMANDS, classify_tool_call
 from hydra.orchestrate import SubagentTask, dispatch
+from hydra.proc import resolve_bash
 
 
 SCHEMA = "hydra.hooks.v1"
@@ -66,7 +67,7 @@ def run_hooks(root: Path, event: str, *, max_concurrency: int = 2) -> dict[str, 
     tasks = [
         SubagentTask(
             id=f"hook-{hook.event}-{hook.id}",
-            command=["bash", "-lc", hook.command],
+            command=[resolve_bash(), "-lc", hook.command],
             cwd=str(root),
             timeout_seconds=20,
         )

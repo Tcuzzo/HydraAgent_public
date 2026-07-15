@@ -22,6 +22,7 @@ from hydra.emergency_fallback import (
     probe_model,
 )
 from hydra.orchestrate import SubagentTask, dispatch
+from hydra.proc import resolve_bash
 from hydra import workbench_ledger as _wl
 
 
@@ -210,7 +211,7 @@ def _task_from_command(command: str, root: Path) -> SubagentTask:
         raise ContinuationError(f"continuation command is not auto-allowed: {command}")
     return SubagentTask(
         id="continuation-" + command.replace(" ", "-").replace("/", "-").replace(".", "-"),
-        command=["bash", "-lc", command],
+        command=[resolve_bash(), "-lc", command],
         cwd=str(REPO_ROOT if command.startswith("python3 -m hydra ") else root),
         env={"PYTHONPATH": str(REPO_ROOT)},
         timeout_seconds=60,
