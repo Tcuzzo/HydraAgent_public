@@ -25,12 +25,22 @@ jobs:
       - name: scan for unsafe deserialization / dynamic exec
         run: |
           set -e
-          hits=$(grep -rnE '\b(pickle|cPickle|dill|marshal|shelve|jsonpickle)\b|yaml\.load\(|allow_pickle|__reduce__' \
-            --include='*.py' . | grep -v '/test' | grep -viE 'docstring|# ' || true)
+          # Anchor on real Python syntax (import statement / attribute call) so that
+          # English prose -- e.g. "marshal completion to UI" in a docstring -- cannot
+          # trip the guard, while genuinely unsafe code still does. A bare word match
+          # cannot tell code from prose; this can.
+          mods='pickle|cPickle|dill|marshal|shelve|jsonpickle'
+          hits=$(grep -rnE \
+            "^[[:space:]]*(import|from)[[:space:]]+([A-Za-z0-9_.]+[[:space:]]*,[[:space:]]*)*($mods)\b|\b($mods)\.[A-Za-z_][A-Za-z0-9_]*\(|yaml\.load\(|allow_pickle|__reduce__|(^|[^.[:alnum:]_])(eval|exec)[[:space:]]*\(" \
+            --include='*.py' . \
+            | grep -v '/test' \
+            | grep -vE '\bdef[[:space:]]+(eval|exec)[[:space:]]*\(' \
+            | grep -vE 'yaml\.load\([^)]*SafeLoader' \
+            || true)
           if [ -n "$hits" ]; then
-            echo "Unsafe deserialization patterns found:"; echo "$hits"; exit 1
+            echo "Unsafe deserialization / dynamic-exec patterns found:"; echo "$hits"; exit 1
           fi
-          echo "clean: no pickle/unsafe-deserialization in shipped code"
+          echo "clean: no pickle/unsafe-deserialization/dynamic-exec in shipped code"
 
   smoke:
     name: smoke (${{ matrix.os }} / py${{ matrix.python }})
@@ -54,5 +64,5 @@ jobs:
           python -c "import hydra.cli.cmd_ask, hydra.cli.cmd_chat, hydra.loop, hydra.proc"
       - name: tests
         run: |
-          pip install -c constraints.txt pytest pytest-asyncio
+          pip install -e ".[test]" -c constraints.txt
           pytest -q

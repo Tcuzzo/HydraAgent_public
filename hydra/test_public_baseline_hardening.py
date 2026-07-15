@@ -112,8 +112,25 @@ def test_ci_test_toolchain_ships_pytest_asyncio() -> None:
         "constraints.txt must pin pytest-asyncio (==) — the CI async tests need it"
     )
     assert "pytest" in pinned, "constraints.txt must pin pytest (==) for reproducible CI test installs"
+    # Verify the real install chain rather than grepping ci.yml for the bare word
+    # "pytest-asyncio" (a mere comment would satisfy that). The toolchain is
+    # DECLARED in pyproject's [test] extra and PINNED by constraints.txt, and CI
+    # installs that extra under those constraints -- assert every link.
+    data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    test_extra = data["project"]["optional-dependencies"]["test"]
+    declared = {
+        _canonical(re.match(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)", spec).group(1))
+        for spec in test_extra
+    }
+    assert "pytest-asyncio" in declared, (
+        "pyproject's [test] extra must declare pytest-asyncio -- CI installs the extra"
+    )
+    assert "pytest" in declared, "pyproject's [test] extra must declare pytest"
     ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "pytest-asyncio" in ci, "ci.yml's test-install step must install pytest-asyncio"
+    assert re.search(r'pip install -e "\.\[test\]" -c constraints\.txt', ci), (
+        "ci.yml's test step must install the [test] extra (which declares "
+        "pytest-asyncio) under constraints.txt -- declared deps, pinned versions"
+    )
 
 
 def _shell_decision(command: str) -> dict:
