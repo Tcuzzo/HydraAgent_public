@@ -121,7 +121,15 @@ class ApprovalPolicy:
         mission_level: str | None = None,
         is_self_heal: bool = False,
         wait: bool | None = None,
+        non_destructive_auto_allow: bool = True,
     ) -> None:
+        # `non_destructive_auto_allow` is threaded from the calling tool contract
+        # (e.g. .hydraAgent/tools/shell.yaml). Default True preserves EXACTLY the
+        # historical behavior for every existing call site. When a contract sets it
+        # False (the public-edition safe default), a command the classifier would
+        # normally auto-allow — a non-destructive shell command — is instead routed
+        # through the approval gate below. Destructive commands are unaffected: they
+        # already classify as needs_approval regardless of this flag.
         # Re-execution seam: `wait` overrides self.wait_for_approval for this one
         # call so guarded() can opt a single tool call INTO the blocking wait
         # WITHOUT cloning the policy (the policy is mutated live — e.g. plan_mode
@@ -182,8 +190,10 @@ class ApprovalPolicy:
             summary = _summarize(tool_name, arguments)
             raise ApprovalDenied(f"approval denied for {summary}")
         autonomy = classify_tool_call(tool_name, arguments, self.mode, mission_level=mission_level)
-        if autonomy["decision"] == "auto_allow":
+        if autonomy["decision"] == "auto_allow" and non_destructive_auto_allow:
             return
+        # Contract opted out of non-destructive auto-allow: fall through so even a
+        # benign command is queued/prompted like any other gated action.
         if autonomy["decision"] == "blocked":
             raise ApprovalDenied(f"approval denied for {_summarize(tool_name, arguments)}")
         summary = _summarize(tool_name, arguments)
