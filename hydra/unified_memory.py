@@ -153,6 +153,66 @@ def _strip_ext(path: str) -> str:
     return path
 
 
+# ── vec0 capability probe ───────────────────────────────────────────────────
+
+
+def _sqlite3_supports_extension_loading() -> bool:
+    """True when THIS interpreter's sqlite3 can load extensions at all.
+
+    CPython ships sqlite3 with extension loading COMPILED OUT on some
+    platforms (notably the macOS builds this repo's own CI runs on, and the
+    stock Windows build). ``sqlite3.Connection`` then has no
+    ``enable_load_extension`` attribute whatsoever, so vec0 can never load --
+    no matter which extension binary is present.
+    """
+    return hasattr(sqlite3.Connection, "enable_load_extension")
+
+
+def vec0_unavailable_reason() -> str | None:
+    """Probe the REAL vec0 capability. ``None`` means the vec0 lane works here.
+
+    This is the single source of truth for the capability:
+    :meth:`UnifiedMemory._open` raises the returned reason as a loud typed
+    :class:`BackendUnavailable`, and the test-suite conditions its vec0
+    coverage on this same probe -- so the check can never drift from what the
+    product actually requires, and is never a guess based on a platform name.
+
+    Returns a precise, human-readable reason naming the missing capability AND
+    the remedy, or ``None`` when a vec0 extension genuinely loads here.
+    """
+    if not _sqlite3_supports_extension_loading():
+        return (
+            "this Python's sqlite3 was built without extension support, so the "
+            "sqlite-vec vec0 extension can never load (sqlite3.Connection has no "
+            "enable_load_extension). Check yours with: python -c \"import sqlite3; "
+            "print(hasattr(sqlite3.Connection, 'enable_load_extension'))\". Use a "
+            "Python whose sqlite3 enables extension loading, or run without vector "
+            "memory -- recall falls back to keyword search."
+        )
+    ext = resolve_vec0_extension()
+    if not ext:
+        return (
+            "the sqlite-vec vec0 extension was not found: set HYDRA_VEC0_PATH, run "
+            "`pip install sqlite-vec`, or restore the vendored "
+            "hydra/_vendor/sqlite_vec/vec0.so. Without it, recall falls back to "
+            "keyword search."
+        )
+    con = sqlite3.connect(":memory:")
+    try:
+        con.enable_load_extension(True)
+        con.load_extension(ext)
+    except Exception as exc:
+        return (
+            f"the vec0 extension at {ext!r} could not be loaded: {exc}. The vendored "
+            "vec0.so is Linux x86-64 only -- on macOS/Windows run `pip install "
+            "sqlite-vec` to get a build for this platform. Without it, recall falls "
+            "back to keyword search."
+        )
+    finally:
+        con.close()
+    return None
+
+
 # ── Serialization ───────────────────────────────────────────────────────────
 
 
@@ -295,6 +355,12 @@ class UnifiedMemory:
     # -- connection / schema -------------------------------------------------
 
     def _open(self) -> sqlite3.Connection:
+        # Probe the real capability FIRST so an environment that can never run
+        # vec0 gets one precise, actionable error instead of a raw AttributeError
+        # leaking out of sqlite3 -- and never a silent degrade.
+        reason = vec0_unavailable_reason()
+        if reason:
+            raise BackendUnavailable(f"vector memory unavailable: {reason}")
         con = sqlite3.connect(str(self.path))
         con.row_factory = sqlite3.Row
         ext = resolve_vec0_extension()

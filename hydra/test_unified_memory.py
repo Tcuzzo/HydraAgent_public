@@ -181,6 +181,7 @@ def test_a4_relevance_with_real_nomic(tmp_path):
 
 @pytest.mark.network
 @pytest.mark.live
+@requires_vec0
 def test_a5_hybrid_keyword_catch(tmp_path):
     if not _ollama_up():
         pytest.skip("ollama unreachable, cannot run hybrid keyword test")
@@ -476,6 +477,7 @@ def test_m2_rows_carry_source_and_scope(tmp_path):
 
 @pytest.mark.network
 @pytest.mark.live
+@requires_vec0
 def test_m3_real_recall_from_store(tmp_path, monkeypatch):
     if not _ollama_up():
         pytest.skip("ollama unreachable, cannot run real recall-from-store smoke")
