@@ -46,6 +46,18 @@ def _gpu_busy() -> bool:
     try:
         import fcntl  # POSIX-only; lazy so non-POSIX imports of this module work
     except ImportError:
+        # A lock file EXISTS, so something is speaking the GPU-lock protocol --
+        # but this platform (native Windows) has no fcntl, so the lock cannot be
+        # read. Never answer "not busy" SILENTLY here: that is indistinguishable
+        # from a genuinely free GPU and would route work onto a card that is
+        # already held. Say so LOUDLY, then give the only answer available.
+        logging.getLogger(__name__).warning(
+            "GPU lock %s exists, but this platform has no 'fcntl' (POSIX-only), "
+            "so a busy GPU CANNOT be detected here -- routing as if the GPU were "
+            "free. GPU-busy detection is Linux/macOS-only; see the README "
+            "'Cross-platform notes'.",
+            lock_path,
+        )
         return False
     try:
         fd = open(lock_path, "a+")
