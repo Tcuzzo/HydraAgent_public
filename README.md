@@ -390,5 +390,5 @@ See [NOTICE.md](NOTICE.md) for third-party attributions and
 
 ## Part of a family
 
-Hydra is one of a family of local-first, operator-owned, bring-your-own-model agents: [OpenMontage](https://github.com/Tcuzzo/OpenMontage), an agentic video-production studio, and [bucks](https://github.com/Tcuzzo/bucks), a local-first trading agent that is paper-first and keeps you holding the keys.
+Hydra is one of a family of local-first, operator-owned, bring-your-own-model agents, alongside [bucks](https://github.com/Tcuzzo/bucks), a local-first trading agent that is paper-first and keeps you holding the keys.
 The shared philosophy is your machine, your keys, your models, a clear safety model, and a Telegram remote.
