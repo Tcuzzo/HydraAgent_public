@@ -25,20 +25,20 @@ one daily-driver command:
   roles            show planner/doer/auditor model routing
   telegram         check Telegram Bot API reachability
   execute          planner -> doer -> auditor-gated mission loop
-  surgery-loop     bounded repair loop with per-attempt evidence
   ops              preview infrastructure ops plans without execution
 
 Options for `ask`:
-  --provider {ollama,ollama-cloud,...}   default: ollama
+  --provider {ollama,ollama-cloud,...}   default: resolved by --profile
   --model <name>                 default: provider's resolved model
-  --root <dir>                   filesystem scope (default: /)
-  --max-iterations N             default: 200 (iterate like Claude Code/Codex)
+  --root <dir>                   filesystem scope (default: current directory)
+  --max-iterations N             default: 20 (HYDRA_ASK_MAX_ITERATIONS to raise)
   --approval-policy allow|ask|deny
-                                  default: allow
+                                  default: ask
 
-The CLI binds the default tool set (fs_read, fs_write, bash, glob,
-grep, http_fetch) with `--root` pre-bound via closure — the LLM only
-sees args it should care about, never the filesystem scope.
+The CLI binds the default tool set (fs_read/fs_write/fs_edit, bash,
+glob, grep, http_fetch, todo, memory, skills, system_stats, browser)
+with `--root` pre-bound via closure — the LLM only sees args it should
+care about, never the filesystem scope.
 
 Maturity: SCAFFOLDED. Promoted by §10.29.
 """

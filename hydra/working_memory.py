@@ -9,6 +9,7 @@ This module provides a more sophisticated memory system that can:
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import math
 import re
@@ -280,9 +281,16 @@ def _save_index(memory_id: str, index_data: Dict[str, Any]) -> None:
         json.dump(index_data, f, indent=2, sort_keys=True)
 
 
+# The wall clock alone cannot mint unique ids: coarse clock ticks (Windows:
+# ~15ms) return the identical microsecond for back-to-back adds, and a
+# duplicate id silently overwrites the earlier entry in the entries dict.
+_ENTRY_ID_SEQ = itertools.count()
+
+
 def _generate_entry_id() -> str:
-    """Generate a unique entry ID."""
-    return f"entry_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f')}"
+    """Generate a unique entry ID (timestamp for readability, counter for uniqueness)."""
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    return f"entry_{ts}_{next(_ENTRY_ID_SEQ):06d}"
 
 
 def _update_index(memory_id: str, entry: MemoryEntry) -> None:
@@ -328,6 +336,10 @@ def add_entry(
         embedding = embed_text(content)
 
     entry_id = _generate_entry_id()
+    # Cross-process belt: another process may have minted the same tick+seq
+    # into this memory file. Never overwrite an existing entry silently.
+    while entry_id in memory_data["entries"]:
+        entry_id = _generate_entry_id()
     entry = MemoryEntry(
         id=entry_id,
         timestamp=datetime.now(timezone.utc).isoformat(),

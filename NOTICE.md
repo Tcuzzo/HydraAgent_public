@@ -25,12 +25,14 @@ licensing of this project.
 - `prompt_toolkit` — BSD-3-Clause
 - `psutil` — BSD-3-Clause
 - `pyfiglet` — MIT
+- `pyyaml` — MIT
+- `packaging` — Apache-2.0 / BSD-2-Clause (dual)
 - `qrcode` — BSD-3-Clause
 - `rich` — MIT
 - `textual` — MIT
 - `sqlite-vec` (optional) — MIT / Apache-2.0
 - `pynvml` (optional) — BSD-3-Clause
-- `redis` (optional) — MIT
+- `redis` (optional, used opportunistically if present) — MIT
 - `playwright` (optional, for the browser tools) — Apache-2.0
 
 Each dependency is the property of its respective authors and is used under its own
