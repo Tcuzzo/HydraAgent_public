@@ -1,0 +1,36 @@
+schema: hydra.tool_contract_set.v1
+tools:
+  - tool_id: http_fetch
+    name: HTTP Fetch
+    description: Bounded HTTP GET against an allow-listed host (hard byte cap, timeout, SSRF-guarded).
+    risk: read_only
+    executor: skills.http_fetch:run
+    input_schema:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+    approval:
+      required: false
+    policy:
+      host_allowlist: true
+      private_address_forbidden: true
+  - tool_id: web_extract
+    name: Web Extract
+    description: Fetch a URL via the http_fetch contract and extract clean readable text from its HTML.
+    risk: read_only
+    executor: skills.web_extract:run
+    input_schema:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+    approval:
+      required: false
+    policy:
+      host_allowlist: true
+      private_address_forbidden: true

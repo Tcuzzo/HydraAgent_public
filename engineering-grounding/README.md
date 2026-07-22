@@ -70,7 +70,7 @@ Google SRE · Nielsen · Norman · Hyrum's Law · DORA.
 
 ## Provenance
 
-Distilled and proven inside BACKS, then shared to the agent fleet so every builder —
+Distilled and proven in live autonomous-agent operation, then shared to the agent fleet so every builder —
 not just the one with the biggest model — starts from the same floor. The principles are
 public knowledge with citations; this packaging is offered under the host repository's
 license. Corrections and additions welcome.

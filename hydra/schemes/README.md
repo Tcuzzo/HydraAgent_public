@@ -1,17 +1,26 @@
 # Hydra Skills
 
-**Status:** MATERIALIZED PROCEDURAL LIBRARY.
+**Status:** SOURCE CATALOGS + MATERIALIZER.
 
-This directory contains bundle catalogs, sample skill documents, and a generated
-procedural skill library materialized from the seven 200-entry bundle catalogs.
-It is not a thousand-skill Python runtime.
+This directory contains the bundle catalogs and the concrete skill documents
+that ship with Hydra. It is not a thousand-skill Python runtime.
 
-Current local inventory:
+Shipped inventory:
 
-- 1420 `SKILL.md` files under `hydra/skills`
-- 1400 generated procedural skill contracts under `hydra/skills/generated`
-- 16 Python runtime tool modules under `skills/`
+- bundle catalogs under `hydra/schemes/bundles/`
+- 17 concrete `SKILL.md` documents under `hydra/schemes/`
+- Python runtime tool modules under `skills/` (counted separately)
 - 0 catalog entries claimed as Python runtime tools
+
+The full procedural library is **generated on your machine**, not shipped:
+
+```bash
+hydra skills materialize            # bundles -> hydra/schemes/generated/
+```
+
+reads the catalogs under `hydra/schemes/bundles/` and writes one concrete
+`SKILL.md` per catalog entry to `hydra/schemes/generated/` (both paths
+overridable with `--bundles-root` / `--output-root`).
 
 ## What Counts As Real
 
@@ -28,6 +37,6 @@ and tests.
 
 ## Bundle Status
 
-The bundle files under `hydra/skills/bundles/` remain source catalogs.
-The generated files under `hydra/skills/generated/` are the materialized
-procedural library produced from those catalogs.
+The bundle files under `hydra/schemes/bundles/` remain source catalogs.
+Files under `hydra/schemes/generated/` (created by `hydra skills materialize`)
+are the materialized procedural library produced from those catalogs.
