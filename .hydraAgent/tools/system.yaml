@@ -1,0 +1,32 @@
+schema: hydra.tool_contract_set.v1
+tools:
+  - tool_id: system_stats
+    name: System Stats
+    description: Snapshot host CPU load, memory, disk, and process count. Read-only.
+    risk: read_only
+    executor: skills.system_stats:run
+    input_schema:
+      type: object
+      properties: {}
+    approval:
+      required: false
+  - tool_id: todo
+    name: Todo List
+    description: Persistent per-workspace task list (list/add/done/undone/remove/clear).
+    risk: guarded_write
+    executor: skills.todo:run
+    input_schema:
+      type: object
+      required:
+        - action
+      properties:
+        action:
+          type: string
+        text:
+          type: string
+        id:
+          type: integer
+    approval:
+      required: false
+    policy:
+      workspace_only: true
