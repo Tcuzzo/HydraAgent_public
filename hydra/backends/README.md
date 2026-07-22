@@ -4,25 +4,23 @@ Production-ready execution backends for Hydra with **worktree isolation** and **
 
 ## Overview
 
-Three deployment backends providing isolated, resource-bounded task execution:
+Two deployment backends providing isolated, resource-bounded task execution:
 
 | Backend | Use Case | Isolation | Resource Limits |
 |---------|----------|-----------|-----------------|
 | **Docker** | Containerized execution | Container per task | CPU, memory, disk, pids |
-| **SSH** | Remote host execution | Remote worktree sync | Timeout, remote limits |
 | **Modal** | Serverless cloud execution | Bundled deployment | Timeout, memory, regions |
 
 ## Installation
 
 ```bash
 # Backends are part of hydra package
-from hydra.backends import DockerBackend, SSHBackend, ModalBackend
+from hydra.backends import DockerBackend, ModalBackend
 ```
 
 ### Dependencies
 
 - **Docker backend**: Docker daemon installed and running
-- **SSH backend**: `ssh` and `rsync` (or `scp`) available
 - **Modal backend**: `modal` CLI installed and authenticated (`modal token new`)
 
 ## Quick Start
@@ -47,26 +45,6 @@ if result.success:
     print(f"Output: {result.stdout}")
 else:
     print(f"Failed: {result.stderr}")
-```
-
-### SSH Backend
-
-```python
-from hydra.backends import SSHBackend, SSHConfig
-
-config = SSHConfig(
-    ssh_host="remote.server.com",
-    ssh_port=22,
-    ssh_user="deploy",
-    ssh_key_path="~/.ssh/deploy_key",
-    timeout_seconds=300,
-)
-
-backend = SSHBackend(config)
-
-# Check connection
-if backend.health_check():
-    result = backend.execute(["python3", "script.py"])
 ```
 
 ### Modal Backend
@@ -137,7 +115,6 @@ config = BackendConfig(
 
 **Memory limits:**
 - Docker: Enforced via `--memory` flag
-- SSH: Uses `ulimit -v` where available
 - Modal: Enforced by platform
 
 ### 3. Retry Logic
@@ -200,20 +177,6 @@ result = run_in_docker(
 )
 ```
 
-### SSH
-
-```python
-from hydra.backends.ssh import run_on_ssh
-
-result = run_on_ssh(
-    ["python3", "script.py"],
-    host="remote.server.com",
-    user="deploy",
-    key_path="~/.ssh/key",
-    timeout_seconds=60,
-)
-```
-
 ### Modal
 
 ```python
@@ -242,15 +205,6 @@ backend.run_script(
     """,
     interpreter="python3"
 )
-
-# SSH
-backend.execute_script(
-    """
-    echo "Running on remote host"
-    hostname
-    """,
-    interpreter="bash"
-)
 ```
 
 ### Custom Docker Images
@@ -273,22 +227,6 @@ success = backend.build_image(
     dockerfile_path="/path/to/Dockerfile",
     image_name="my-app:latest",
     context_dir="/path/to/context",
-)
-```
-
-### SSH File Transfer
-
-```python
-# Upload file
-backend.upload_file(
-    local_path="/local/file.txt",
-    remote_path="/remote/file.txt",
-)
-
-# Download file
-backend.download_file(
-    remote_path="/remote/output.txt",
-    local_path="/local/output.txt",
 )
 ```
 
@@ -325,17 +263,10 @@ with DockerBackend(config) as backend:
 
 ## Evaluation Harnesses
 
-Comprehensive test suites in `tests/hydra/`:
+The Docker engine harness lives next to the code:
 
 ```bash
-# Test Docker backend
-python3 tests/hydra/test_docker_backend.py
-
-# Test SSH backend
-python3 tests/hydra/test_ssh_backend.py
-
-# Test Modal backend
-python3 tests/hydra/test_modal_backend.py
+pytest hydra/backends/test_docker_backend_engine.py
 ```
 
 ### Test Coverage
@@ -362,8 +293,8 @@ hydra/backends/
 │   ├── ExecutionResult  # Result dataclass
 │   └── BackendBase      # Abstract base with common logic
 ├── docker.py            # Docker implementation
-├── ssh.py               # SSH implementation
-└── modal.py             # Modal implementation
+├── modal.py             # Modal implementation
+└── test_docker_backend_engine.py  # Docker engine harness
 ```
 
 ### Base Class Responsibilities
@@ -390,12 +321,6 @@ Each backend implements:
 - `no-new-privileges` security option
 - `/tmp` mounted as tmpfs (no persistence)
 
-### SSH
-- Key-based authentication (passwords discouraged)
-- Strict host key checking optional
-- Rsync with exclude patterns
-- Remote worktree cleanup
-
 ### Modal
 - Code bundled and uploaded securely
 - Ephemeral execution (no persistence)
@@ -409,15 +334,6 @@ Each backend implements:
 sudo apt-get install docker.io
 # Or
 brew install --cask docker
-```
-
-### SSH Connection Failed
-```bash
-# Test connection manually
-ssh -i ~/.ssh/key user@host echo "test"
-
-# Add key to agent
-ssh-add ~/.ssh/key
 ```
 
 ### Modal Not Authenticated
