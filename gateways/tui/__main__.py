@@ -1,16 +1,15 @@
-"""gateways.tui.__main__ — delegates to the original tui.py CLI.
+"""gateways.tui.__main__ — opens the Hydra chat surface.
 
-Allows `python3 -m gateways.tui <command>` to keep working now that
-gateways/tui/ is a package (which shadows gateways/tui.py for imports
-but requires __main__.py for -m execution).
+`python3 -m gateways.tui` historically executed a standalone `gateways/tui.py`;
+that module no longer ships (the chat surface lives behind `hydra chat`).
+This shim delegates there so the module path keeps working instead of
+crashing on a missing file.
 """
 from __future__ import annotations
 
 import sys
-import runpy
-from pathlib import Path
 
-_TUI_PY = Path(__file__).resolve().parents[1] / "tui.py"
+from hydra.__main__ import main
 
-# Execute the original tui.py as __main__ so its argparse and sys.exit work correctly.
-runpy.run_path(str(_TUI_PY), run_name="__main__")
+if __name__ == "__main__":
+    sys.exit(main(["chat", *sys.argv[1:]]))

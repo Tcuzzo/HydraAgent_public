@@ -4,3 +4,5 @@ tools:
   - .hydraAgent/tools/skill-library.yaml
   - .hydraAgent/tools/subagents.yaml
   - .hydraAgent/tools/shell.yaml
+  - .hydraAgent/tools/web.yaml
+  - .hydraAgent/tools/system.yaml
