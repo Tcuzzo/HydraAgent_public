@@ -111,7 +111,10 @@ def test_keyword_mode_unchanged(wm):
     id_b = wm.add_entry(
         mem_id, "delta epsilon zeta", entry_type="note", tags=["greek", "other"]
     )
-    wm.add_entry(mem_id, "completely unrelated words here", entry_type="fact")
+    id_c = wm.add_entry(mem_id, "completely unrelated words here", entry_type="fact")
+    # Fail HERE, loudly, if ids ever collide — not at a confusing filter
+    # assertion downstream.
+    assert len({id_a, id_b, id_c}) == 3, f"entry id collision: {[id_a, id_b, id_c]}"
 
     # Keyword query (default behavior).
     hits = wm.search_entries(mem_id, query="delta")
@@ -142,3 +145,34 @@ def test_embedder_deterministic(wm):
     # Different text yields a different vector.
     v3 = wm.embed_text("a completely different sentence about taxes")
     assert v3 != v1
+
+
+def test_entry_ids_unique_when_clock_stalls(wm, monkeypatch):
+    """Adds inside a single clock tick must still mint distinct ids.
+
+    Windows ticks at ~15ms, so datetime.now() returns the identical
+    microsecond for back-to-back adds — and identical ids silently
+    overwrite each other in the entries dict (seen live: CI run
+    29887117743 minted entry_20260722_025824_884581 twice).
+    """
+    frozen = wm.datetime.now(wm.timezone.utc)
+
+    class _StalledClock:
+        @staticmethod
+        def now(tz=None):
+            return frozen
+
+    monkeypatch.setattr(wm, "datetime", _StalledClock)
+    ids = {wm._generate_entry_id() for _ in range(10)}
+    assert len(ids) == 10, f"a stalled clock must not collapse ids, got {ids!r}"
+
+
+def test_rapid_adds_never_overwrite(wm):
+    """N rapid adds keep N entries, each with its own content."""
+    mem_id = _new_memory(wm)
+    ids = [wm.add_entry(mem_id, f"entry number {i}") for i in range(50)]
+    assert len(set(ids)) == 50, "duplicate entry ids minted under rapid adds"
+    for i, entry_id in enumerate(ids):
+        stored = wm.get_entry(mem_id, entry_id)
+        assert stored is not None, f"entry {i} vanished (silently overwritten)"
+        assert stored["content"] == f"entry number {i}"
