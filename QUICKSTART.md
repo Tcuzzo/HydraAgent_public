@@ -13,13 +13,18 @@ No API keys ship with Hydra.
 ## 2. Choose a model
 
 ```bash
-hydra setup
+hydra
 ```
+
+Bare `hydra` opens the chat surface; on a fresh install it shows the
+**connect a model** panel right there. (`hydra setup` walks the same choices
+from the command line.)
 
 Pick one path:
 
 - Local and free: install Ollama, pull a model, and let Hydra use it.
 - Cloud: enter your own provider key when prompted.
+- Sign in with ChatGPT: use your ChatGPT account via the Codex CLI — no API key.
 
 ## 3. Ask Hydra to do something
 

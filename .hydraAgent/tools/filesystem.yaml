@@ -95,3 +95,49 @@ tools:
       required: false
     policy:
       read_only_git: true
+  - tool_id: fs_write
+    name: Filesystem Write
+    description: Create or overwrite a file inside the workspace (atomic; overwrite is opt-in).
+    risk: guarded_write
+    executor: skills.fs_write:run
+    input_schema:
+      type: object
+      required:
+        - path
+        - content
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+        overwrite:
+          type: boolean
+          default: false
+    approval:
+      required: false
+    policy:
+      workspace_only: true
+      atomic_write: true
+  - tool_id: fs_edit
+    name: Filesystem Edit
+    description: Surgical search/replace inside a workspace file (atomic; refuses ambiguous edits).
+    risk: guarded_write
+    executor: skills.fs_edit:run
+    input_schema:
+      type: object
+      required:
+        - path
+        - old
+        - new
+      properties:
+        path:
+          type: string
+        old:
+          type: string
+        new:
+          type: string
+    approval:
+      required: false
+    policy:
+      workspace_only: true
+      atomic_write: true

@@ -1,8 +1,9 @@
-# Skill index — what the §10.7 agent runtime discovers at startup.
+# Skill index — the Python runtime tool modules under skills/ that the
+# agent runtime discovers at startup.
 #
-# A skill enters this index only after its slice has been loop-promoted
-# (a PROVEN row in STATUS.md). The verifier could additionally cross-check
-# this against the promotion log; that's a planned §10.7 invariant.
+# A skill enters this index only once it is implemented and wired into the
+# runtime; `proven_by` records the provenance of that promotion (a promotion
+# tag from the original build, or the runtime seam that exercises it here).
 
 skills:
   - name: fs_read
@@ -64,3 +65,21 @@ skills:
     entry: run
     proven_by: "§10.32-todo"
     summary: Persistent per-workspace task list (list/add/done/undone/remove/clear), monotonic ids.
+
+  - name: system_stats
+    module: skills.system_stats
+    entry: run
+    proven_by: "wired: hydra/cli/tool_binding.py (agent-loop tool system_stats)"
+    summary: Read-only snapshot of host CPU load, memory, disk usage, and process count.
+
+  - name: web_extract
+    module: skills.web_extract
+    entry: run
+    proven_by: "wired: hydra/verify_claim.py + hydra/cli/cmd_ops.py"
+    summary: Fetch a URL via the http_fetch contract and extract clean readable text from its HTML (stdlib-only parser).
+
+  - name: browse_agent
+    module: skills.browse_agent
+    entry: run
+    proven_by: "wired: hydra/cli/tool_binding.py (agent-loop tool browse)"
+    summary: Goal-directed agentic browsing (snapshot -> decide -> act) on Hydra's own browser bridge, bounded by max_steps.

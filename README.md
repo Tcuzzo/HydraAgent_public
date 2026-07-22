@@ -19,8 +19,8 @@ multi-machine swarm, or operator data. See [PROVENANCE.md](PROVENANCE.md).
 - **Edit code safely** — bounded file read/write/edit with path-escape protection.
 - **Run a shell** — execute commands cross-platform, behind an approval gate.
 - **Search & analyze** — grep, glob, repo audit, git diff.
-- **Reason with any model** — local (Ollama) or cloud, routed by task complexity
-  across fast / reasoning / judge tiers.
+- **Reason with any model** — local (Ollama), cloud, or your ChatGPT account
+  (Codex sign-in), routed by task complexity across fast / reasoning / judge tiers.
 - **Remember** — a single-file hybrid memory: vector similarity + keyword (FTS5)
   search fused together, so recall feels human, not literal.
 - **Pluggable skills** — drop a `SKILL.md` in and the agent can route to it.
@@ -33,8 +33,9 @@ multi-machine swarm, or operator data. See [PROVENANCE.md](PROVENANCE.md).
 ## Requirements
 
 - **Python 3.11+** on Linux, macOS, or Windows.
-- A model provider: a local [Ollama](https://ollama.com) install (free) and/or a
-  cloud provider API key. You bring your own keys — none ship with this repo.
+- A model provider: a local [Ollama](https://ollama.com) install (free), a cloud
+  provider API key, or a ChatGPT account (via **Sign in with ChatGPT**, which uses
+  the Codex CLI). You bring your own keys — none ship with this repo.
 - Optional: `sqlite-vec` (full vector memory), `playwright` (browser tools).
 
 ## Install
@@ -63,8 +64,14 @@ pip install sqlite-vec        # full vector memory (otherwise keyword-only recal
 pip install playwright && playwright install chromium   # browser tools
 ```
 
-Then run `hydra setup` to configure a model provider (or drop keys in
-`~/.hydraAgent/workspace/.env.<provider>`) and you're ready: `hydra ask "..."`.
+Then just run **`hydra`** — it opens the chat surface, and if no model is
+configured yet it shows an in-surface **connect a model** panel with three
+paths: local Ollama, a cloud API key, or **Sign in with ChatGPT**. Prefer the
+command line? `hydra setup` walks the same choices (or drop keys in
+`~/.hydraAgent/workspace/.env.<provider>`), and then you're ready:
+`hydra ask "..."`.
+
+Step-by-step first run: see [QUICKSTART.md](QUICKSTART.md).
 
 ## Running on Windows and macOS
 
@@ -166,6 +173,8 @@ Windows for the same reason, and only on Windows.
 ## Quickstart
 
 ```bash
+hydra                                                   # bare launch: opens chat
+                                                        # (first run: connect-a-model panel)
 python -m hydra ask "summarize what this repo does"     # one-shot
 python -m hydra chat                                    # interactive
 python -m hydra tools                                   # list the tool set
@@ -212,7 +221,7 @@ Run any command as `hydra <cmd>` (installed) or `python -m hydra <cmd>`, and add
 | Command | What it does |
 |---|---|
 | `ask "<prompt>"` | One-shot — work the prompt to completion. |
-| `chat` | Interactive multi-turn session with persistent history + memory. |
+| `chat` | Interactive multi-turn session with persistent history + memory. Bare `hydra` opens it too. In-session slash commands (`/model`, `/providers`, `/mode`, `/yolo`, `/mfa`, `/memory`, `/skills`, `/status`, `/help`, …) control the session — type `/help` inside chat. |
 | `watch ...` | Run on a timer and/or on file change — see [Watch](#watch--recurring--triggered-runs). |
 | `execute "<mission>"` | Planner → doer → auditor loop for larger missions. |
 
@@ -227,7 +236,7 @@ model/route without calling the model.
 
 | Command | What it does |
 |---|---|
-| `setup` | Guided provider setup (local Ollama or a cloud key). |
+| `setup` | Guided provider setup (local Ollama, a cloud key, or Sign in with ChatGPT). |
 | `providers` | List configured providers. |
 | `models --provider <name>` | List a provider's models. |
 | `roles` | Show planner/doer/auditor model routing. |
@@ -238,6 +247,7 @@ model/route without calling the model.
 | Command | What it does |
 |---|---|
 | `skills list \| show <name> \| route "<prompt>" \| search "<q>"` | Inspect & route the skill library. |
+| `skills audit \| doctrine \| materialize \| doctor` | Audit skill coverage, print the skill doctrine, materialize the bundle catalogs into concrete `SKILL.md` docs, and health-check the library. |
 | `remember "<lesson>" --source <path>` | Save a sourced lesson to durable memory. |
 | `local-memory [--query "<q>"]` | Show or query durable memory. |
 
@@ -250,7 +260,7 @@ model/route without calling the model.
 | `status` | Repo verification verdict. |
 | `code <file>` | Run a source file with syntax highlighting. |
 | `undo [--list]` | Restore the most recent file-edit snapshot(s). |
-| `ops recall "<q>"` | Keyword recall over saved lessons & evidence. |
+| `ops recall "<q>"` | Keyword recall over saved lessons & evidence. `ops -h` lists the wider ops surface, including sandboxed `ops env create \| exec \| read \| write \| fetch` sessions. |
 
 **Health, security & control**
 
@@ -259,7 +269,7 @@ model/route without calling the model.
 | `update` | Pull the latest Hydra from GitHub in one command (see [below](#updating)). |
 | `doctor [--fix]` | Check deps for updates + known CVEs (see [below](#keeping-your-install-secure-hydra-doctor)). |
 | `self-audit` | Run the agent's own classify→route→execute invariant checks. |
-| `telegram health \| listen \| send-proof` | Drive & approve from Telegram (see [below](#telegram-remote-optional)). |
+| `telegram health \| listen \| send-proof \| notify \| callback \| poll` | Drive & approve from Telegram (see [below](#telegram-remote-optional)). |
 
 **Advanced** — `mission`, `continuation`, `declarative`, `capabilities`,
 `source`, `wiki`, `capability-score`, `competitive-score`, `task-eval`,
@@ -310,6 +320,11 @@ driven; nothing is hardcoded. Common variables:
 | `HYDRA_OPERATOR_DM_CHAT_ID` | Your Telegram chat ID (where approvals go) |
 | `HYDRA_OPERATOR_USERNAME` | Your Telegram @username (trusted operator) |
 | `HYDRA_OPERATOR_AUTH_DIR` | Where the TOTP secret for yolo mode is stored |
+| `HYDRA_DEFAULT_ROOT` | Default filesystem scope when `--root` is not passed |
+| `HYDRA_ASK_MAX_ITERATIONS` | Raise the agent-loop iteration cap (default 20) |
+| `HYDRA_CHROME_PATH` | Chrome/Chromium binary for the browser tools |
+
+`.env.example` documents the full variable surface (~40 vars) with comments.
 
 ## Trust & safety model
 
@@ -343,8 +358,11 @@ trigger an action without your approval.
 
 Hydra is built to grow without you needing its internals:
 
-- **Bring your own model/provider** — add an entry to the provider registry; it
-  speaks the OpenAI-compatible chat + tool-call protocol.
+- **Bring your own model/provider** — add an entry to the provider registry;
+  HTTP providers speak the OpenAI-compatible chat + tool-call protocol. (The
+  **Sign in with ChatGPT** path is different — it shells the Codex CLI rather
+  than speaking HTTP. The Anthropic SDK path is deliberately not wired in this
+  edition.)
 - **Swap the embedding model** behind the memory kernel.
 - **Add tools/skills** — drop a `SKILL.md`; the skill spine auto-discovers and
   routes to it. No core changes needed.

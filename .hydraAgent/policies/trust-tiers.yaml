@@ -32,3 +32,9 @@ tool_risks:
   hydra.spawn_subagent: guarded_write
   hydra.spawn_subagents: guarded_write
   shell: guarded_write
+  fs_write: guarded_write
+  fs_edit: guarded_write
+  todo: guarded_write
+  http_fetch: read_only
+  web_extract: read_only
+  system_stats: read_only
