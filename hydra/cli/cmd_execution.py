@@ -271,24 +271,6 @@ def cmd_execute(args: argparse.Namespace) -> int:
     return 0
 
 
-def _make_patch_doer(patch_file: str, replace: str, with_text: str):
-    def _patch_doer(sandbox: Path, _plan: dict) -> str:
-        target = (sandbox / patch_file).resolve(strict=False)
-        try:
-            target.relative_to(sandbox.resolve())
-        except ValueError as e:
-            raise SurgeryError(f"patch file escapes sandbox: {patch_file}") from e
-        if not target.is_file():
-            raise SurgeryError(f"patch file is not a file: {patch_file}")
-        text = target.read_text(encoding="utf-8")
-        if replace not in text:
-            raise SurgeryError(f"old text not found in {patch_file}")
-        target.write_text(text.replace(replace, with_text, 1), encoding="utf-8")
-        return f"patched {patch_file}: replaced {replace!r} with {with_text!r}"
-
-    return _patch_doer
-
-
 # SEAM CUT: cmd_surgery and cmd_surgery_loop removed (hydra.surgery is stripped).
 # These functions are exported stubs so __main__.py dispatch dict compiles cleanly.
 def cmd_surgery(args: argparse.Namespace) -> int:  # pragma: no cover

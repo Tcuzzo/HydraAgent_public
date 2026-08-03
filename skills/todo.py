@@ -195,7 +195,7 @@ def run(
         "todos": todos,
         "affected_id": affected_id,
         "count": len(todos),
-        "open_count": sum(1 for t in todos if not t["done"]),
+        "open_count": sum(1 for t in todos if not t.get("done")),
         "in_progress_count": sum(1 for t in todos if t.get("status") == STATUS_IN_PROGRESS),
     }
 

@@ -260,8 +260,14 @@ def get_session_messages(session_id: str, limit: Optional[int] = None) -> List[D
         raise SessionMemoryError(f"Session {session_id} does not exist")
 
     messages = []
-    with open(session_file, "r") as f:
-        lines = f.readlines()
+    # Take the same cross-process lock the writers (add_message /
+    # append_message_locked / compact_session / rotate_session) take, so a
+    # concurrent rewrite (os.replace) or append cannot produce a torn/partial
+    # read here. The lock is held on a sidecar inode so os.replace of the data
+    # file keeps working underneath it.
+    with locked_path(session_file):
+        with open(session_file, "r") as f:
+            lines = f.readlines()
 
     # Skip header and process entries
     entry_lines = lines[1:]  # Skip header

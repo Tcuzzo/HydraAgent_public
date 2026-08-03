@@ -46,6 +46,13 @@ class ExecResult:
     sandboxed: bool = False
 
 
+# Exit code returned when a sandboxed command exceeds its wall-clock timeout.
+# Matches coreutils `timeout` (124) so callers (worker_aci._test,
+# worker_jobs._run_verify_commands) see a structured timeout as a normal
+# ExecResult row in commands.tsv rather than a propagated traceback.
+EXEC_TIMEOUT_EXIT_CODE = 124
+
+
 # ---------------------------------------------------------------------------
 # Capability probe — done once, cached in module globals
 # ---------------------------------------------------------------------------
@@ -210,16 +217,33 @@ def _run_in_bwrap(
     env: dict[str, str] | None,
 ) -> ExecResult:
     bwrap_cmd = _build_bwrap_cmd(cmd, workspace=workspace, network=network)
-    proc = subprocess.run(
-        bwrap_cmd,
-        cwd=str(workspace),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=timeout,
-        env=env,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            bwrap_cmd,
+            cwd=str(workspace),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=timeout,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # check=False suppresses non-zero exit, NOT timeouts. The caller
+        # (worker_aci._test / worker_jobs._run_verify_commands) expects an
+        # ExecResult so the row lands in commands.tsv; return a structured
+        # timeout with the partial combined output captured before the kill.
+        # Note: even with text=True, TimeoutExpired.stdout is bytes when
+        # stderr=STDOUT, so decode defensively.
+        partial = exc.stdout
+        if isinstance(partial, bytes):
+            partial = partial.decode("utf-8", errors="replace")
+        elif partial is None:
+            partial = ""
+        return ExecResult(
+            returncode=EXEC_TIMEOUT_EXIT_CODE,
+            stdout=partial or f"[bwrap timeout after {timeout}s]\n",
+        )
     return ExecResult(returncode=proc.returncode, stdout=proc.stdout or "")
 
 
@@ -230,16 +254,29 @@ def _run_on_host(
     timeout: float,
     env: dict[str, str] | None,
 ) -> ExecResult:
-    proc = subprocess.run(
-        list(cmd),
-        cwd=str(workspace),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=timeout,
-        env=env,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            list(cmd),
+            cwd=str(workspace),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=timeout,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # Same contract as _run_in_bwrap: surface a structured timeout rather
+        # than a raw TimeoutExpired traceback to the worker.
+        partial = exc.stdout
+        if isinstance(partial, bytes):
+            partial = partial.decode("utf-8", errors="replace")
+        elif partial is None:
+            partial = ""
+        return ExecResult(
+            returncode=EXEC_TIMEOUT_EXIT_CODE,
+            stdout=partial or f"[host timeout after {timeout}s]\n",
+        )
     return ExecResult(returncode=proc.returncode, stdout=proc.stdout or "")
 
 
