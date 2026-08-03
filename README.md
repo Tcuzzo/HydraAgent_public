@@ -343,6 +343,27 @@ behavior with a time-limited code from any TOTP authenticator app (e.g. Google
 Authenticator): run `/mfa setup`, scan the QR, then `/mode yolo <6-digit-code>`. The
 unlock expires after an hour and can be extended. There is no "always on" backdoor.
 
+**Path confinement for bounded writes.** A `fs_write`/`fs_edit` is auto-approved
+only when the resolved target is **inside the repo root** (checked with
+`Path.is_relative_to` — path-component equality, not a string prefix, so a sibling
+directory sharing a name prefix like `/repo` vs `/repo_evil` cannot escape). The
+action tier + approval gate:
+
+```mermaid
+flowchart TD
+    Action[Tool Action] --> Tier{Classify Action Tier}
+    Tier -- read-only --> Run[Run Freely]
+    Tier -- bounded write --> Path{Inside repo root?}
+    Path -- yes + auto-on --> Run
+    Path -- no --> Block[Refuse / Ask]
+    Tier -- risky shell --> Policy{Approval Policy}
+    Policy -- ask --> Prompt[Prompt on terminal / block non-interactive]
+    Policy -- allow --> Run
+    Policy -- deny --> Block
+    Prompt -- approve --> Run
+    Prompt -- deny --> Block
+```
+
 ## Telegram remote (optional)
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
@@ -399,6 +420,50 @@ flowchart TD
     Runner --> Feedback
     Feedback --> Loop
 ```
+
+### Model routing & fallback
+
+`classify_task` reads the prompt's complexity and picks a role (fast / reasoning /
+judge). `_create_client` builds the client for that role's model; if the primary
+provider is unavailable it walks a fallback ladder — other cloud providers, then a
+free cloud model, then local Ollama — and **swaps both the client and the model
+name** so the downgraded client is asked for a model it actually serves. The
+substituted model is recorded in `last_substitution` and reported in the routing
+decision. Provider model catalogs are queried live (`GET /v1/models`, 60s cached)
+and **fail open** — a model absent from the catalog is inconclusive, never a
+rejection, so valid newer models are not gated off a stale list.
+
+```mermaid
+flowchart TD
+    Classify[classify_task: complexity -> role] --> Create[_create_client: primary model]
+    Create -- available --> Use[Use primary client + model]
+    Create -- unavailable --> Cloud[Other cloud providers]
+    Cloud -- one available --> Sub[Substitute client + model name]
+    Cloud -- all unavailable --> Free[Free cloud model]
+    Free -- available --> Sub
+    Free -- unavailable --> Local[Local Ollama - last resort]
+    Local --> Sub
+    Sub --> Record[last_substitution + routing decision report the model used]
+    Use --> Loop[Agent Loop]
+    Record --> Loop
+```
+
+### Larger missions: `execute`
+
+`hydra execute "<mission>"` runs a Planner → doer → auditor loop for larger work.
+`route_and_execute` is the entry point: classify → route to a model → run the agent
+loop. **Phase 3 verification is not yet implemented** (`requires_verifier` is set
+for non-simple tasks but the verify step is a stub) — treat `execute` results as
+unverified today. The auto-fix repair loop (`auto_fix.enabled` on a worker job) is
+**not shipped in the public edition** — it depended on a private orchestration
+chain and was stripped; enabling it fails loud with a clear message.
+
+### `hydra code` — compile then run
+
+`hydra code foo.c|foo.rs` compiles the file to a binary next to the source and then
+**runs the binary** (reporting compile failures with stderr). Python / Go / JS /
+TS / Bash run directly. A missing runtime exits non-zero with a clear "install the
+runtime" message.
 
 ## License
 
