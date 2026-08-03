@@ -310,7 +310,15 @@ Output JSON exactly:
         try:
             response = client.chat(
                 messages,
-                model=router_model.model,
+                # Use the SUBSTITUTED model name, not the original. _create_client
+                # may have downgraded to a cloud fallback or local ollama; the
+                # client is for the substituted provider, so it must be asked for
+                # the substituted model (last_substitution["used"]) — not the
+                # original cloud model name (which the downgraded client does not
+                # serve -> 'model not found'). Falls back to router_model.model
+                # only before any _create_client has run (last_substitution["used"]
+                # is None at construction).
+                model=self.last_substitution.get("used") or router_model.model,
                 max_tokens=256,
                 temperature=0.0,
                 timeout=10.0,
@@ -613,7 +621,12 @@ def route_and_execute(
                 "role": decision.recommended_model,
             },
         }
-    agent_loop = agent_loop_factory(client, selected_model.model)
+    # Use the SUBSTITUTED model name (router.last_substitution["used"]), not the
+    # original selected_model.model — _create_client may have downgraded the client
+    # to a cloud fallback or local ollama, so the agent loop must drive the
+    # substituted model the client actually serves (else 'model not found').
+    _routed_model = router.last_substitution.get("used") or selected_model.model
+    agent_loop = agent_loop_factory(client, _routed_model)
     
     # Phase 3: Verify (if required)
     if decision.requires_verifier:
@@ -623,7 +636,7 @@ def route_and_execute(
         "routing_decision": {
             "complexity": decision.complexity.value,
             "role": decision.recommended_model,
-            "model": selected_model.model,
+            "model": _routed_model,
             "provider": selected_model.provider,
             "reasoning": decision.reasoning,
             "estimated_cost_usd": decision.estimated_cost_usd,
