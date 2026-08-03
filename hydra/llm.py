@@ -283,10 +283,21 @@ class OllamaClient:
                     if isinstance(n, str):
                         names.append(n)
                 return names
+            except LlmError:
+                # Local endpoint unavailable — surface LOUDLY, consistent with the
+                # cloud branch and the docstring ("On failure RAISES LlmError").
+                # Callers (provider_available, cmd_models) already wrap this in
+                # try/except and fail-open / print a clear error. Returning []
+                # silently (the old behavior) hid the failure and broke the
+                # documented contract.
+                raise
             except Exception as e:  # noqa: BLE001
-                # Local endpoint unavailable - surface loudly, return empty.
-                _LOG.warning(f"Failed to fetch local models from {self.endpoint}: {e}")
-                return []
+                # Wrap any non-transport failure (e.g. malformed payload shape)
+                # so the contract "raises LlmError on failure" holds for ALL
+                # failure modes — never leak a raw AttributeError to callers.
+                raise LlmError(
+                    f"failed to list local models from {self.endpoint}/api/tags: {e}"
+                ) from e
 
         # Cloud provider: query GET {endpoint}/models live, with a TTL cache
         # so repeated availability checks make at most ONE upstream call per

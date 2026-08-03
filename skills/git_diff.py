@@ -26,18 +26,47 @@ class SkillError(Exception):
 DEFAULT_TIMEOUT_SECONDS = 15
 
 
+# Exit code conventionally used to signal a command that exceeded its
+# wall-clock timeout (matches coreutils `timeout`). `_run_git` translates a
+# subprocess.TimeoutExpired into this code rather than letting the raw
+# exception propagate, so callers stay inside the dict/SkillError contract.
+GIT_TIMEOUT_EXIT_CODE = 124
+
+
 def _run_git(
     worktree: Path, args: list[str], timeout: float
 ) -> subprocess.CompletedProcess:
     cmd = ["git", "-C", str(worktree)] + args
-    return subprocess.run(
-        cmd,
-        timeout=timeout,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            timeout=timeout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # `check=False` only suppresses non-zero exit codes; it does NOT catch
+        # the timeout. Preserve any partial output git produced before the kill
+        # and return a structured timed-out result so `run()` can raise a clear
+        # SkillError instead of leaking a raw TimeoutExpired to the caller.
+        partial_stdout = exc.stdout
+        if isinstance(partial_stdout, bytes):
+            partial_stdout = partial_stdout.decode("utf-8", errors="replace")
+        elif partial_stdout is None:
+            partial_stdout = ""
+        partial_stderr = exc.stderr
+        if isinstance(partial_stderr, bytes):
+            partial_stderr = partial_stderr.decode("utf-8", errors="replace")
+        elif partial_stderr is None:
+            partial_stderr = ""
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=GIT_TIMEOUT_EXIT_CODE,
+            stdout=partial_stdout,
+            stderr=partial_stderr or f"git timed out after {timeout}s",
+        )
 
 
 def run(

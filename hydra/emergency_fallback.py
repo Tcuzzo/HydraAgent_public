@@ -68,18 +68,47 @@ def classify_provider_error(error: BaseException) -> str:
 
 
 def probe_model(provider: str, model: str, timeout: float = 5.0) -> bool:
-    """Quick probe to check if model is accessible."""
+    """Quick liveness probe: is the provider's catalog endpoint reachable?
+
+    Probes the ACTUAL provider the client is configured for — local Ollama
+    (``/api/tags``), cloud OpenAI-compatible endpoints (``/models`` with the
+    bearer key), or the Codex CLI (binary present) — not just ``ollama``.
+    ``model`` is accepted for call-site compatibility; the probe is a catalog
+    reachability check, not a per-model lookup. Returns True when the endpoint
+    answers HTTP 200 / the Codex binary is present; False on any failure
+    (unconfigured, unreachable, auth, timeout) — never raises, never
+    blanket-swallows a programming error (the old bare ``except:``).
+    """
+    import shutil
+    import urllib.request
+
     try:
-        if provider == "ollama":
-            import urllib.request
-            req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.status == 200
-    except (urllib.error.URLError, OSError, ValueError):
-        # A failed probe means "not reachable right now" — return False, but
-        # don't blanket-swallow programming errors (the old bare ``except:``).
+        from hydra.providers import ProviderError, resolve
+
+        cfg = resolve(provider)
+    except (ProviderError, ValueError):
+        # Unknown / unconfigured provider (e.g. a cloud provider whose key
+        # is missing) is "not available right now" — not a programming error.
         return False
-    return False
+    # Codex is a local CLI provider, not an HTTP endpoint — probe the binary.
+    if not cfg.endpoint:
+        binary = os.environ.get("HYDRA_CODEX_BIN") or shutil.which("codex")
+        return bool(binary)
+    headers: dict[str, str] = {"User-Agent": "HydraAgent/probe"}
+    if cfg.api_key:
+        headers["Authorization"] = f"Bearer {cfg.api_key}"
+    is_local = cfg.endpoint.startswith("http://localhost") or cfg.endpoint.startswith(
+        "http://127.0.0.1"
+    )
+    # Local Ollama speaks /api/tags; cloud OpenAI-compatible hosts speak /models.
+    catalog_url = f"{cfg.endpoint}/api/tags" if is_local else f"{cfg.endpoint}/models"
+    req = urllib.request.Request(catalog_url, method="GET", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (catalog probe)
+            return resp.status == 200
+    except (urllib.error.URLError, OSError, ValueError):
+        # Unreachable / timed out / malformed URL — "not reachable right now".
+        return False
 
 
 def get_emergency_model(preferred_model: str | None = None) -> dict[str, Any]:

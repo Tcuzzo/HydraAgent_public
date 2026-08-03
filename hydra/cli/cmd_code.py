@@ -70,7 +70,7 @@ def cmd_code(args: argparse.Namespace) -> int:
     console = Console(force_terminal=args.highlight or None)
     code = file_path.read_text(encoding="utf-8")
     
-    console.print(f"\\n📄 Running {lang} code from {file_path.name}:\\n")
+    console.print(f"\n📄 Running {lang} code from {file_path.name}:\n")
     console.print(Syntax(code, lang, theme="monokai", line_numbers=True))
     
     # Execute based on language. C + Rust are compile-then-run: the old code
@@ -88,7 +88,7 @@ def cmd_code(args: argparse.Namespace) -> int:
     }
 
     if lang not in compile_then_run and lang not in direct_executors:
-        console.print(f"\\n⚠️  No executor for {lang} — showing code only")
+        console.print(f"\n⚠️  No executor for {lang} — showing code only")
         return 0
 
     try:
@@ -97,7 +97,7 @@ def cmd_code(args: argparse.Namespace) -> int:
             compile_cmd = [compiler, str(file_path), "-o", str(binary)]
             compile_result = subprocess.run(compile_cmd, capture_output=True, text=True)
             if compile_result.returncode != 0:
-                console.print(f"\\n❌ {lang} compile failed:\\n{compile_result.stderr}")
+                console.print(f"\n❌ {lang} compile failed:\n{compile_result.stderr}")
                 return compile_result.returncode
             run_result = subprocess.run([str(binary)], capture_output=False, text=True)
             return run_result.returncode
@@ -105,6 +105,6 @@ def cmd_code(args: argparse.Namespace) -> int:
         result = subprocess.run(cmd, capture_output=False, text=True)
         return result.returncode
     except FileNotFoundError:
-        console.print(f"\\n❌ Executor not found for {lang}. Install the runtime first.", file=sys.stderr)
+        console.print(f"\n❌ Executor not found for {lang}. Install the runtime first.", file=sys.stderr)
         return 1
 

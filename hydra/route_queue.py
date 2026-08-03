@@ -111,7 +111,10 @@ class RouteQueue:
             {"status": "timed_out"}
             {"status": "error",     "error": "<msg>"}
         """
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        # get_running_loop() is the correct call inside a running coroutine
+        # (the deprecated loop accessor is removed in 3.12+ semantics and emits
+        # a DeprecationWarning when there is no current event loop set).
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
         try:
             self._broker.put_nowait({"task": task, "fut": fut})
         except asyncio.QueueFull:
@@ -120,9 +123,14 @@ class RouteQueue:
         try:
             return await asyncio.wait_for(asyncio.shield(fut), self._cfg.queue_timeout_s)
         except asyncio.TimeoutError:
-            # The Future is still in the queue; the worker will eventually resolve
-            # it, but the caller has already given up.  Mark it so the worker
-            # skips the redundant set_result.
+            # The caller has given up, but the Future is still pending in the
+            # queue and the worker would otherwise spend a full dispatch on a
+            # task whose result nobody will read.  Cancel the future so the
+            # worker's `if not fut.done()` guard skips the redundant set_result
+            # (a cancelled future is done).  shield() protected fut from the
+            # wait_for cancellation above; that protection ends once wait_for
+            # raises, so this explicit cancel is the mark.
+            fut.cancel()
             return {"status": "timed_out"}
 
     # ------------------------------------------------------------------

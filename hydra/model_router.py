@@ -142,6 +142,20 @@ class ModelRouter:
             return
         
         config = yaml.safe_load(self.config_path.read_text())
+        # yaml.safe_load("") / a comment-only doc returns None — guard so a
+        # present-but-empty hydra.yaml does not crash here with an AttributeError
+        # that hides the real cause (an empty config). Fall through to the role
+        # defaults below, LOUDLY logged (no silent fallback — inv: no silent
+        # gates). Same None-guard pattern roles.py uses.
+        if not isinstance(config, dict):
+            logging.getLogger(__name__).warning(
+                "hydra.yaml at %s parsed to %r (expected a mapping) — treating as "
+                "empty config and loading role defaults. Fill the file with a "
+                "valid YAML mapping to silence this.",
+                self.config_path,
+                type(config).__name__ if config is not None else "None",
+            )
+            config = {}
         agentic = config.get("agentic", {})
         roles = agentic.get("roles", {})
 
@@ -630,10 +644,17 @@ def route_and_execute(
     _routed_model = _substitution.get("used") or selected_model.model
     agent_loop = agent_loop_factory(client, _routed_model)
     
-    # Phase 3: Verify (if required)
+    # Phase 3: Verify (if required). Verification execution is not yet wired,
+    # so we surface that HONESTLY — never silently pass as if verified. Callers
+    # see verified=False / verification="not_implemented" and know the work is
+    # unverified. A bare `pass` that returns success with requires_verifier=True
+    # is a silent false-verified (the bug this closes).
+    verified = True
+    verification = "not_required"
     if decision.requires_verifier:
-        pass  # verification logic not yet implemented
-    
+        verification = "not_implemented"
+        verified = False
+
     return {
         "routing_decision": {
             "complexity": decision.complexity.value,
@@ -646,4 +667,6 @@ def route_and_execute(
         },
         "requires_verifier": decision.requires_verifier,
         "requires_human_approval": decision.requires_human_approval,
+        "verified": verified,
+        "verification": verification,
     }

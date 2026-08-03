@@ -141,6 +141,54 @@ def test_locked_rmw_serializes_full_rewrite(tmp_path: Path, monkeypatch) -> None
 
 
 # ---------------------------------------------------------------------------
+# Bug #6c — get_session_messages must take the cross-process read lock
+# ---------------------------------------------------------------------------
+
+
+def test_get_session_messages_takes_cross_process_lock(tmp_path: Path, monkeypatch) -> None:
+    """get_session_messages must take the same cross-process lock the writers
+    (add_message / append_message_locked / compact_session / rotate_session)
+    take — it must call locked_path so a concurrent rewrite (os.replace) or
+    append cannot produce a torn/partial read.
+
+    Verified by a SPY on session_memory.locked_path that records the call AND
+    delegates to the real lock (the real fcntl.flock still runs — this is a
+    spy, not a fake; it records the call, it does not fabricate the behavior).
+    A lockless reader does not call locked_path -> calls stays empty -> RED.
+    The read happens inside the real lock (the spy's `with real_locked_path`),
+    so the lock genuinely runs. Reliable (no spawn/thread timing flakiness —
+    the earlier spawn + thread variants were flaky under full-suite load as the
+    holder could be starved >5s by prior tests; the spy is deterministic).
+    """
+    import contextlib
+
+    monkeypatch.setattr(session_memory, "SESSION_MEMORY_DIR", tmp_path)
+    session_id = "readlock_session"
+    session_memory.create_session(session_id, "seed")
+    session_memory.add_message(session_id, "user", "hello-from-writer")
+
+    real_locked_path = session_memory.locked_path
+    calls: list[str] = []
+
+    @contextlib.contextmanager
+    def _spy_locked_path(path):
+        calls.append(str(path))
+        with real_locked_path(path):
+            yield path
+
+    monkeypatch.setattr(session_memory, "locked_path", _spy_locked_path)
+    msgs = session_memory.get_session_messages(session_id)
+
+    assert calls, (
+        "get_session_messages did not take locked_path (the cross-process lock) "
+        "— it is reading lockless, so a concurrent rewrite can tear the read"
+    )
+    # And it returned the real content (truth read back, not a torn/empty read).
+    contents = {m["content"] for m in msgs}
+    assert "hello-from-writer" in contents
+
+
+# ---------------------------------------------------------------------------
 # Bug #6b — backup reaper
 # ---------------------------------------------------------------------------
 

@@ -820,3 +820,63 @@ def test_vec0_capability_present_on_linux_x86_64():
         "Linux x86-64 ships hydra/_vendor/sqlite_vec/vec0.so and MUST exercise the "
         f"real vec0 lane, not skip it: {_VEC0_UNAVAILABLE}"
     )
+
+
+# ── _nearest_in_scope graceful degrade on vec0 OperationalError ──────────────
+
+
+@requires_vec0
+def test_nearest_in_scope_degrades_on_vec0_operational_error(tmp_path, monkeypatch):
+    """A vec0 backend hiccup in _nearest_in_scope (the near-dup MATCH query)
+    must NOT crash add() — it degrades to None (skip the dedup guard) so the
+    insert proceeds and recall survives.
+
+    Mirrors _vec_search's OperationalError handling, but here the honest
+    degrade is 'no near-dup found' (return None) because add() has no
+    file-corpus fallback path for the dedup decision. Before the fix the
+    OperationalError propagated up and crashed the whole add() call.
+
+    The hiccup is injected by wrapping the real sqlite3 connection in a proxy
+    that raises a REAL ``sqlite3.OperationalError`` only for the vec0 MATCH
+    query (the exact failure mode the finding describes) and delegates every
+    other call (INSERT, SELECT, commit) to the real connection — so the rest
+    of add() traverses the real DB and the inserted row is read back from disk.
+    """
+    class _Vec0HiccupConn:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, params=()):
+            if "entries_vec" in sql and "MATCH" in sql:
+                raise sqlite3.OperationalError(
+                    "simulated vec0 backend hiccup (dimension mismatch / transient)"
+                )
+            return self._conn.execute(sql, params)
+
+        def commit(self):
+            return self._conn.commit()
+
+        def close(self):
+            return self._conn.close()
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    db = tmp_path / "memory.sqlite"
+    mem = um.UnifiedMemory(path=db, embedder=_fake_embedder())
+    mem.add("first fact in scope", scope="hydra")
+
+    # Swap in the hiccup proxy; the real connection lives underneath it.
+    real_conn = mem._db
+    monkeypatch.setattr(mem, "_db", _Vec0HiccupConn(real_conn))
+
+    # Must NOT raise — near-dup guard skipped, insert proceeds.
+    new_id = mem.add("second fact in scope", scope="hydra")
+    assert isinstance(new_id, int)
+    # The second fact really landed in the store (truth read back from disk
+    # via the real connection under the proxy).
+    rows = real_conn.execute(
+        "SELECT body FROM entries WHERE id = ?", (new_id,)
+    ).fetchall()
+    assert any("second fact in scope" in r["body"] for r in rows)
+    mem.close()
