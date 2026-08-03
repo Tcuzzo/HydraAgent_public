@@ -625,7 +625,9 @@ def route_and_execute(
     # original selected_model.model — _create_client may have downgraded the client
     # to a cloud fallback or local ollama, so the agent loop must drive the
     # substituted model the client actually serves (else 'model not found').
-    _routed_model = router.last_substitution.get("used") or selected_model.model
+    # getattr fallback: test fakes / minimal routers may not carry last_substitution.
+    _substitution = getattr(router, "last_substitution", None) or {}
+    _routed_model = _substitution.get("used") or selected_model.model
     agent_loop = agent_loop_factory(client, _routed_model)
     
     # Phase 3: Verify (if required)
