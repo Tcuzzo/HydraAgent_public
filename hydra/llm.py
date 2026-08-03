@@ -19,12 +19,21 @@ from __future__ import annotations
 import json
 import logging
 import socket
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Iterable, Protocol
 
 _LOG = logging.getLogger(__name__)
+
+# --- cloud model-catalog cache (inv_16: never hammer the provider) ----------
+# A live GET /v1/models is reused for this many seconds per endpoint, so a
+# flurry of provider_available checks makes at most ONE upstream call per TTL
+# window. Module-level (process-wide) because provider keys/endpoints are
+# stable per process and the cost of one extra call is the bug we prevent.
+_CLOUD_MODEL_TTL_SECONDS: float = 60.0
+_cloud_model_cache: dict[str, tuple[float, list[str]]] = {}
 
 
 @dataclass
@@ -243,36 +252,68 @@ class OllamaClient:
 
     def list_models(self, *, timeout: float = 10.0) -> list[str]:
         """List available models from the provider.
-        
-        For Ollama: hits /api/tags endpoint
-        For cloud providers: returns cached model list (no /api/tags endpoint)
+
+        For local Ollama: hits GET {endpoint}/api/tags (the Ollama-specific
+        catalog endpoint).
+        For cloud providers: hits GET {endpoint}/models (the OpenAI-compatible
+        catalog endpoint) and returns the LIVE list, backed by a short TTL
+        cache so a flurry of availability checks never hammers the provider
+        (inv_16). On failure the call RAISES `LlmError` — loudly, with no
+        silent fallback to a stale hardcoded list — so `provider_available`
+        can fail-open (admit the model) instead of falsely rejecting valid
+        newer models off a frozen catalog.
+
+        The old behavior returned hardcoded stale catalogs for "openai.com" /
+        "anthropic.com" endpoints, which `provider_available` then used as a
+        DENYLIST to gate off valid models (gpt-4.1, o4-mini, ...). That was
+        the bug; the live query + raise-on-failure closes the class at the
+        shared seam.
         """
-        # Check if this is a cloud provider by endpoint URL
-        is_cloud = not self.endpoint.startswith("http://localhost") and not self.endpoint.startswith("http://127.0.0.1")
-        
-        if is_cloud:
-            # Cloud providers don't have /api/tags - return cached model lists.
-            # Cloud providers may not have /api/tags; return known model lists for common endpoints.
-            if "openai.com" in self.endpoint:
-                return ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
-            elif "anthropic.com" in self.endpoint:
-                return ["claude-sonnet-4-20250514", "claude-opus-4-20250514"]
-            # Unknown cloud provider - return empty list instead of crashing
-            return []
-        
-        # Local Ollama - use /api/tags endpoint
-        try:
-            payload = self._get_json(f"{self.endpoint}/api/tags", timeout=timeout)
-            names: list[str] = []
-            for entry in payload.get("models") or []:
-                n = entry.get("name") or entry.get("model")
-                if isinstance(n, str):
-                    names.append(n)
-            return names
-        except Exception as e:
-            # Local endpoint unavailable - return empty list
-            _LOG.warning(f"Failed to fetch local models from {self.endpoint}: {e}")
-            return []
+        # Local Ollama speaks /api/tags, not the OpenAI /models shape.
+        is_local = (
+            self.endpoint.startswith("http://localhost")
+            or self.endpoint.startswith("http://127.0.0.1")
+        )
+        if is_local:
+            try:
+                payload = self._get_json(f"{self.endpoint}/api/tags", timeout=timeout)
+                names: list[str] = []
+                for entry in payload.get("models") or []:
+                    n = entry.get("name") or entry.get("model")
+                    if isinstance(n, str):
+                        names.append(n)
+                return names
+            except Exception as e:  # noqa: BLE001
+                # Local endpoint unavailable - surface loudly, return empty.
+                _LOG.warning(f"Failed to fetch local models from {self.endpoint}: {e}")
+                return []
+
+        # Cloud provider: query GET {endpoint}/models live, with a TTL cache
+        # so repeated availability checks make at most ONE upstream call per
+        # window. No hardcoded fallback — a stale list used as a denylist is
+        # the exact bug this closes.
+        now = time.monotonic()
+        cached = _cloud_model_cache.get(self.endpoint)
+        if cached is not None:
+            expires_at, cached_names = cached
+            if now < expires_at:
+                return list(cached_names)
+
+        payload = self._get_json(f"{self.endpoint}/models", timeout=timeout)
+        # OpenAI-compatible shape: {"data": [{"id": "..."}, ...]}.
+        names: list[str] = []
+        for entry in payload.get("data") or []:
+            mid = entry.get("id") if isinstance(entry, dict) else None
+            if isinstance(mid, str) and mid:
+                names.append(mid)
+        _cloud_model_cache[self.endpoint] = (now + _CLOUD_MODEL_TTL_SECONDS, names)
+        _LOG.debug(
+            "live catalog for %s: %d models (cached %.0fs)",
+            self.endpoint,
+            len(names),
+            _CLOUD_MODEL_TTL_SECONDS,
+        )
+        return list(names)
 
     # --- embeddings ------------------------------------------------------
 
