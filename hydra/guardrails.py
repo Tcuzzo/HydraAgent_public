@@ -219,8 +219,13 @@ class Guardrails:
         try:
             resolved = Path(path).resolve()
             repo_resolved = self.repo_root.resolve()
-            # Must be within repo root
-            return str(resolved).startswith(str(repo_resolved))
+            # Must be within repo root. Use is_relative_to, NOT str.startswith —
+            # a sibling directory sharing a name prefix (repo_root=/home/op/repo
+            # vs target=/home/op/repo_evil/secret) would pass a startswith check
+            # and be auto-approved as a BOUNDED_WRITE. is_relative_to requires the
+            # target to actually be inside repo_root (path-component equality, not
+            # a string prefix). Requires Python 3.11+ (the repo's floor).
+            return resolved.is_relative_to(repo_resolved)
         except (OSError, ValueError):
             return False
     
