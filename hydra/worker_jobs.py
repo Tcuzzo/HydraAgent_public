@@ -301,62 +301,18 @@ def run_worker_job(
             # function after each failure, escalating once at ESCALATE_AFTER.
             auto_fix_spec = normalized.get("auto_fix") or {}
             if isinstance(auto_fix_spec, dict) and auto_fix_spec.get("enabled"):
-                # Lazy import to avoid the circular dependency chain.
-                from hydra.auto_fix_loop import run_repair_loop, AutoFixResult  # noqa: PLC0415
-
-                # Collect the first failing command's stderr as the seed input.
-                first_failed_row = failed[0]
-                first_stderr = first_failed_row.get("output", "") or failure_reason
-
-                # Resolve the repair function to use:
-                #   1. Python param (repair_fn) — highest priority; injected by caller.
-                #   2. Default model-backed repair_fn built from model_routing.
-                # The OLD JSON auto_fix_spec['_repair_fn'] path is REMOVED: a callable
-                # in a JSON dict was never serializable and always crashed.
-                _effective_repair_fn = repair_fn
-                if _effective_repair_fn is None:
-                    # Build the model-backed default.  repair_model_client is None in
-                    # production (resolved lazily at first use); tests inject a fake.
-                    _effective_repair_fn = _build_default_repair_fn(
-                        repair_model_client, normalized
-                    )
-
-                # Thread resolution_spec into the loop context so the in-loop
-                # two-list gate is LIVE (not dead).  Without this, the loop's
-                # resolution gate block is unreachable even when a spec is present.
-                _loop_context: dict[str, Any] = {
-                    "job": normalized,
-                    "run_dir": str(run_dir),
-                    # Seed repair_fn's first call with the already-captured stderr
-                    # so the pre-loop failure context is not thrown away.
-                    "seed_stderr": first_stderr,
-                }
-                if normalized.get("resolution_spec"):
-                    _loop_context["resolution_spec"] = normalized["resolution_spec"]
-
-                afl_result: AutoFixResult = run_repair_loop(
-                    verify_cmd=first_failed_row["command"],
-                    workspace=root,
-                    repair_fn=_effective_repair_fn,
-                    event_log_path=run_dir / "auto_fix_events.jsonl",
-                    mission_id=normalized["job_id"],
-                    context=_loop_context,
+                # auto_fix_loop was STRIPPED in the public edition (it depended on
+                # the private swarm_orchestrator/autonomous_mission chain). The old
+                # lazy import raised ImportError, swallowed by the broad except
+                # below -> the job silently failed with no clue why. Fail LOUD with
+                # a clear message instead, so a user who enables auto_fix knows it
+                # is not shipped here (remove the option or use the private build).
+                raise RuntimeError(
+                    "auto_fix is not available in the public edition "
+                    "(hydra.auto_fix_loop was stripped — it depended on the private "
+                    "swarm/autonomous-mission chain). Remove 'auto_fix.enabled' from "
+                    "your job config or use the private build."
                 )
-                elog.emit("role_verdict", {
-                    "verdict": f"auto_fix_{afl_result.status}",
-                    "attempts": afl_result.attempts,
-                    "escalated": afl_result.escalated,
-                    "last_stderr_snippet": afl_result.last_stderr[:300],
-                })
-                if afl_result.status == "success":
-                    status = "passed"
-                    failure_reason = None
-                else:
-                    # Still failed after the full repair loop.
-                    failure_reason = (
-                        f"auto_fix loop exhausted ({afl_result.attempts} attempts); "
-                        f"last stderr: {afl_result.last_stderr[:300]}"
-                    )
         elif spec_raw:
             # verify_commands all passed — now enforce the two-list resolution gate.
             # A clean verify-command exit is NECESSARY but NOT SUFFICIENT.
