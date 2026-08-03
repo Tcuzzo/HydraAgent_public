@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.request
 from pathlib import Path
 from typing import Callable
@@ -37,6 +38,11 @@ from hydra.workbench_approvals import (
 )
 # SEAM CUT: workbench_api, workbench_ledger, telegram_listener_runtime are stripped.
 # ledger, api, workbench subcommands removed; only telegram subcommand is kept.
+
+# Repo root for telegram_env(.env.telegram resolution). Matches the pattern in
+# cmd_chat.py / cmd_mission.py. Without this, `hydra telegram listen` raised
+# NameError on startup (REPO_ROOT was referenced but never defined).
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def register_workbench_commands(sub: argparse._SubParsersAction) -> None:
