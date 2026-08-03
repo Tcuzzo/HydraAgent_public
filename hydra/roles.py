@@ -165,8 +165,19 @@ def provider_available(role: RoleSpec, *, env_dir: str | Path | None = None) -> 
     except Exception as e:  # noqa: BLE001
         return True, f"provider available; model catalog unavailable: {e}"
     wanted = role.model or client_cfg.model
+    # The catalog is a KNOWN-STALE ALLOWLIST, never a denylist. A model that
+    # IS in the live catalog is positively confirmed available; a model that
+    # is NOT in the catalog is INCONCLUSIVE (the live query may have returned
+    # an incomplete list, or the provider may not list every valid model) —
+    # we FAIL OPEN (admit it) and let any real unavailability surface loudly
+    # at chat time, rather than falsely gating off valid newer models
+    # (gpt-4.1, o4-mini, ...) off a stale/frozen list. This closes the
+    # "stale hardcoded catalog used as a denylist" flaw class at its seam.
     if wanted and wanted not in names:
-        return False, f"MODEL_UNAVAILABLE: {wanted!r} not in provider catalog"
+        return True, (
+            f"available (admitting {wanted!r}: not in live catalog of "
+            f"{len(names)} models — catalog is an allowlist, not a denylist)"
+        )
     return True, "available"
 
 

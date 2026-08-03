@@ -81,7 +81,13 @@ def run(
     if not target_resolved.is_file():
         raise SkillError(f"not a regular file: {target_resolved}")
 
-    text = target_resolved.read_text(encoding="utf-8", newline="")
+    # Read with newline="" so CR/LF is preserved untranslated — the byte count
+    # (bytes_before) and the old_string occurrence match reflect the REAL file
+    # bytes, not a universal-newline-mangled view. ``Path.read_text`` does not
+    # accept ``newline`` (it raises TypeError on Python 3.12), so read via
+    # ``open`` which does.
+    with open(target_resolved, "r", encoding="utf-8", newline="") as f:
+        text = f.read()
     bytes_before = len(text.encode("utf-8"))
 
     occurrences = text.count(old_string)
@@ -100,8 +106,14 @@ def run(
         new_text = text.replace(old_string, new_string)
         replacements = occurrences
     else:
+        # str.replace(old, new, count) makes AT MOST `count` replacements, but
+        # when the file has fewer occurrences than `count` it makes only the
+        # real number available. The guard above only refuses the ambiguous
+        # `occurrences > count` case; for `occurrences < count` we must report
+        # the ACTUAL number made (min), not the requested count — so the user
+        # and the trace see the truth instead of an over-report.
         new_text = text.replace(old_string, new_string, count)
-        replacements = count
+        replacements = min(count, occurrences)
 
     payload = new_text.encode("utf-8")
     if len(payload) > max_bytes:

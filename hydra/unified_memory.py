@@ -521,14 +521,27 @@ class UnifiedMemory:
 
         Uses vec0 KNN to find candidates, then pure-Python cosine (reused from
         semantic_recall) for the exact dedup decision.
+
+        Degrades gracefully on a vec0 backend hiccup (e.g. dimension mismatch or
+        a transient vec0 OperationalError from the MATCH query): returns None so
+        the caller skips the near-dup guard and proceeds to insert, rather than
+        crashing recall. Mirrors the OperationalError handling in ``_vec_search``
+        — but here there is no file-corpus fallback path for the dedup decision,
+        so the honest degrade is "no near-dup detected" (None), not a raised
+        ``BackendUnavailable``.
         """
-        rows = self._db.execute(
-            "SELECT v.rowid AS id, v.distance AS dist "
-            "FROM entries_vec v "
-            "WHERE v.emb MATCH ? AND k = 5 "
-            "ORDER BY v.distance",
-            (_serialize(vec),),
-        ).fetchall()
+        try:
+            rows = self._db.execute(
+                "SELECT v.rowid AS id, v.distance AS dist "
+                "FROM entries_vec v "
+                "WHERE v.emb MATCH ? AND k = 5 "
+                "ORDER BY v.distance",
+                (_serialize(vec),),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            # vec0 backend hiccup on the MATCH query — do not crash add()/recall.
+            # Treat as "no near-dup found" and let the insert proceed.
+            return None
         for row in rows:
             ent = self._db.execute(
                 "SELECT scope FROM entries WHERE id = ?", (row["id"],)

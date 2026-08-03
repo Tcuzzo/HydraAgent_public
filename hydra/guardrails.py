@@ -211,8 +211,13 @@ class Guardrails:
         # Identity changes
         if action_type in ("update_config", "change_identity", "modify_guardrails"):
             return ActionTier.IDENTITY_CHANGE
-        
-        return ActionTier.BOUNDED_WRITE  # Default
+
+        # Unknown action types FAIL CLOSED — classify as DESTRUCTIVE so they
+        # require approval. Returning BOUNDED_WRITE here (the old default)
+        # combined with allow_bounded_write_auto=True AUTO-APPROVED unknown
+        # actions, a fail-OPEN security gate. An unrecognized action is, by
+        # definition, not known to be bounded — treat it as requiring approval.
+        return ActionTier.DESTRUCTIVE  # Default: fail CLOSED for unknown actions
     
     def _is_safe_path(self, path: str) -> bool:
         """Check if a path is within safe bounds."""
@@ -441,8 +446,23 @@ def create_guardrails(
     
     if config_path and config_path.exists():
         import yaml
-        guardrail_config = yaml.safe_load(config_path.read_text()).get("guardrails", {})
-        
+        # yaml.safe_load("") / a comment-only doc returns None — guard so a
+        # present-but-empty guardrails.yaml does not crash with AttributeError
+        # (.get on None). Treat as empty config (defaults preserved), LOUDLY
+        # logged. Same None-guard pattern roles.py uses.
+        data = yaml.safe_load(config_path.read_text())
+        if not isinstance(data, dict):
+            import logging
+            logging.getLogger(__name__).warning(
+                "guardrails config at %s parsed to %r (expected a mapping) — "
+                "treating as empty config and keeping defaults. Fill the file "
+                "with a valid YAML mapping to silence this.",
+                config_path,
+                type(data).__name__ if data is not None else "None",
+            )
+            data = {}
+        guardrail_config = data.get("guardrails", {})
+
         config.allow_read_only_auto = guardrail_config.get("allow_read_only_auto", True)
         config.allow_bounded_write_auto = guardrail_config.get("allow_bounded_write_auto", True)
         config.require_approval_for_destructive = guardrail_config.get("require_approval_for_destructive", True)

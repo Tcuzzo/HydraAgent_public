@@ -914,37 +914,6 @@ def _group_message_addresses_bot(message: dict[str, Any], text: str) -> bool:
     return False
 
 
-def _forward_group_message_to_fabric(update: dict[str, Any], chat_id: Any) -> None:
-    """Best-effort mirror of a group-chat message onto the local fabric board
-    (POST /ask). Reads the group chat id from HYDRA_GROUP_CHAT_ID and the fabric base
-    from HYDRA_FABRIC_BASE. Silent on any failure."""
-    try:
-        from gateways.telegram import group_relay
-
-        group_raw = _resolve_group_chat_id()
-        if not group_raw:
-            return
-        try:
-            group_id = int(group_raw)
-        except ValueError:
-            return
-        if chat_id is None or int(chat_id) != group_id:
-            return
-        fabric_base = os.environ.get("HYDRA_FABRIC_BASE")
-        if not fabric_base:
-            return  # fabric not configured; no-op
-
-        def _post(url: str, body: dict[str, Any]) -> Any:
-            data = json.dumps(body).encode("utf-8")
-            req = urllib.request.Request(url, data=data, headers={"content-type": "application/json"}, method="POST")
-            with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310 (LAN fabric)
-                return resp.status
-
-        group_relay.forward_group_to_fabric(update, group_id, fabric_base, _post)
-    except Exception:  # noqa: BLE001 — relay is best-effort, never breaks the listener
-        return
-
-
 def _process_operator_message_update(
     update: dict[str, Any],
     *,
@@ -967,11 +936,6 @@ def _process_operator_message_update(
     if not isinstance(chat, dict) or chat.get("id") is None:
         return None
     originating_chat_id = str(chat["id"])
-
-    # Group bridge: if this came from the group chat, mirror it onto the shared
-    # fabric board so peer agents see the group chat too. Best-effort
-    # — never let a relay hiccup break the operator listener.
-    _forward_group_message_to_fabric(update, chat.get("id"))
 
     # REGRESSION FIX: don't treat group chat chatter as operator commands.
     # The guard ONLY applies to group/supergroup chats — a private operator DM (always
