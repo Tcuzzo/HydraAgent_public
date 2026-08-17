@@ -50,3 +50,36 @@ skills:
       - grep
       - skill_route
       - spawn_subagent
+  - skill_id: optimus
+    name: Optimus
+    path: skills/optimus/SKILL.md
+    description: Harness-first dev-mode boot. Load the invariant map and the repair loop before any design or edit. Turns the runtime hallucination-resistant.
+    trigger_summary: dev mode, harness first, optimus, load invariants, repair loop, boot the loop
+    allowed_tools:
+      - fs_read
+      - list_directory
+      - grep
+      - skill_route
+      - skill_show
+  - skill_id: elite_build_understanding
+    name: Elite Build Understanding
+    path: skills/elite_build_understanding/SKILL.md
+    description: Design to Plan to Build to Test to Ship, each stage validated by the live understanding organs. Drain-refute honesty — the refute path is the honesty proof.
+    trigger_summary: build plan, design plan, understanding, drain refute, falsify, stage gate, elite build, refute fabricated
+    allowed_tools:
+      - fs_read
+      - list_directory
+      - grep
+      - skill_route
+      - skill_show
+  - skill_id: the_path
+    name: The Path
+    path: skills/the_path/SKILL.md
+    description: The wayfinder. Chart the route, resolve unknowns from evidence below the ask-me bar, never park a question, never run lost.
+    trigger_summary: the path, inlightenment, wayfinder, chart the way, find the route, resolve unknowns, never run lost
+    allowed_tools:
+      - fs_read
+      - list_directory
+      - grep
+      - skill_route
+      - skill_show
