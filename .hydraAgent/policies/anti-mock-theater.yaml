@@ -1,0 +1,31 @@
+schema: hydra.policies.anti_mock_theater.v1
+name: Kill fake green (no mock theater)
+description: >-
+  A test that mocks the seam under test, the database, or the filesystem to
+  claim a capability works is mock theater — it is faking the truth. A test is
+  only green if it asserts a REAL physical side-effect.
+rules:
+  - id: antimock_1
+    rule: >-
+      Minimize or eliminate unittest.mock. Do not mock the database, the
+      filesystem, local sockets, or the seam under test.
+  - id: antimock_2
+    rule: >-
+      Mock ONLY the external process, credential, network, or paid-API leaf —
+      the unstable outer boundary. The seam whose behavior is the proof must
+      run for real.
+  - id: antimock_3
+    rule: >-
+      A test claiming "writes video" must verify a real file on disk with size
+      greater than zero. A test claiming "stores a row" must read the row back
+      from the real database. A test claiming "renders" must assert a real DOM
+      element.
+  - id: antimock_4
+    rule: >-
+      A skip is not a pass. A test can itself be wrong. Audit the test you rely
+      on before you trust its green.
+  - id: antimock_5
+    rule: >-
+      The correct test boundary is the outermost model leaf: replace the model
+      call with a canned verdict, but never replace the validator whose scoring
+      and pass/fail logic is the proof.

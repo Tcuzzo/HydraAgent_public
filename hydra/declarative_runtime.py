@@ -74,6 +74,13 @@ def load_runtime_catalog(root: Path) -> RuntimeCatalog:
         policies={
             "danger_gates": _read_yaml(root / ".hydraAgent/policies/danger-gates.yaml"),
             "trust_tiers": _read_yaml(root / ".hydraAgent/policies/trust-tiers.yaml"),
+            # BACKS dev-mode seam — the hallucination-resistance floor. Loaded
+            # here so the planner brief carries the invariants, the sniper and
+            # anti-mock-theater rules, and the dev-mode playbook.
+            "backs_invariants": _read_yaml(root / ".hydraAgent/policies/backs-invariants.yaml"),
+            "sniper_testing": _read_yaml(root / ".hydraAgent/policies/sniper-testing.yaml"),
+            "anti_mock_theater": _read_yaml(root / ".hydraAgent/policies/anti-mock-theater.yaml"),
+            "dev_mode_playbook": _read_yaml(root / ".hydraAgent/playbooks/dev-mode-elite-build.yaml"),
         },
         skills=skills,
     )
@@ -119,6 +126,15 @@ def build_runtime_brief(operator_input: str, catalog: RuntimeCatalog, *, root: P
         "policies": {
             "danger_gates": catalog.policies.get("danger_gates", {}),
             "approval_required_when": _approval_required_when(catalog.policies),
+            "dev_mode_seam": {
+                "invariants_loaded": bool(catalog.policies.get("backs_invariants")),
+                "invariant_count": len(
+                    (catalog.policies.get("backs_invariants", {}) or {}).get("invariants") or []
+                ),
+                "playbook_loaded": bool(catalog.policies.get("dev_mode_playbook")),
+                "sniper_loaded": bool(catalog.policies.get("sniper_testing")),
+                "anti_mock_loaded": bool(catalog.policies.get("anti_mock_theater")),
+            },
         },
         "memory": {
             "relevant_episodes": _recent_episodes(catalog.root),

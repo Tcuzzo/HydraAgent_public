@@ -1,0 +1,87 @@
+schema: hydra.playbooks.dev_mode_elite_build.v1
+name: dev-mode-elite-build
+applies_to: >-
+  Any build, fix, uplift, or ship on this machine — including brand-new work
+  outside this repo — before designing solo or writing code without the
+  dev-mode floor.
+description: >-
+  The environment play. It bundles the dev-mode invariants, the
+  understanding-validated build stages, and the wayfinder into one repair loop
+  that runs end to end. The point is to make the runtime hallucination-resistant:
+  ground before reasoning, refute before green, verify on the real path.
+bundle:
+  - optimus      # harness-first boot, invariant map load, the repair loop
+  - elite_build_understanding  # Design -> Plan -> Build -> Test -> Ship, drain-refute
+  - the_path    # the wayfinder; never park a question, never run lost
+stages:
+  - stage: Design
+    question: Is the spec clear and faithful to the original intent?
+    move: Revise the spec from named failures; do not invent a gate result.
+  - stage: Plan
+    question: Does the plan answer the intent and fit the delivery surface?
+    move: Resolve recovery actions before implementation.
+  - stage: Build
+    question: Does the implementation satisfy the spec without drift?
+    move: APPROVED is strong evidence; REVISE and REJECT identify work to repair.
+  - stage: Test
+    question: Do the tests exercise real behavior and make it testable?
+    move: Keep only candidates that pass both the behavioral proof and the
+      understanding hook. Sniper-only; assert real side-effects.
+  - stage: Ship
+    question: Does the candidate apply cleanly, stay loud on failure, and
+      preserve tool truth?
+    move: Land only after failures are repaired and the surface proves the
+      behavior.
+repair_loop:
+  - step: A
+    name: Reproduce on live truth
+    detail: >-
+      Trace producer -> transport -> parser -> consumer -> durable/UI outcome.
+      Reproduce the defect WITHOUT editing source. Record the command and
+      output. Use the wayfinder to find the real seam; never run lost.
+  - step: B
+    name: RED contract tamper-proof
+    detail: >-
+      Write the smallest regression test that fails for the REAL reason, crossing
+      the broken boundary. Mock only the external leaf — never the seam under
+      test. Commit the RED test before any builder runs.
+  - step: C
+    name: Fix the class at the seam
+    detail: >-
+      Name the flaw class. Sweep horizontally for every sibling. Fix vertically
+      at the shared primitive. Land a structural guard. No stubs, no dead
+      scaffolds, no orphans. No new operator gate. Failures stay loud.
+  - step: D
+    name: Verify on the real path
+    detail: >-
+      Failing test now green. Sniper-test the touched seams only. Prove the
+      capability on the real path, not a proxy. Assert real side-effects.
+  - step: E
+    name: Independent grade
+    detail: >-
+      An independent adversarial grader of a different model family must pass
+      before landing. The builder never grades its own work.
+  - step: F
+    name: Concurrent sessions
+    detail: >-
+      Before touching the shared tree, verify other sessions' work is
+      preserved on a branch or commit. Tell the other session, not the human.
+  - step: G
+    name: Land
+    detail: >-
+      Commit only your own files. All invariants met. Update the memory lane.
+      Report PROVEN or STILL-BUILDING.
+anti_hallucination_guards:
+  - resolve_symbols_against_repo: >-
+      Before any answer that references an import, function, flag, or env var
+      ships, resolve it against the installed artifact. Unresolved = hallucination,
+      blocked. This is the runtime guard, not just prose.
+  - refute_fabricated_claim: >-
+      Try to falsify before you confirm. Extract every referenced symbol and
+      quote from a claim and resolve each. Any unresolved item refutes the claim.
+      An organ that can only confirm is an echo, not understanding.
+  - anthropolithic_parser: >-
+      The human's prose is the spec, not a rough draft. Parse carrier vs
+      payload, ground in their record and repo truth, deduce intent. Never take
+      a metaphor as a literal instruction; never caricature the dialect; never
+      invent. A thin anchor is labelled thin — it is never filled in.

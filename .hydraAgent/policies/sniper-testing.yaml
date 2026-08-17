@@ -1,0 +1,23 @@
+schema: hydra.policies.sniper_testing.v1
+name: Sniper testing only
+description: >-
+  During the fix/build iteration loop, the full suite is forbidden. Run the
+  specific tests that cover the functions you are actively modifying. The full
+  suite runs only at the landing phase. This kills token burn and fake comfort.
+rules:
+  - id: sniper_1
+    rule: >-
+      Use the diff to see exactly what files you touched
+      (`git diff --name-only HEAD`).
+  - id: sniper_2
+    rule: >-
+      Run the test files that directly cover the functions you are modifying —
+      no more, no less.
+  - id: sniper_3
+    rule: >-
+      Run the broader module cluster only when the specific fix is green and you
+      are preparing to land.
+  - id: sniper_4
+    rule: >-
+      State the specific test target before running it. A test run without a
+      named target is ritual, not verification.

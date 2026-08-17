@@ -28,6 +28,13 @@ CORE_SKILL_NAMES = (
     "systematic-debugging",
     "test-driven-development",
     "verification-before-completion",
+    # BACKS dev-mode seam — the hallucination-resistance floor. Appended LAST so
+    # existing exact-routing contract tests (which assert ordered lists for
+    # prompts like "fix the failing launch") are unchanged; these skills' keywords
+    # do not overlap the legacy prompts.
+    "optimus",
+    "elite_build_understanding",
+    "the_path",
 )
 SKILL_ROUTE_KEYWORDS = {
     "brainstorming": (
@@ -81,6 +88,36 @@ SKILL_ROUTE_KEYWORDS = {
         "safe",
         "ship",
         "verify",
+    ),
+    # BACKS dev-mode seam routing. Distinctive, non-overlapping keywords so the
+    # legacy contract prompts ("fix the failing launch", "define a suffix
+    # safely", "build a task planner working memory bundle") never match here.
+    "optimus": (
+        "dev mode",
+        "harness first",
+        "optimus",
+        "load invariants",
+        "repair loop",
+        "boot the loop",
+    ),
+    "elite_build_understanding": (
+        "design plan",
+        "build plan",
+        "understanding",
+        "drain refute",
+        "falsify",
+        "stage gate",
+        "elite build",
+        "refute fabricated",
+    ),
+    "the_path": (
+        "the path",
+        "inlightenment",
+        "wayfinder",
+        "chart the way",
+        "find the route",
+        "resolve unknowns",
+        "never run lost",
     ),
 }
 
@@ -216,8 +253,17 @@ def build_evolution_doctrine() -> str:
 
 
 def build_agent_system_prompt(base_prompt: str, root: str | Path | None = None) -> str:
+    # The BACKS dev-mode seam is loaded from the repo's own .hydraAgent/ (the
+    # module resolves its own repo root), independent of the skills root passed
+    # in `root`. It is the hallucination-resistance floor: invariants, the repair
+    # loop, sniper + anti-mock-theater, and the runtime grounding guards. If the
+    # contracts are not present it says so LOUD — never a silent gate.
+    from hydra.dev_mode_seam import build_backs_dev_mode_doctrine
+
     doctrine = (
         build_skill_doctrine(root)
+        + "\n\n"
+        + build_backs_dev_mode_doctrine()
         + "\n\n"
         + build_evolution_doctrine()
         + "\n\n"
