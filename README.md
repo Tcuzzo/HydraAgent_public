@@ -19,7 +19,7 @@ consequence of it. The model owns judgment: what to try, in what order, when it 
 finished. The runtime owns everything a model should never be trusted to hold.
 
 Two rules ride along with it, and they are load-bearing, not decoration. **No mock
-theater:** 60 of the 68 test files here touch no mock at all, because a test that
+theater:** 63 of the 70 test files here touch no mock at all, because a test that
 passes while the thing is broken is a lie. **Builder is not grader:** the failing test
 gets written first to prove the behavior is missing, and something that did not write
 the code has to pass it.
@@ -85,6 +85,30 @@ Be clear-eyed about this. Hydra can run a shell where you point it.
 Every risky action is classified before it runs, not after. Read-only tools run free.
 Bounded writes run only inside your root. Shell goes through the gate.
 
+## Skills — what the agent reasons with
+
+The agent carries a portable skill library at `skills/<name>/SKILL.md`. Every
+skill has a `trigger_summary` and is picked up by the skill spine on startup;
+the agent routes prompts to skills by trigger-word match. Drop a new
+`SKILL.md` in and it shows up at `hydra skills list`.
+
+| Skill | When the agent uses it |
+| --- | --- |
+| `optimus` | Harness-first boot — every job loads the invariant floor before any design or edit. |
+| `the_path` | Charts the way when the next step is unclear. Never parks a question on the operator. |
+| `wayfinder` | The ticket discipline — fog of war, Not-yet-specified, Out-of-scope. Resolves unknowns from evidence. |
+| `elite_build_understanding` | The stage-gated planner — Design → Plan → Build → Test → Ship with drain-refute honesty. |
+| `systematic-debugging` | Root-cause first. Trace the real error path, fix at the seam, never patch symptoms. |
+| `architecture-engineer` | Reviews structural drift, boundary-changing proposals, writes ADRs when one is asked for. |
+| `design-taste` | Tokens first, eyes on, accessibility hard. Banned-defaults list + WCAG 2.2 gate. |
+| `task_planner` | Decomposes a capability into skill nodes; bundles working memory. |
+| `subagent-driven-development` | Drives an implementation plan with independent tasks in the current session. |
+
+The 9 repo skills are the *minimum* — the agent also picks up skills from
+`hydra/schemes/bundles/*/skills/`, your local `~/.codex/superpowers/skills/`,
+and any path you add to the discovery list. Run `hydra skills list` to see
+the full set on your machine; `hydra skills doctor` for a coverage audit.
+
 ## Quick start
 
 ```bash
@@ -121,6 +145,26 @@ hydra watch --watch ./src --watch ./tests --yolo "run the tests; if any fail, fi
 Triggers: `--every <30s|10m|2h>` and `--watch <path>` (repeatable). Controls:
 `--poll`, `--debounce`, `--max-cycles`, `--stop-file`, `--yolo`. Stop with `Ctrl-C`.
 
+## Live TUI — scroll follow, dragon seam
+
+The Textual TUI runs the agent loop in the same surface as your chat. Two
+interactions were tightened:
+
+**Scroll-follow.** `auto_scroll=True` on the chat pane is the resting state —
+new lines snap to the bottom. Hit `PageUp`, scroll up with the mouse, or
+press `Up` to **detach**: the chat stops following, the operator can read
+older turns while the agent keeps streaming, and a `⤴ follow:off` marker
+appears in the header band. Hit `Ctrl+End` (or scroll all the way down) to
+**reattach**. Tests: `hydra/test_tui_scroll_follow.py`.
+
+**Dragon seam.** The header dragon animates every 350 ms by default — eyes
+were identical between idle and active turns, and the tick kept firing while
+the terminal was unfocused. The fix introduces a three-state mode:
+**idle** (eyes open), **thinking** (frame shifted so the eyes narrow —
+visible the moment the model starts a turn), and **off** (tick is a no-op;
+wired to focus loss so the 350 ms loop stops burning CPU when you switch
+windows). Tests: `hydra/test_tui_dragon_seam.py`.
+
 ## Proof it works
 
 Run the suite yourself. That is the only proof worth anything.
@@ -132,6 +176,7 @@ python -m venv .venv && . .venv/bin/activate
 pip install -e ".[test]"
 pytest -q
 ```
+```
 
 No number is quoted here on purpose. A test count in a README is a thing you cannot
 check, and this file does not ask you to trust it. Two things you *can* check: the
@@ -141,7 +186,7 @@ an unsafe-deserialization scan, a private-IP topology scan, and the suite across
 macOS, and Windows on Python 3.11 and 3.12. Read the workflow, then look at the Actions
 tab.
 
-**No mock theater.** 68 test files; 8 of them import `unittest.mock`, and those mock
+**No mock theater.** 70 test files; 7 of them import `unittest.mock`, and those mock
 an HTTP boundary, not the thing under test. The rest assert real side effects: a real
 file written to a real temporary directory, a real row read back out of a real SQLite
 database, a real lock actually held.
