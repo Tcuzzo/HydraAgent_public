@@ -35,6 +35,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
+from textual.app import ScreenStackError
 from textual.css.query import NoMatches
 # textual 8.2.7 removed MouseWheel; use MouseScrollUp/Down (direction-encoded events).
 # Guarded import keeps the module loadable on older textual that still has MouseWheel.
@@ -441,6 +442,9 @@ class HydraApp(App[int]):
         Binding("pagedown", "scroll_runtime_down", "Scroll down", show=True),
         Binding("up", "scroll_up", "Scroll up", show=False),
         Binding("down", "scroll_down", "Scroll down", show=False),
+        # ctrl+end reattaches scroll-follow — operator's manual "back to
+        # newest" when they have scrolled up to read older turns.
+        Binding("ctrl+end", "attach_follow", "Follow: on", show=True),
     ]
 
     operator_label: reactive[str] = reactive("User")
@@ -504,6 +508,13 @@ class HydraApp(App[int]):
         self._provider_name = getattr(cfg, "name", "") or "hydra"
         self._chat_lines: list[tuple[str, str]] = []  # (role, content) history
         self._turn_start = 0.0
+        # Scroll-follow state. When True (the resting state) every new write
+        # scrolls the chat back to the bottom; the operator scrolls up to detach
+        # and read older turns while the agent is still streaming. Detached is
+        # indicated by `_follow_indicator()` and survives until they scroll back
+        # to the bottom (or hit the explicit reattach binding). See
+        # `_detach_from_follow` / `_attach_follow`.
+        self._follow_chat: bool = True
         # Running stats for the bar
         self._stat_tokens_chars = 0
         self._stat_iterations = 0
@@ -512,6 +523,12 @@ class HydraApp(App[int]):
         self._tools_used_this_turn = 0
         # Dragon animation frame counter (tick'd by set_interval in on_mount)
         self._dragon_frame = 0
+        # Dragon visual mode — the seam between "agent is idle" and "agent is
+        # thinking". One of "idle" (eyes open, ambient cycle), "thinking"
+        # (eyes closed/narrowed, shifted frame so the operator sees a
+        # distinct visual seam), or "off" (tick is a no-op — used on focus
+        # loss to stop the 350ms CPU churn while the operator is elsewhere).
+        self._dragon_mode: str = "idle"
         # Set by /restart handler; checked by maybe_reexec() after run() returns.
         self._restart_requested = False
         # Tracks the current turn's intake class so on_turn_done can suppress
@@ -618,7 +635,7 @@ class HydraApp(App[int]):
         text = event.value.strip()
         try:
             self.query_one("#operator-input", ChatInput).text = ""
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
         if text:
             await self._process_submitted(text)
@@ -628,7 +645,7 @@ class HydraApp(App[int]):
         text = (event.value or "").strip()
         try:
             self.query_one("#code-input", Input).value = ""
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
         if text:
             await self._process_submitted(text)
@@ -678,6 +695,9 @@ class HydraApp(App[int]):
         self._stat_live = True
         self._update_stat_bar()
         self._turn_start = time.monotonic()
+        # Dragon seam: idle -> thinking. The banner's eyes narrow so the
+        # operator sees the model is working without watching the chat stream.
+        self._set_dragon_thinking()
         self._active_intake = intake_kind
         self._tools_used_this_turn = 0  # we'll reveal chrome only if tools fire
 
@@ -867,6 +887,8 @@ class HydraApp(App[int]):
         """Runs on the UI event loop after AgentLoop returns."""
         self._turn_in_flight = False
         self._stat_live = False
+        # Dragon seam: thinking -> idle. Banner eyes re-open.
+        self._set_dragon_idle()
         self._stat_iterations += 1
         final = final_response.strip()
         if final:
@@ -893,6 +915,8 @@ class HydraApp(App[int]):
     def _handle_turn_error(self, detail: str) -> None:
         self._turn_in_flight = False
         self._stat_live = False
+        # Dragon seam: thinking -> idle on error path too.
+        self._set_dragon_idle()
         self._update_stat_bar()
         self._post_log(f"[red]✗ turn error:[/red] {detail}")
         self._post_chat_line("system", f"⚠ {detail[:160]}")
@@ -907,7 +931,7 @@ class HydraApp(App[int]):
         """
         try:
             self.query_one("#chat-stream", RichLog).write(markup)
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
 
     def _render_banner(self) -> Text:
@@ -931,18 +955,72 @@ class HydraApp(App[int]):
         else:
             # Fail-soft: no work model resolved, or work model same as chat.
             model_label = self._active_model
+        # Thinking mode shifts the frame index so the dragon's eyes look
+        # closed/narrowed — a distinct visual from idle. The shift keeps the
+        # ambient cycle alive (no fully static frame) without needing a
+        # second set of glyph art.
+        effective_frame = self._dragon_frame
+        if self._dragon_mode == "thinking":
+            effective_frame = (self._dragon_frame + 2) % len(_DRAGON_FRAMES)
         return _build_neon_banner(
             model_label=model_label,
             status_label=f"📡 {self._provider_name}  ·  🟢 online",
-            dragon_frame=self._dragon_frame,
+            dragon_frame=effective_frame,
         )
 
+    # ── Dragon mode seam (idle ↔ thinking ↔ off) ─────────────────────────
+    #
+    # Three states drive the dragon's visual cadence:
+    # - "idle"     — ambient cycle, eyes open. Default resting state.
+    # - "thinking" — frame shifted so the eyes look closed/narrowed. Wired
+    #                to the turn start hook below.
+    # - "off"      — tick is a no-op. Wired to focus loss so the 350ms
+    #                timer stops burning CPU while the operator is elsewhere.
+    #
+    # All setters are idempotent — safe to call from focus events.
+
+    def _set_dragon_thinking(self) -> None:
+        if self._dragon_mode == "thinking":
+            return
+        self._dragon_mode = "thinking"
+
+    def _set_dragon_idle(self) -> None:
+        if self._dragon_mode == "idle":
+            return
+        self._dragon_mode = "idle"
+
+    def _set_dragon_off(self) -> None:
+        if self._dragon_mode == "off":
+            return
+        self._dragon_mode = "off"
+
+    def on_unfocus(self) -> None:  # noqa: D401
+        """Pause the dragon tick while the terminal is unfocused — saves CPU
+        and battery when the operator switches windows."""
+        self._set_dragon_off()
+
+    def on_focus(self) -> None:  # noqa: D401
+        """Resume the dragon tick when focus returns. If a turn is in flight
+        (the operator Alt-Tab'd mid-turn), pick up where we were: thinking
+        eyes, not idle eyes."""
+        if self._turn_in_flight:
+            self._set_dragon_thinking()
+        else:
+            self._set_dragon_idle()
+
     def _tick_dragon(self) -> None:
-        """Advance dragon animation by one frame and repaint the header."""
+        """Advance dragon animation by one frame and repaint the header.
+
+        No-op when the dragon is off (focus lost) — the 350ms tick stops
+        burning CPU while the operator is elsewhere. The set_interval stays
+        registered; only the body of the tick short-circuits.
+        """
+        if self._dragon_mode == "off":
+            return
         self._dragon_frame = (self._dragon_frame + 1) % len(_DRAGON_FRAMES)
         try:
             self.query_one("#header-band", Static).update(self._render_banner())
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
 
     def _render_stat_bar(self) -> Text:
@@ -971,7 +1049,7 @@ class HydraApp(App[int]):
     def _update_stat_bar(self) -> None:
         try:
             self.query_one("#stat-bar", Static).update(self._render_stat_bar())
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
 
     def _post_chat_line(self, role: str, content: str) -> None:
@@ -986,7 +1064,7 @@ class HydraApp(App[int]):
         self._chat_lines.append((role, content))
         try:
             self.query_one("#chat-stream", RichLog).write(line)
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
 
     def _last_user_text(self) -> str:
@@ -1070,12 +1148,12 @@ class HydraApp(App[int]):
             code.display = on
             code.value = ""
             (code if on else chat).focus()
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
         try:
             label = "HYDRA \\[code] »" if on else f"HYDRA \\[{self.operator_label}] »"
             self.query_one("#input-prompt", Static).update(label)
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
 
     def _handle_auth(self, cmd) -> None:
@@ -1155,19 +1233,75 @@ class HydraApp(App[int]):
             self.query_one("#chat-stream", RichLog).clear()
             self._chat_lines.clear()
             self._post_log("[dim]— cleared —[/dim]")
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
+
+    # ── Scroll-follow ────────────────────────────────────────────────────
+    #
+    # The chat RichLog has `auto_scroll=True`. Without explicit state, every
+    # new write snaps the view back to the bottom — manual scroll-up is
+    # silently overridden, so the operator can never read older turns while
+    # the agent is producing new ones. The fix is the follow/unfollow state
+    # below: any scroll-up detaches; any scroll-down to the bottom (or the
+    # explicit `ctrl+end` binding) reattaches. See tests in
+    # hydra/test_tui_scroll_follow.py.
+
+    def _detach_from_follow(self) -> None:
+        """Stop auto-scrolling on new writes. Operator wants to read older
+        turns while the agent keeps streaming. Safe to call repeatedly;
+        safe to call before the screen is mounted (state-only)."""
+        if self._follow_chat is False:
+            return
+        self._follow_chat = False
+        try:
+            self.query_one("#chat-stream", RichLog).auto_scroll = False
+        except (NoMatches, ScreenStackError):
+            # Pre-mount or post-unmount — state is enough; the widget will
+            # pick up auto_scroll=False when it next writes.
+            pass
+
+    def _attach_follow(self) -> None:
+        """Resume auto-scrolling on new writes. Safe pre/post mount."""
+        if self._follow_chat is True:
+            return
+        self._follow_chat = True
+        try:
+            self.query_one("#chat-stream", RichLog).auto_scroll = True
+        except (NoMatches, ScreenStackError):
+            pass
+
+    def _follow_indicator(self) -> str:
+        """Return a short visible marker when the operator has detached from
+        auto-follow, so they can see why the chat stopped moving. Empty
+        string when following — the chat's own movement is the signal."""
+        if self._follow_chat:
+            return ""
+        return "  [bright_yellow]⤴ follow:off — Ctrl+End to resume[/bright_yellow]"
 
     def action_scroll_runtime_up(self) -> None:
         try:
             self.query_one("#chat-stream", RichLog).scroll_page_up()
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
+        self._detach_from_follow()
 
     def action_scroll_runtime_down(self) -> None:
         try:
-            self.query_one("#chat-stream", RichLog).scroll_page_down()
-        except NoMatches:
+            chat = self.query_one("#chat-stream", RichLog)
+            chat.scroll_page_down()
+            # If a page-down reached the very bottom, reattach. Textual's
+            # RichLog exposes `scroll_offset.y`; the bottom is
+            # `max_scroll_y`. Without probing the widget (which can race with
+            # the layout pass) we just reattach when the offset reaches the
+            # bottom via the explicit binding `action_attach_follow`.
+            try:
+                if chat.scroll_offset.y >= chat.max_scroll_y:
+                    self._attach_follow()
+            except (AttributeError, TypeError):
+                # Older textual / different RichLog API — best-effort, fall
+                # through. The explicit binding still works.
+                pass
+        except (NoMatches, ScreenStackError):
             pass
 
     def action_scroll_up(self) -> None:
@@ -1175,15 +1309,30 @@ class HydraApp(App[int]):
             chat = self.query_one("#chat-stream", RichLog)
             # Scroll up by 5 lines
             chat.scroll_relative(y=-5)
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
+        self._detach_from_follow()
 
     def action_scroll_down(self) -> None:
         try:
             chat = self.query_one("#chat-stream", RichLog)
             # Scroll down by 5 lines
             chat.scroll_relative(y=5)
-        except NoMatches:
+            try:
+                if chat.scroll_offset.y >= chat.max_scroll_y:
+                    self._attach_follow()
+            except (AttributeError, TypeError):
+                pass
+        except (NoMatches, ScreenStackError):
+            pass
+
+    def action_attach_follow(self) -> None:
+        """Explicit reattach — `ctrl+end`. Always works, regardless of
+        whether the scroll-down happened to land at the bottom."""
+        self._attach_follow()
+        try:
+            self.query_one("#chat-stream", RichLog).scroll_end(animate=False)
+        except (NoMatches, ScreenStackError, AttributeError):
             pass
 
     async def on_mouse_scroll_down(self, event) -> None:  # noqa: ANN001
@@ -1191,7 +1340,12 @@ class HydraApp(App[int]):
         try:
             chat = self.query_one("#chat-stream", RichLog)
             chat.scroll_relative(y=3)
-        except NoMatches:
+            try:
+                if chat.scroll_offset.y >= chat.max_scroll_y:
+                    self._attach_follow()
+            except (AttributeError, TypeError):
+                pass
+        except (NoMatches, ScreenStackError):
             pass
 
     async def on_mouse_scroll_up(self, event) -> None:  # noqa: ANN001
@@ -1199,5 +1353,6 @@ class HydraApp(App[int]):
         try:
             chat = self.query_one("#chat-stream", RichLog)
             chat.scroll_relative(y=-3)
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
+        self._detach_from_follow()
