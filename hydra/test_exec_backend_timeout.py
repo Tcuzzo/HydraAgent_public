@@ -6,8 +6,10 @@
 # commands.tsv row would be lost.  These tests run a REAL subprocess (no
 # mocks) that sleeps longer than the timeout and assert the caller gets an
 # ExecResult with returncode == EXEC_TIMEOUT_EXIT_CODE and partial stdout.
+import subprocess
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 from hydra.exec_backend import (
     EXEC_TIMEOUT_EXIT_CODE,
@@ -19,7 +21,16 @@ from hydra.exec_backend import (
 
 def test_run_on_host_timeout_returns_structured_execresult(tmp_path):
     """A host-path command that exceeds timeout returns ExecResult(124), not
-    a raw TimeoutExpired."""
+    a raw TimeoutExpired.
+
+    Layer A — REAL subprocess path.  The child runs ``echo partial-out;
+    sleep 60`` and the timeout is 12s, giving spawn + echo roughly an
+    order of magnitude more headroom than the worst observed CI runner
+    spawn latency.  On every supported runner the echo will have flushed
+    before the kill, so the partial-output assertion is deterministic
+    without becoming a wall-clock race.  Test duration is bounded by the
+    12s timeout.
+    """
     _reset_capability_cache()
     # Force the host path by making bwrap unavailable.  Patch the capability
     # probe result directly (the probe is a free in-process organ, not an
@@ -30,10 +41,61 @@ def test_run_on_host_timeout_returns_structured_execresult(tmp_path):
     eb._BWRAP_CAPABLE = False
     try:
         result = run_sandboxed(
-            ["sh", "-c", "echo partial-out; sleep 10"],
+            ["sh", "-c", "echo partial-out; sleep 60"],
             workspace=Path(tmp_path),
-            timeout=0.5,
+            timeout=12,
         )
+    finally:
+        _reset_capability_cache()
+    assert isinstance(result, ExecResult)
+    assert result.returncode == EXEC_TIMEOUT_EXIT_CODE
+    assert "partial-out" in result.stdout
+    assert result.sandboxed is False
+
+
+def _force_timeout_with_partial_stdout(*args, **kwargs):
+    """Transport-leaf shim: raise TimeoutExpired carrying partial stdout,
+    mirroring a real subprocess.run(..., timeout=X) outcome where some
+    output flushed before the kill.  The SUT (hydra.exec_backend._run_on_host
+    / _run_in_bwrap) still executes its real bytes->str decode, None->""
+    fallback, and ExecResult(124) translation end to end — only the
+    transport is replaced.
+
+    Same proven pattern as hydra/test_git_diff.py::_force_timeout (commit
+    7ab659f on main): mock the wire, never the brain.
+    """
+    cmd = args[0] if args else kwargs.get("args", ["sh"])
+    raise subprocess.TimeoutExpired(
+        cmd=cmd,
+        timeout=kwargs.get("timeout", 12),
+        output=b"partial-out",
+    )
+
+
+def test_run_on_host_timeout_via_transport_shim(tmp_path):
+    """Layer B — DETERMINISTIC transport-leaf shim.  Mock the wire
+    (subprocess.run) so the timeout ALWAYS fires with partial stdout,
+    independent of spawn latency.  The real run_sandboxed bytes->str
+    decode, None->"" fallback, and ExecResult(EXEC_TIMEOUT_EXIT_CODE)
+    translation must STILL run end to end.  Mock the wire, never the
+    brain.
+
+    Same proven pattern as hydra/test_git_diff.py's two transport-shim
+    tests (commit 7ab659f on main).
+    """
+    import hydra.exec_backend as eb
+    eb._PROBE_DONE = True
+    eb._BWRAP_CAPABLE = False
+    try:
+        with patch(
+            "hydra.exec_backend.subprocess.run",
+            side_effect=_force_timeout_with_partial_stdout,
+        ):
+            result = run_sandboxed(
+                ["sh", "-c", "echo partial-out; sleep 60"],
+                workspace=Path(tmp_path),
+                timeout=12,
+            )
     finally:
         _reset_capability_cache()
     assert isinstance(result, ExecResult)
