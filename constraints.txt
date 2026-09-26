@@ -4,13 +4,13 @@
 attrs==26.1.0
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
-linkify-it-py==2.1.0
+linkify-it-py==2.2.0
 markdown-it-py==4.2.0
 mdit-py-plugins==0.6.1
 mdurl==0.1.2
-packaging==26.2
+packaging==26.3
 platformdirs==4.10.0
-prompt_toolkit==3.0.52
+prompt_toolkit==3.0.53
 psutil==7.2.2
 pyfiglet==1.0.4
 Pygments==2.21.0
@@ -22,7 +22,7 @@ rpds-py==2026.6.3
 textual==8.2.8
 typing_extensions==4.16.0
 uc-micro-py==2.0.0
-wcwidth==0.8.2
+wcwidth==0.8.4
 
 # Test toolchain (installed by CI's test job:
 # `pip install -c constraints.txt pytest pytest-asyncio`). asyncio_mode="auto"
