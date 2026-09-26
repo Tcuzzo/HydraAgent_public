@@ -635,7 +635,7 @@ class HydraApp(App[int]):
         text = event.value.strip()
         try:
             self.query_one("#operator-input", ChatInput).text = ""
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
         if text:
             await self._process_submitted(text)
@@ -645,7 +645,7 @@ class HydraApp(App[int]):
         text = (event.value or "").strip()
         try:
             self.query_one("#code-input", Input).value = ""
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
         if text:
             await self._process_submitted(text)
@@ -931,7 +931,7 @@ class HydraApp(App[int]):
         """
         try:
             self.query_one("#chat-stream", RichLog).write(markup)
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
 
     def _render_banner(self) -> Text:
@@ -1049,7 +1049,7 @@ class HydraApp(App[int]):
     def _update_stat_bar(self) -> None:
         try:
             self.query_one("#stat-bar", Static).update(self._render_stat_bar())
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
 
     def _post_chat_line(self, role: str, content: str) -> None:
@@ -1064,7 +1064,7 @@ class HydraApp(App[int]):
         self._chat_lines.append((role, content))
         try:
             self.query_one("#chat-stream", RichLog).write(line)
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
 
     def _last_user_text(self) -> str:
@@ -1148,12 +1148,12 @@ class HydraApp(App[int]):
             code.display = on
             code.value = ""
             (code if on else chat).focus()
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
         try:
             label = "HYDRA \\[code] »" if on else f"HYDRA \\[{self.operator_label}] »"
             self.query_one("#input-prompt", Static).update(label)
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
 
     def _handle_auth(self, cmd) -> None:
@@ -1233,7 +1233,7 @@ class HydraApp(App[int]):
             self.query_one("#chat-stream", RichLog).clear()
             self._chat_lines.clear()
             self._post_log("[dim]— cleared —[/dim]")
-        except NoMatches:
+        except (NoMatches, ScreenStackError):
             pass
 
     # ── Scroll-follow ────────────────────────────────────────────────────
