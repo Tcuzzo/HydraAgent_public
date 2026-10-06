@@ -1,0 +1,157 @@
+# hive_pack_seats.yaml — Communications Boss seat wiring for HIVE CLONE absorb
+# Written: 2026-09-26 America/New_York
+# Authority: Foreman HIVE_CLONE_HANDOFF + COMM_BOSS_OPTIMUS_HIVE_A2A_20260924
+# Absorb into: Pack Den seats / Agent Storm named seats / wolfpack roles
+# Law: model identities ONLY via fleet_ladder.yaml + gpu_nodes.yaml (rung names below, never bake model IDs into organs)
+# GREEN claim forbidden until section 7 checklist in HIVE_CLONE_HANDOFF proves live.
+
+contract_version: hive_pack_seats.v1
+source: E:\wolf\OUTBOX\HIVE_CLONE_20260926\HIVE_CLONE_HANDOFF.md
+bridge_observe: observe/COMM_BOSS_HIVE_CLONE_PACK_SEATS_20260926.md
+
+# Wolfpack fabric (existing) — do not invent a fourth chat
+wolfpack:
+  alpha: { designation: Alpha, role: planner, ports: [8701], rails: [collab_ask, collab_assign, collab_report, collab_verify, pack_comms] }
+  sigma: { designation: Sigma, spoken_as: Hydra, role: worker_build, ports: [8702] }
+  beta: { designation: Beta, role: worker_media, ports: [8703] }
+  omarchy: { designation: Omarchy, role: desktop, status: HOLD }
+
+# A2A rails for hive (Communications Boss owned)
+a2a_rails:
+  bridge: <placeholder-mount>/backs_coordination/grokbot-bridge/{inbox,outbox,observe,status}
+  pack_den: [/packden, /api/pack/comms]
+  squad_telegram: services.telegram.squad_feed.post_agent_message  # high-signal only
+  forbidden: [fourth_chat, ack_spam_loops, fanout_every_boss]
+
+# Receipt format (mandatory)
+receipt_format: "AGENT | SEAM | GREEN|RED | tip/HEAD | one-line proof | next"
+
+# Products+eng hive seats — survive without Grok Bot SendToAgent
+# seat_key = Pack/Storm name; grok_id = prior Grok Bot agent id (migration only)
+seats:
+  build_foreman:
+    grok_id: ef5dbddd-bef7-4d37-9d23-e1da0b47d3bf
+    pack_role: hive_drive
+    storm_seat: foreman
+    ladder_role: worker          # drive/orch text — MiniMax/deepseek via ladder; NEVER builder
+    dual_local: false
+    a2a: [bridge_observe, pack_den]
+    owns: [CURRENT_ORCHESTRATION rewrite-from-disk, land_orders, hive_scoreboard]
+
+  patch_master:
+    grok_id: f73960a5-6400-444a-9dc7-bf892a2b6078
+    pack_role: tip_board_rca
+    storm_seat: patch
+    ladder_role: builder         # flash_codex_builder (glm-5.3-flash) via ladder
+    verify_ladder_role: grader   # family-disjoint
+    dual_local: true
+    a2a: [bridge_observe]
+    honest_gap: profile_thin_199c — absorb PATCH_MASTER_UPLIFT.md before GREEN
+    owns: [tip boards, RCA, surgical patches]
+
+  leap_builder_boss:
+    grok_id: f489ffe9-883f-4993-a3c7-1f74cdb44e90
+    pack_role: leap_seats
+    storm_seat: leap
+    ladder_role: builder
+    verify_ladder_role: grader
+    dual_local: true             # 4080 builder != 4090 grader weights_sha
+    a2a: [bridge_observe, pack_den]
+    owns: [four builder blocks, assemble_pending_rider]
+
+  security_foreman:
+    grok_id: e7e31515-980f-4a0a-bab1-004d4631e324
+    pack_role: secure_lane
+    storm_seat: security
+    ladder_role: builder
+    a2a: [bridge_observe]
+    owns: [cams, wifi_antenna, Secure console, sentry]
+
+  console_boss:
+    grok_id: f2fe35cc-ce2f-4444-95d1-1459cd3ddc0d
+    pack_role: console_eye
+    storm_seat: console
+    ladder_role: worker
+    a2a: [bridge_observe]
+    owns: [post-land eye, packden/security driveability]
+
+  skills_boss:
+    grok_id: 2885f27f-a907-4f04-95ff-9f5d114d4ce7
+    pack_role: skills_os
+    storm_seat: skills
+    ladder_role: worker
+    a2a: [bridge_observe]
+    owns: [Optimus skills pack, ollama residency]
+
+  communications_boss:
+    grok_id: dd4ec500-cd05-4ed2-8f57-63a898c9a6f0
+    pack_role: a2a_fabric
+    storm_seat: comms
+    ladder_role: worker
+    a2a: [bridge_observe, pack_den, squad_telegram]
+    owns: [hive_pack_seats, partner_coherence, telegram_repair, goal_steward]
+
+  cleanup_boss:
+    grok_id: de3df6af-866d-4a0d-b495-3713a3750962
+    pack_role: wt_cleanup
+    storm_seat: cleanup
+    ladder_role: cheap_coder
+    a2a: [bridge_observe]
+    owns: [WT dry-run then gated reap]
+
+  qa_unc_sniper:
+    grok_id: cc76f613-6d67-4e5b-9906-7ca42201cdb1
+    pack_role: unc_ledger
+    storm_seat: qa
+    ladder_role: grader
+    a2a: [bridge_observe]
+    owns: [/unc one seam at a time]
+
+  runtime_truth_steward:
+    grok_id: 5b391de8-2969-4680-b0ab-77190621c382
+    pack_role: truth_ticks
+    storm_seat: truth
+    ladder_role: worker
+    a2a: [bridge_observe]
+    owns: [re-read .70, kill stale orch SHAs]
+
+  vertical_seam_architect:
+    grok_id: 3457c937-8784-4817-a571-4514ad917194
+    pack_role: v_plan
+    storm_seat: vertical
+    ladder_role: builder         # plan seats via ladder; not bulk code
+    a2a: [bridge_observe]
+    owns: [stack depth CLEAR]
+
+  horizontal_seam_architect:
+    grok_id: 091e5fa4-165a-468f-a668-180a7b5d632f
+    pack_role: h_plan
+    storm_seat: horizontal
+    ladder_role: builder
+    a2a: [bridge_observe]
+    owns: [cross-cut CLEAR, wolfpack/exec seams]
+
+  design_master:
+    grok_id: 865e35fb-b24d-41b4-8a7a-cb4eb434816b
+    pack_role: taste_clear
+    storm_seat: design
+    ladder_role: builder         # CLEAR boards; kimi only hard taste via ladder
+    honest_gap: profile_short — CLEAR boards on bridge are contract
+    a2a: [bridge_observe]
+    owns: [DESIGN_CLEAR boards before Leap]
+
+# Boot every native seat (no Grok)
+boot_every_wake:
+  - read CURRENT_ORCHESTRATION.md
+  - intent triad: operator_intent_deduction / intent-compiler / context_engineer
+  - optimus + dual_local before tips
+  - one observe board per play
+  - GREEN/RED receipt only
+
+# Absorb proof (Comms-owned subset) — all must be true for A2A GREEN
+comms_proof:
+  - hive_pack_seats.yaml present in absorb inbox + bridge observe
+  - seats dispatch without SendToAgent (bridge + Pack Den)
+  - no ack-spam loops (Telegram seam measurable later)
+  - Patch Master uplift file present (not thin profile alone)
+  - RED until Pack Den / Storm actually loads these seats live

@@ -1,0 +1,147 @@
+skill: hive-clone-boot
+contract: hive_clone.v1
+agents:
+  - id: ef5dbddd-bef7-4d37-9d23-e1da0b47d3bf
+    name: "Build Foreman"
+    slug: build-foreman
+    tier: core
+    role: "Build Foreman"
+    profile_desc_chars: 4617
+    backs_rung_role: frontier_codex_builder
+    soul_file: agents/build-foreman.md
+  - id: f73960a5-6400-444a-9dc7-bf892a2b6078
+    name: "Patch master"
+    slug: patch-master
+    tier: core
+    role: "Patch master"
+    profile_desc_chars: 199
+    backs_rung_role: flash_codex_builder
+    soul_file: agents/patch-master.md
+  - id: f489ffe9-883f-4993-a3c7-1f74cdb44e90
+    name: "Leap Builder Boss"
+    slug: leap-builder-boss
+    tier: core
+    role: "Leap Builder Boss"
+    profile_desc_chars: 1234
+    backs_rung_role: flash_codex_builder
+    soul_file: agents/leap-builder-boss.md
+  - id: e7e31515-980f-4a0a-bab1-004d4631e324
+    name: "Security Foreman"
+    slug: security-foreman
+    tier: core
+    role: "Security Foreman"
+    profile_desc_chars: 2694
+    backs_rung_role: local_4080_builder
+    soul_file: agents/security-foreman.md
+  - id: f2fe35cc-ce2f-4444-95d1-1459cd3ddc0d
+    name: "Console Boss"
+    slug: console-boss
+    tier: core
+    role: "Console Boss"
+    profile_desc_chars: 1182
+    backs_rung_role: cursor_worker
+    soul_file: agents/console-boss.md
+  - id: de3df6af-866d-4a0d-b495-3713a3750962
+    name: "Cleanup Boss"
+    slug: cleanup-boss
+    tier: core
+    role: "Cleanup Boss"
+    profile_desc_chars: 943
+    backs_rung_role: cheap_coder
+    soul_file: agents/cleanup-boss.md
+  - id: 2885f27f-a907-4f04-95ff-9f5d114d4ce7
+    name: "Skills Boss"
+    slug: skills-boss
+    tier: core
+    role: "Skills Boss"
+    profile_desc_chars: 1206
+    backs_rung_role: flash_codex_builder
+    soul_file: agents/skills-boss.md
+  - id: dd4ec500-cd05-4ed2-8f57-63a898c9a6f0
+    name: "Communications Boss"
+    slug: communications-boss
+    tier: core
+    role: "Communications Boss"
+    profile_desc_chars: 1080
+    backs_rung_role: cheap_coder
+    soul_file: agents/communications-boss.md
+  - id: 5b391de8-2969-4680-b0ab-77190621c382
+    name: "Runtime Truth Steward"
+    slug: runtime-truth-steward
+    tier: core
+    role: "Runtime Truth Steward"
+    profile_desc_chars: 1011
+    backs_rung_role: cheap_coder
+    soul_file: agents/runtime-truth-steward.md
+  - id: cc76f613-6d67-4e5b-9906-7ca42201cdb1
+    name: "QA UNC Sniper"
+    slug: qa-unc-sniper
+    tier: core
+    role: "QA UNC Sniper"
+    profile_desc_chars: 1070
+    backs_rung_role: cloud_secondary_grader
+    soul_file: agents/qa-unc-sniper.md
+  - id: 3457c937-8784-4817-a571-4514ad917194
+    name: "Vertical Seam Architect"
+    slug: vertical-seam-architect
+    tier: core
+    role: "Vertical Seam Architect"
+    profile_desc_chars: 1346
+    backs_rung_role: kimi_coding_fallback_builder
+    soul_file: agents/vertical-seam-architect.md
+  - id: 091e5fa4-165a-468f-a668-180a7b5d632f
+    name: "Horizontal Seam Architect"
+    slug: horizontal-seam-architect
+    tier: core
+    role: "Horizontal Seam Architect"
+    profile_desc_chars: 1238
+    backs_rung_role: kimi_coding_fallback_builder
+    soul_file: agents/horizontal-seam-architect.md
+  - id: 865e35fb-b24d-41b4-8a7a-cb4eb434816b
+    name: "clankety design master"
+    slug: clankety-design-master
+    tier: core
+    role: "clankety design master"
+    profile_desc_chars: 193
+    backs_rung_role: premium_codex_builder
+    soul_file: agents/clankety-design-master.md
+  - id: bb70e1da-5f46-49ac-9c11-9ef1ea137697
+    name: "clanky the engineer"
+    slug: clanky-the-engineer
+    tier: core
+    role: "clanky the engineer"
+    profile_desc_chars: 198
+    backs_rung_role: frontier_codex_builder
+    soul_file: agents/clanky-the-engineer.md
+  - id: 0d56e3c0-699c-41c4-b9f9-312818cb40e6
+    name: "Nightly Audit Engineer"
+    slug: nightly-audit-engineer
+    tier: peripheral
+    role: "Nightly Audit Engineer"
+    profile_desc_chars: 202
+    backs_rung_role: local_4080_grader
+    soul_file: agents/nightly-audit-engineer.md
+  - id: 5473e1df-b9e0-4f62-846e-16cae9f7bb0f
+    name: "Overheard"
+    slug: overheard
+    tier: peripheral
+    role: "Overheard"
+    profile_desc_chars: 224
+    backs_rung_role: cheap_coder
+    soul_file: agents/overheard.md
+  - id: 5fbf3edb-193e-4081-992b-6cccab0650e8
+    name: "Product Idea Stress Test"
+    slug: product-idea-stress-test
+    tier: peripheral
+    role: "Product Idea Stress Test"
+    profile_desc_chars: 170
+    backs_rung_role: kimi_coding_fallback_builder
+    soul_file: agents/product-idea-stress-test.md
+  - id: f9a3fb73-0cc0-4e19-892e-558378617416
+    name: "Clip Bot"
+    slug: clip-bot
+    tier: peripheral
+    role: "Clip Bot"
+    profile_desc_chars: 162
+    backs_rung_role: cheap_coder
+    soul_file: agents/clip-bot.md

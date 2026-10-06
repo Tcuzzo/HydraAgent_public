@@ -1,0 +1,31 @@
+# Fleet ladder — EXAMPLE. Copy beside your code (e.g. ladder.yaml) and swap
+# every placeholder for a model your providers actually serve.
+# Per role: ordered candidates, strongest first, ending in a local survival
+# tail (whatever runs on your own hardware when every cloud provider is dark).
+# To change or add a model, edit THIS file — never the code.
+
+builder:                        # implements and repairs
+  - strong-cloud-model          # best quality; first choice when it is up
+  - mid-cloud-model             # solid and cheaper; the usual fallback
+  - local-coder-model           # survival tail: your own hardware
+
+grader:                         # independent review — never the model that built
+  - other-family-strong-model   # a DIFFERENT family from the builder rungs
+  - other-family-mid-model
+  - local-review-model
+
+worker:                         # bounded, well-specified jobs; cheap rungs fine
+  - fast-cheap-model
+  - local-small-model
+
+# --- Solo variant: only one model family available -------------------------
+# Builder and grader still must not resolve to the SAME model for the same
+# change. Split within the family (different model or size) and say so in
+# the dispatch log — it is the weakest legal separation, not the ideal.
+#
+# builder:
+#   - family-large-model
+# grader:
+#   - family-small-model        # same family, different model — log it
+# worker:
+#   - family-small-model
