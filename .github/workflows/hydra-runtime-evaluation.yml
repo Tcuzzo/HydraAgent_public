@@ -1,0 +1,44 @@
+name: Hydra public runtime evaluation
+on:
+  push:
+    branches: [audit/hydra-runtime-20261009]
+    paths: [.github/workflows/hydra-runtime-evaluation.yml]
+permissions:
+  contents: read
+jobs:
+  runtime-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 33539fcfd12743cdfea076d21674309083758ba2
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install shipped dependencies and preserve complete source
+        run: |
+          mkdir -p "$RUNNER_TEMP/hydra-evidence/wheels"
+          python -m pip install '.[test,memory]' > "$RUNNER_TEMP/hydra-evidence/install.log" 2>&1
+          python -m pip freeze > "$RUNNER_TEMP/hydra-evidence/versions.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/hydra-evidence/source-sha.txt"
+          git archive HEAD | gzip > "$RUNNER_TEMP/hydra-evidence/hydra-full-source.tar.gz"
+          python -m pip wheel --wheel-dir "$RUNNER_TEMP/hydra-evidence/wheels" '.[test,memory]' > "$RUNNER_TEMP/hydra-evidence/wheels.log" 2>&1
+      - name: Run all non-live tests with real exit status
+        run: |
+          export HOME="$RUNNER_TEMP/hydra-clean-home"
+          mkdir -p "$HOME"
+          set +e
+          python -m hydra --version > "$RUNNER_TEMP/hydra-evidence/cli-version.txt" 2>&1
+          python -m pytest -m 'not live and not network and not smoke' -q --junitxml="$RUNNER_TEMP/hydra-evidence/tests.xml" > "$RUNNER_TEMP/hydra-evidence/tests.log" 2>&1
+          RC=$?
+          echo "$RC" > "$RUNNER_TEMP/hydra-evidence/tests.exit"
+          tail -n 35 "$RUNNER_TEMP/hydra-evidence/tests.log"
+          exit "$RC"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hydra-public-runtime-tests
+          path: ${{ runner.temp }}/hydra-evidence
+          retention-days: 7
