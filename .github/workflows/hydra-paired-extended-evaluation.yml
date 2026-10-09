@@ -1,0 +1,91 @@
+name: Hydra paired extended-time evaluation
+on:
+  push:
+    branches: [audit/hydra-runtime-20261009]
+    paths: [.github/workflows/hydra-paired-extended-evaluation.yml]
+permissions:
+  contents: read
+jobs:
+  matched-local-worker:
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    runs-on: ubuntu-latest
+    timeout-minutes: 38
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 1bca0980838fdc509e97efc1d15267535f19abc4
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare unchanged agents and task assertions with explicit time-only revision
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/paired-evidence" "$RUNNER_TEMP/ollama-bin"
+          git clone --quiet --depth 1 https://github.com/Tcuzzo/HydraAgent_public.git "$RUNNER_TEMP/hydra-source"
+          git -C "$RUNNER_TEMP/hydra-source" fetch --quiet --depth 1 origin 33539fcfd12743cdfea076d21674309083758ba2
+          git -C "$RUNNER_TEMP/hydra-source" checkout --quiet --detach 33539fcfd12743cdfea076d21674309083758ba2
+          git clone --quiet --depth 1 https://github.com/SWE-agent/mini-swe-agent.git "$RUNNER_TEMP/mini-source"
+          git -C "$RUNNER_TEMP/mini-source" fetch --quiet --depth 1 origin 04d809ceab9df28f9adaed044884180159172930
+          git -C "$RUNNER_TEMP/mini-source" checkout --quiet --detach 04d809ceab9df28f9adaed044884180159172930
+          python -m pip install "$RUNNER_TEMP/hydra-source[test,memory]" "$RUNNER_TEMP/mini-source" > "$RUNNER_TEMP/paired-evidence/install.log" 2>&1
+          python -m pip freeze > "$RUNNER_TEMP/paired-evidence/versions.txt"
+          git -C "$RUNNER_TEMP/hydra-source" rev-parse HEAD > "$RUNNER_TEMP/paired-evidence/hydra-sha.txt"
+          git -C "$RUNNER_TEMP/mini-source" rev-parse HEAD > "$RUNNER_TEMP/paired-evidence/mini-sha.txt"
+          curl --fail --location --retry 2 --max-time 180 https://github.com/ollama/ollama/releases/download/v0.40.1/ollama-linux-amd64.tar.zst -o "$RUNNER_TEMP/ollama.tar.zst"
+          sha256sum "$RUNNER_TEMP/ollama.tar.zst" > "$RUNNER_TEMP/paired-evidence/ollama-archive.sha256"
+          tar --zstd -xf "$RUNNER_TEMP/ollama.tar.zst" -C "$RUNNER_TEMP/ollama-bin"
+          rm "$RUNNER_TEMP/ollama.tar.zst"
+          python - <<'PY'
+          import json,pathlib,os,hashlib
+          p=pathlib.Path('audit/evaluation_20261009/run_live.py');text=p.read_text()
+          for before,after in [
+            ('WALL=240','WALL=900'),
+            ('timeout=min(180,max(1,s.until-time.monotonic()))','timeout=min(600,max(1,s.until-time.monotonic()))'),
+            ('wall_time_limit_seconds=240','wall_time_limit_seconds=900'),
+            ("'timeout':180","'timeout':600"),
+            ("'--timeout','180'","'--timeout','600'"),
+            ('TASKS[args.shard*2:args.shard*2+2]','TASKS[args.shard:args.shard+1]'),
+            ("'expected_runs':4","'expected_runs':2")]:
+              assert text.count(before)==1,(before,text.count(before))
+              text=text.replace(before,after)
+          p.with_name('run_live_extended.py').write_text(text)
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'paired-evidence'
+          (out/'experiment-revision.json').write_text(json.dumps({'reason':'Initial CPU run timed out in Hydra first-prompt processing; retained unchanged. New paired run changes only matched time allowances and scheduling granularity.','previous_task_wall_s':240,'new_task_wall_s':900,'previous_request_timeout_s':180,'new_request_timeout_s':600,'task_source_sha256':hashlib.sha256(p.with_name('tasks.py').read_bytes()).hexdigest(),'models_prompts_agents_assertions_unchanged':True,'repetitions':'one new attempt per agent per task, not a merged score with original run'},indent=2))
+          PY
+          cp -r audit/evaluation_20261009 "$RUNNER_TEMP/paired-evidence/runner"
+          lscpu > "$RUNNER_TEMP/paired-evidence/cpu.txt"
+          free -m > "$RUNNER_TEMP/paired-evidence/memory.txt"
+      - name: Run unchanged tasks under equal extended CPU limits
+        env:
+          SHARD: ${{ matrix.shard }}
+          OLLAMA_HOST: 127.0.0.1:11434
+          OLLAMA_NUM_PARALLEL: '1'
+          OLLAMA_MAX_LOADED_MODELS: '1'
+          OLLAMA_CONTEXT_LENGTH: '32768'
+        run: |
+          set -euo pipefail
+          export PATH="$RUNNER_TEMP/ollama-bin/bin:$PATH"
+          export OLLAMA_MODELS="$RUNNER_TEMP/local-models"
+          ollama serve > "$RUNNER_TEMP/paired-evidence/ollama-server.log" 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:11434/api/version > "$RUNNER_TEMP/paired-evidence/ollama-version.json"; then break; fi
+            sleep 1
+          done
+          timeout 240 ollama pull qwen2.5-coder:7b > "$RUNNER_TEMP/paired-evidence/model-pull.log" 2>&1
+          ollama show qwen2.5-coder:7b --modelfile > "$RUNNER_TEMP/paired-evidence/model-definition.txt"
+          curl -sf http://127.0.0.1:11434/api/tags > "$RUNNER_TEMP/paired-evidence/model-digests.json"
+          python audit/evaluation_20261009/run_live_extended.py --shard "$SHARD" --out "$RUNNER_TEMP/paired-evidence/runs" --hydra "$RUNNER_TEMP/hydra-source" --mini "$RUNNER_TEMP/mini-source" > "$RUNNER_TEMP/paired-evidence/run.log" 2>&1
+          cat "$RUNNER_TEMP/paired-evidence/run.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hydra-paired-extended-${{ matrix.shard }}
+          path: ${{ runner.temp }}/paired-evidence
+          retention-days: 7
