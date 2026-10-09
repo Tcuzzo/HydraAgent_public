@@ -1,0 +1,95 @@
+name: Native Hydra non-thinking coder comparison
+on:
+  push:
+    branches: [audit/native-runtime-comparison-20261009]
+    paths: [.github/workflows/audit-native-coder-comparison.yml]
+permissions:
+  contents: read
+jobs:
+  pair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        task: [clamp, unique, csv]
+        repetition: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: audit_native_comparison
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare the unchanged agents and frozen task corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/live-evidence"
+          python - <<'PY'
+          import os,pathlib
+          original=pathlib.Path('audit_native_comparison/run_pair.py').read_text()
+          text=original.replace('hydra-eval-qwen3-4b','hydra-eval-qwen25coder-3b').replace("'qwen3:4b'","'qwen2.5-coder:3b'")
+          old='Both agents moved from constrained 2-CPU/8B pilot to public standard runner/4B, with identical enlarged timeouts. Frozen task statements and graders unchanged.'
+          new='Additional shared non-thinking coding-model configuration after Qwen3 metadata reported thinking-only and replies exhausted their output budget. Same original tasks, graders, limits, agents and four-CPU runner; no model chosen using task outcomes.'
+          assert old in text
+          text=text.replace(old,new)
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])
+          (out/'run_pair.py').write_text(text)
+          (out/'live-evidence/runner.py').write_text(text)
+          (out/'live-evidence/original-runner.py').write_text(original)
+          PY
+          cd "$RUNNER_TEMP"
+          git clone --depth 1 https://github.com/Tcuzzo/HydraAgent_public.git hydra
+          git -C hydra fetch --depth 1 origin 33539fcfd12743cdfea076d21674309083758ba2
+          git -C hydra checkout --detach 33539fcfd12743cdfea076d21674309083758ba2
+          git clone --depth 1 https://github.com/SWE-agent/mini-swe-agent.git mini
+          git -C mini fetch --depth 1 origin 04d809ceab9df28f9adaed044884180159172930
+          git -C mini checkout --detach 04d809ceab9df28f9adaed044884180159172930
+          python -m pip install './hydra[memory]' ./mini > live-evidence/install.log 2>&1
+          python -m pip freeze > live-evidence/installed-versions.txt
+          git -C hydra status --porcelain > live-evidence/hydra-source-status.txt
+          git -C mini status --porcelain > live-evidence/mini-source-status.txt
+          curl -fL --retry 2 --max-time 180 https://github.com/ollama/ollama/releases/download/v0.40.1/ollama-linux-amd64.tar.zst -o ollama.tar.zst
+          mkdir ollama-local
+          tar --zstd -xf ollama.tar.zst -C ollama-local
+      - name: Verify tool-capable model serving and run both native agents
+        shell: bash
+        env:
+          TASK_ID: ${{ matrix.task }}
+          REPETITION: ${{ matrix.repetition }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          export PATH="$RUNNER_TEMP/ollama-local/bin:$PATH"
+          export OLLAMA_HOST=127.0.0.1:11434
+          export OLLAMA_MODELS="$RUNNER_TEMP/ollama-models"
+          export OLLAMA_NUM_PARALLEL=1
+          export OLLAMA_CONTEXT_LENGTH=16384
+          ollama serve > live-evidence/ollama-server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 40); do curl -sf http://127.0.0.1:11434/api/version > live-evidence/ollama-version.json && break; sleep 1; done
+          timeout 300 ollama pull qwen2.5-coder:3b > live-evidence/model-pull.log 2>&1
+          printf 'FROM qwen2.5-coder:3b\nPARAMETER num_ctx 16384\nPARAMETER num_predict 1024\nPARAMETER temperature 0\n' > Modelfile
+          ollama create hydra-eval-qwen25coder-3b -f Modelfile > live-evidence/model-create.log 2>&1
+          cp Modelfile live-evidence/Modelfile
+          python - <<'PY'
+          import json,urllib.request,pathlib
+          data={'model':'hydra-eval-qwen25coder-3b','messages':[{'role':'user','content':'Call benchmark_ready with value READY. Do not answer with prose.'}],'tools':[{'type':'function','function':{'name':'benchmark_ready','description':'Report readiness for a test.','parameters':{'type':'object','properties':{'value':{'type':'string'}},'required':['value']}}}],'temperature':0,'max_tokens':128,'stream':False}
+          req=urllib.request.Request('http://127.0.0.1:11434/v1/chat/completions',data=json.dumps(data).encode(),headers={'Content-Type':'application/json'})
+          with urllib.request.urlopen(req,timeout=180) as r:reply=json.load(r)
+          pathlib.Path('live-evidence/tool-preflight.json').write_text(json.dumps({'request':data,'response':reply},indent=2))
+          calls=reply['choices'][0]['message'].get('tool_calls',[])
+          assert calls and calls[0]['function']['name']=='benchmark_ready','Model/tool transport preflight failed; task scores must not be produced'
+          PY
+          python -u run_pair.py "$TASK_ID" "$REPETITION" > live-evidence/run.log 2>&1
+          cat live-evidence/run.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-pair-coder3b-${{ matrix.task }}-${{ matrix.repetition }}
+          path: ${{ runner.temp }}/live-evidence
+          retention-days: 7
