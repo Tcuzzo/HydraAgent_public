@@ -1,0 +1,49 @@
+name: Hydra atomic candidate validation
+on:
+  push:
+    branches: [audit/hydra-runtime-20261009]
+    paths: [.github/workflows/hydra-atomic-candidate-validation.yml]
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 3cd324141cc44eb2e7c3def7020ae690b5e665f2
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply exact local candidate to separate original checkout
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/atomic-evidence"
+          sed 's/^ diff --git/diff --git/' audit/evaluation_20261009/atomic_write_candidate.patch > "$RUNNER_TEMP/atomic-evidence/candidate.patch"
+          printf '%s  %s\n' 55638eb8fc30c2035af53006ecf197915ae594708f5d3b85084dc79430ccbc6b "$RUNNER_TEMP/atomic-evidence/candidate.patch" | sha256sum --check
+          git clone --quiet --depth 1 https://github.com/Tcuzzo/HydraAgent_public.git "$RUNNER_TEMP/candidate"
+          git -C "$RUNNER_TEMP/candidate" fetch --quiet --depth 1 origin 33539fcfd12743cdfea076d21674309083758ba2
+          git -C "$RUNNER_TEMP/candidate" checkout --quiet --detach 33539fcfd12743cdfea076d21674309083758ba2
+          git -C "$RUNNER_TEMP/candidate" apply --check "$RUNNER_TEMP/atomic-evidence/candidate.patch"
+          git -C "$RUNNER_TEMP/candidate" apply "$RUNNER_TEMP/atomic-evidence/candidate.patch"
+          python -m pip install "$RUNNER_TEMP/candidate[test,memory]" > "$RUNNER_TEMP/atomic-evidence/install.log" 2>&1
+          python -m pip freeze > "$RUNNER_TEMP/atomic-evidence/versions.txt"
+      - name: Run full non-live suite including candidate regression tests
+        run: |
+          export HOME="$RUNNER_TEMP/clean-home"
+          mkdir -p "$HOME"
+          cd "$RUNNER_TEMP/candidate"
+          set +e
+          python -m pytest -m 'not live and not network and not smoke' -q --junitxml="$RUNNER_TEMP/atomic-evidence/tests.xml" > "$RUNNER_TEMP/atomic-evidence/tests.log" 2>&1
+          RC=$?
+          echo "$RC" > "$RUNNER_TEMP/atomic-evidence/tests.exit"
+          tail -n 30 "$RUNNER_TEMP/atomic-evidence/tests.log"
+          exit "$RC"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hydra-atomic-candidate-validation
+          path: ${{ runner.temp }}/atomic-evidence
+          retention-days: 7
