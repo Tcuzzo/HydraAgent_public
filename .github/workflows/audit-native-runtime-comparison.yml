@@ -1,0 +1,75 @@
+name: Native Hydra matched comparison
+on:
+  push:
+    branches: [audit/native-runtime-comparison-20261009]
+    paths: [.github/workflows/audit-native-runtime-comparison.yml]
+permissions:
+  contents: read
+jobs:
+  pair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        task: [clamp, unique, csv]
+        repetition: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: audit_native_comparison
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install pinned public agents and local inference engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/live-evidence"
+          cp audit_native_comparison/run_pair.py "$RUNNER_TEMP/run_pair.py"
+          cp audit_native_comparison/run_pair.py "$RUNNER_TEMP/live-evidence/runner.py"
+          cd "$RUNNER_TEMP"
+          git clone --depth 1 https://github.com/Tcuzzo/HydraAgent_public.git hydra
+          git -C hydra fetch --depth 1 origin 33539fcfd12743cdfea076d21674309083758ba2
+          git -C hydra checkout --detach 33539fcfd12743cdfea076d21674309083758ba2
+          git clone --depth 1 https://github.com/SWE-agent/mini-swe-agent.git mini
+          git -C mini fetch --depth 1 origin 04d809ceab9df28f9adaed044884180159172930
+          git -C mini checkout --detach 04d809ceab9df28f9adaed044884180159172930
+          python -m pip install './hydra[memory]' ./mini > live-evidence/install.log 2>&1
+          python -m pip freeze > live-evidence/installed-versions.txt
+          git -C hydra status --porcelain > live-evidence/hydra-source-status.txt
+          git -C mini status --porcelain > live-evidence/mini-source-status.txt
+          curl -fL --retry 2 --max-time 180 https://github.com/ollama/ollama/releases/download/v0.40.1/ollama-linux-amd64.tar.zst -o ollama.tar.zst
+          mkdir ollama-local
+          tar --zstd -xf ollama.tar.zst -C ollama-local
+      - name: Execute the same frozen jobs through both native runtimes
+        shell: bash
+        env:
+          TASK_ID: ${{ matrix.task }}
+          REPETITION: ${{ matrix.repetition }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          export PATH="$RUNNER_TEMP/ollama-local/bin:$PATH"
+          export OLLAMA_HOST=127.0.0.1:11434
+          export OLLAMA_MODELS="$RUNNER_TEMP/ollama-models"
+          export OLLAMA_NUM_PARALLEL=1
+          export OLLAMA_CONTEXT_LENGTH=16384
+          ollama serve > live-evidence/ollama-server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 40); do curl -sf http://127.0.0.1:11434/api/version > live-evidence/ollama-version.json && break; sleep 1; done
+          timeout 300 ollama pull qwen3:4b > live-evidence/model-pull.log 2>&1
+          printf 'FROM qwen3:4b\nPARAMETER num_ctx 16384\nPARAMETER num_predict 1024\nPARAMETER temperature 0\n' > Modelfile
+          ollama create hydra-eval-qwen3-4b -f Modelfile > live-evidence/model-create.log 2>&1
+          cp Modelfile live-evidence/Modelfile
+          python -u run_pair.py "$TASK_ID" "$REPETITION" > live-evidence/run.log 2>&1
+          cat live-evidence/run.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-pair-qwen4b-${{ matrix.task }}-${{ matrix.repetition }}
+          path: ${{ runner.temp }}/live-evidence
+          retention-days: 7
