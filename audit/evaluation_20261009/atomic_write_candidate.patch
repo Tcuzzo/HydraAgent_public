@@ -1,0 +1,184 @@
+diff --git a/hydra/atomic_io.py b/hydra/atomic_io.py
+new file mode 100644
+index 0000000..c89a7c6
+--- /dev/null
++++ b/hydra/atomic_io.py
+@@ -0,0 +1,58 @@
++"""Atomic file replacement shared by the bounded filesystem tools.
++
++Exclusive unique temporary names prevent a pre-existing fixed-name link from
++redirecting writes. Existing basic permission bits are retained. Root/path
++validation remains the caller's responsibility; this is not an OS sandbox.
++"""
++from __future__ import annotations
++
++import os
++import secrets
++import stat
++from pathlib import Path
++
++
++def atomic_write_bytes(target: Path, payload: bytes) -> None:
++    target = Path(target)
++    try:
++        original = target.lstat()
++    except FileNotFoundError:
++        mode = None
++    else:
++        if not stat.S_ISREG(original.st_mode):
++            raise OSError(f"replacement target is not a regular file: {target}")
++        mode = stat.S_IMODE(original.st_mode)
++
++    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
++    flags |= getattr(os, "O_NOFOLLOW", 0)
++    temporary = None
++    fd = None
++    for _ in range(10):
++        candidate = target.with_name(f".{target.name}.hydra-{secrets.token_hex(12)}.tmp")
++        try:
++            # New files keep the original 0666-and-umask creation semantics.
++            fd = os.open(candidate, flags, 0o666)
++        except FileExistsError:
++            continue
++        temporary = candidate
++        break
++    if fd is None or temporary is None:
++        raise FileExistsError("cannot allocate an exclusive temporary file")
++    try:
++        with os.fdopen(fd, "wb") as stream:
++            fd = None
++            stream.write(payload)
++            stream.flush()
++            if mode is not None:
++                if hasattr(os, "fchmod"):
++                    os.fchmod(stream.fileno(), mode)
++                else:
++                    os.chmod(temporary, mode)
++            os.fsync(stream.fileno())
++        os.replace(temporary, target)
++        temporary = None
++    finally:
++        if fd is not None:
++            os.close(fd)
++        if temporary is not None:
++            temporary.unlink(missing_ok=True)
+ diff --git a/hydra/test_atomic_io_audit.py b/hydra/test_atomic_io_audit.py
+new file mode 100644
+index 0000000..efd8bc2
+--- /dev/null
++++ b/hydra/test_atomic_io_audit.py
+@@ -0,0 +1,46 @@
++"""Same filesystem assertions against original and candidate source."""
++import os,stat
++from pathlib import Path
++import pytest
++from skills import fs_edit,fs_write
++
++def perform(which,work):
++ if which=='edit':return fs_edit.run('solution.py','VALUE = 1','VALUE = 2',work)
++ return fs_write.run('solution.py','VALUE = 2\n',work,overwrite=True)
++
++@pytest.mark.parametrize('which',['edit','write'])
++def test_preexisting_temporary_symlink_does_not_write_outside(tmp_path,which):
++ work=tmp_path/'work';work.mkdir();target=work/'solution.py';target.write_text('VALUE = 1\n')
++ outside=tmp_path/'outside';outside.write_bytes(b'protected bytes')
++ (work/'solution.py.hydra-tmp').symlink_to(outside)
++ assert perform(which,work)['ok']
++ assert outside.read_bytes()==b'protected bytes'
++ assert target.read_text()=='VALUE = 2\n'
++
++@pytest.mark.parametrize('which',['edit','write'])
++@pytest.mark.parametrize('mode',[0o755,0o640,0o600])
++def test_existing_permission_bits_are_preserved(tmp_path,which,mode):
++ p=tmp_path/'solution.py';p.write_text('VALUE = 1\n');p.chmod(mode)
++ assert perform(which,tmp_path)['ok']
++ assert stat.S_IMODE(p.stat().st_mode)==mode
++
++@pytest.mark.parametrize('which',['edit','write'])
++def test_unrelated_fixed_temporary_file_is_not_overwritten(tmp_path,which):
++ p=tmp_path/'solution.py';p.write_text('VALUE = 1\n')
++ unrelated=tmp_path/'solution.py.hydra-tmp';unrelated.write_bytes(b'other operation')
++ assert perform(which,tmp_path)['ok']
++ assert unrelated.read_bytes()==b'other operation'
++
++@pytest.mark.parametrize('which',['edit','write'])
++def test_basic_edit_and_clean_temporary_files(tmp_path,which):
++ p=tmp_path/'solution.py';p.write_text('VALUE = 1\n')
++ assert perform(which,tmp_path)['ok']
++ assert p.read_bytes()==b'VALUE = 2\n'
++ assert sorted(x.name for x in tmp_path.iterdir())==['solution.py']
++
++@pytest.mark.parametrize('which',['edit','write'])
++def test_real_destination_symlink_escape_stays_blocked(tmp_path,which):
++ work=tmp_path/'work';work.mkdir();outside=tmp_path/'outside';outside.write_text('VALUE = 1\n')
++ (work/'solution.py').symlink_to(outside)
++ with pytest.raises(Exception,match='escapes root'):perform(which,work)
++ assert outside.read_text()=='VALUE = 1\n'
+diff --git a/skills/fs_edit.py b/skills/fs_edit.py
+index 5cf02d5..7c0b9d5 100644
+--- a/skills/fs_edit.py
++++ b/skills/fs_edit.py
+@@ -24,7 +24,7 @@ Maturity: SCAFFOLDED. Promoted by §10.30.
+ """
+ from __future__ import annotations
+ 
+-import os
++from hydra.atomic_io import atomic_write_bytes
+ from pathlib import Path
+ 
+ from skills.fs_read import SkillError
+@@ -121,19 +121,9 @@ def run(
+             f"resulting file {len(payload)} bytes exceeds max_bytes {max_bytes}"
+         )
+ 
+-    tmp = target_resolved.with_name(target_resolved.name + ".hydra-tmp")
+     try:
+-        with tmp.open("wb") as f:
+-            f.write(payload)
+-            f.flush()
+-            os.fsync(f.fileno())
+-        os.replace(tmp, target_resolved)
++        atomic_write_bytes(target_resolved, payload)
+     except OSError as e:
+-        if tmp.exists():
+-            try:
+-                tmp.unlink()
+-            except OSError:
+-                pass
+         raise SkillError(f"write failed for {target_resolved}: {e}") from e
+ 
+     return {
+diff --git a/skills/fs_write.py b/skills/fs_write.py
+index efda7e5..4d816e1 100644
+--- a/skills/fs_write.py
++++ b/skills/fs_write.py
+@@ -26,7 +26,7 @@ Maturity: SCAFFOLDED. Promoted by §10.21.
+ """
+ from __future__ import annotations
+ 
+-import os
++from hydra.atomic_io import atomic_write_bytes
+ from pathlib import Path
+ 
+ from skills.fs_read import SkillError
+@@ -130,19 +130,9 @@ def run(
+ 
+     # Atomic write: write to a sibling temp file then os.replace().
+     # Prevents readers from seeing a partially-written file.
+-    tmp = target_resolved.with_name(target_resolved.name + ".hydra-tmp")
+     try:
+-        with tmp.open("wb") as f:
+-            f.write(payload)
+-            f.flush()
+-            os.fsync(f.fileno())
+-        os.replace(tmp, target_resolved)
++        atomic_write_bytes(target_resolved, payload)
+     except OSError as e:
+-        if tmp.exists():
+-            try:
+-                tmp.unlink()
+-            except OSError:
+-                pass
+         raise SkillError(f"write failed for {target_resolved}: {e}") from e
+ 
+     return {
