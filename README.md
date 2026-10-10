@@ -1,587 +1,125 @@
 # Hydra
 
-**A powerful, no-frills autonomous coding & ops agent you run on your own machine.**
+**Turn a task into working code, with the models you choose.**
 
-**Version 1.0.0** · MIT · Linux / macOS / Windows · check yours with `hydra --version`
+Hydra is a coding and operations agent that runs from your terminal. Give it a repository and a goal: it can explore files, make edits, run commands, check its work, and keep useful context between sessions. Use a local model, connect a cloud service, or mix providers for different tasks.
 
-Hydra reads and writes code, runs shell commands, searches your repo, fetches the
-web, remembers what it learns, and routes work across local or cloud models — all
-from your terminal, with a clear safety model and an optional Telegram remote.
+Python 3.11+ · Linux, macOS, Windows · [MIT](LICENSE.md)
 
-This is the **public edition**: the full coding-agent core, sanitized for open use.
-It carries none of the original project's private methodology, media pipelines,
-multi-machine swarm, or operator data. See [PROVENANCE.md](PROVENANCE.md).
+[Get started](#get-started) · [Choose your models](#choose-your-models) · [Needle and Laya](#needle-and-laya) · [Training](docs/TRAINING.md) · [Command reference](docs/CLI-REFERENCE.md)
 
----
+## What you can do
 
-## What it can do
+- **Understand a codebase:** find the entry point, trace a feature, or explain a failure.
+- **Build and repair:** ask for a change, review the edits, and let Hydra run the checks you approve.
+- **Repeat useful work:** watch files or run a bounded task on a schedule.
+- **Keep context:** save project lessons and recall them in later sessions.
+- **Choose where inference runs:** use local compute, cloud APIs, or both.
+- **Add capabilities:** load local skill playbooks, enable browser tools, or connect Telegram.
 
-- **Edit code safely** — bounded file read/write/edit with path-escape protection.
-- **Run a shell** — execute commands cross-platform, behind an approval gate.
-- **Search & analyze** — grep, glob, repo audit, git diff.
-- **Reason with any model** — local (Ollama), cloud, or your ChatGPT account
-  (Codex sign-in), routed by task complexity across fast / reasoning / judge tiers.
-- **Remember** — a single-file hybrid memory: vector similarity + keyword (FTS5)
-  search fused together, so recall feels human, not literal.
-- **Pluggable skills** — drop a `SKILL.md` in and the agent can route to it.
-- **Browse** (optional) — headless browser tools when Playwright is installed.
-- **Drive it remotely** (optional) — a Telegram bot to chat, approve risky actions,
-  and unlock unattended mode with a 2FA code.
-- **Stay secure** — `hydra doctor` checks every dependency for updates and known
-  vulnerabilities (PyPI + OSV) and upgrades them with `--fix`.
+Try a concrete request: “Find why the tests fail, make the smallest fix, and run the relevant tests.” Hydra's usefulness depends on the selected model and the tools available on your machine.
 
-## Requirements
+## Get started
 
-- **Python 3.11+** on Linux, macOS, or Windows.
-- A model provider: a local [Ollama](https://ollama.com) install (free), a cloud
-  provider API key, or a ChatGPT account (via **Sign in with ChatGPT**, which uses
-  the Codex CLI). You bring your own keys — none ship with this repo.
-- Optional: `sqlite-vec` (full vector memory), `playwright` (browser tools).
-
-## Install
-
-**Quickest — install the `hydra` CLI straight from GitHub (one command):**
+Install the CLI with [pipx](https://pipx.pypa.io/):
 
 ```bash
 pipx install git+https://github.com/Tcuzzo/HydraAgent_public.git
-# ...or into your current environment:
-pip install git+https://github.com/Tcuzzo/HydraAgent_public.git
 ```
 
-**Or from a clone (for development):**
+Open a terminal in the project you want to work on, then run:
 
 ```bash
-git clone https://github.com/Tcuzzo/HydraAgent_public.git
-cd HydraAgent_public
-python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
-pip install -e .
+hydra
 ```
 
-**Optional capabilities:**
+On first launch, choose a local model, a cloud API key, or the Codex CLI sign-in path. `hydra setup` also configures providers from the command line. Provider settings live outside your project in `~/.hydraAgent/workspace/`.
+
+For a local first task, install [Ollama](https://ollama.com), start it, then:
 
 ```bash
-pip install sqlite-vec        # full vector memory (otherwise keyword-only recall)
-pip install playwright && playwright install chromium   # browser tools
+ollama pull qwen3:8b
+hydra setup --mode local --model qwen3:8b --non-interactive
+hydra ask "Explain this project's entry point" --provider ollama --model qwen3:8b --approval-policy deny
 ```
 
-Then just run **`hydra`** — it opens the chat surface, and if no model is
-configured yet it shows an in-surface **connect a model** panel with three
-paths: local Ollama, a cloud API key, or **Sign in with ChatGPT**. Prefer the
-command line? `hydra setup` walks the same choices (or drop keys in
-`~/.hydraAgent/workspace/.env.<provider>`), and then you're ready:
-`hydra ask "..."`.
+That model is an example; choose one that fits your hardware and supports the tasks you need. Run `hydra models --provider ollama` to inspect installed models. See [QUICKSTART.md](QUICKSTART.md) for development installation and first-run checks.
 
-Step-by-step first run: see [QUICKSTART.md](QUICKSTART.md).
+## Choose your models
 
-## Running on Windows and macOS
+Hydra selects models by configuration and protocol, without a model-family denylist. A family name alone does not determine API compatibility.
 
-Hydra works on Linux, macOS and Windows. Three things behave differently depending on
-which one you use, because the operating system either gives Hydra a capability or it
-does not. Where a capability is missing, Hydra switches that feature off and tells you
-out loud. It never pretends a feature is working.
-
-### Running commands: works everywhere
-
-When Hydra runs a command for you, it goes through one translator (`hydra/proc.py`) that
-knows how each operating system starts a program. On Linux and macOS it uses the normal
-Unix shell. On Windows it uses `cmd.exe`, or Git-Bash if you have that installed. There
-is nothing for you to configure.
-
-There is one Windows trap Hydra steps around for you. Windows ships a program called
-`bash`, but it is really a doorway into the Windows Subsystem for Linux: a separate world
-with its own filing system, where your `C:` folders are not where they normally are. A
-command sent through that doorway would run in the wrong place, or simply fail if you
-never installed a Linux to put behind it. Hydra ignores that doorway and looks for a real
-Git-Bash instead. If a job needs a Unix shell and you have no Git-Bash, Hydra says so
-plainly rather than running your command somewhere you did not mean.
-
-### Vector memory: needs the right Python
-
-**The short version.** Hydra remembers what you tell it, and it can look those memories
-up two ways. Keyword search finds notes containing the words you typed. Vector search
-finds notes that are *about* the same thing even when the words are different: ask about
-"the login bug" and it can surface a note that said "auth kept rejecting me". Vector
-search is the part that is sometimes unavailable.
-
-**The detailed version.** Vector search comes from a small add on called `vec0` that
-plugs into SQLite, the little database Hydra keeps memories in. Two separate things have
-to line up:
-
-1. **The add on has to exist for your machine.** The copy bundled here is built for
-   Linux on Intel and AMD chips only. On macOS or Windows, install it yourself with
-   `pip install sqlite-vec`.
-2. **Your Python has to be allowed to load add ons at all.** This is the one that
-   catches people out. Python has a switch, set when Python itself was built, for
-   whether SQLite may load add ons. Several macOS Pythons ship with that switch off,
-   including the one this project's own tests run on. When it is off, no add on can ever
-   load, whatever else you install.
-
-Check the second one:
-
-```bash
-python -c "import sqlite3; print(hasattr(sqlite3.Connection, 'enable_load_extension'))"
-```
-
-`True` means you are fine. `False` means vector memory cannot run on that Python at all.
-Either use a different Python (the builds from python.org and Homebrew normally work),
-or simply carry on without it. Hydra prints this at startup:
-
-```
-Hydra memory: vector lane OFF - <the exact reason>
-```
-
-and falls back to keyword search. You lose "find notes about this idea" and you keep
-"find notes containing this word". Nothing breaks, and nothing goes quiet.
-
-### Pasting several lines at once: Linux and macOS only
-
-**The short version.** Paste a block of text into Hydra's chat on Linux or macOS and it
-arrives as one message. On Windows the same paste arrives as one message per line. Every
-line still gets through -- nothing is dropped or reordered -- but a pasted paragraph
-becomes several turns instead of one, and Hydra tells you so the first time it happens.
-
-**The detailed version.** When you paste, the terminal drops all of the lines into Hydra's
-input at once. Hydra reads the first line and then asks the operating system "is there
-more already waiting?", so it can gather the rest into the same message. That question is
-a mechanism called `select`, and on Windows it can only be asked about network
-connections, never about a console window. So on Windows Hydra cannot find out that more
-lines are waiting, and it takes the first one. The rest are not lost: the console holds
-them and hands them to Hydra as the next messages.
-
-If you want a pasted block to land as a single turn on Windows, save the text to a file
-and point Hydra at the file. The test that proves the gathering works needs a
-pseudo-terminal -- a fake keyboard-and-screen that Windows does not have -- so that one
-test skips there, and only there.
-
-### Noticing a busy graphics card: Linux and macOS only
-
-**The short version.** If a graphics card in your machine is already busy with another
-job, Hydra should send new work to a cloud model rather than pile onto the card and make
-both jobs slow. On Windows it cannot tell whether the card is busy, so it assumes the
-card is free.
-
-**The detailed version.** The job using the card leaves a marker file and holds a *lock*
-on it. A lock is a claim the operating system keeps track of: one program says "this file
-is mine right now", and any other program that asks can find that out. Hydra asks for the
-same lock. If it cannot have it, something else is using the card. The mechanism is
-called `fcntl.flock`, and it exists on Unix style systems but not on Windows.
-
-So on Windows, Hydra logs a loud warning and routes the work as though the card were
-free. Everything else on Windows works normally. The tests for this feature skip on
-Windows for the same reason, and only on Windows.
-
-## Quickstart
-
-```bash
-hydra                                                   # bare launch: opens chat
-                                                        # (first run: connect-a-model panel)
-python -m hydra ask "summarize what this repo does"     # one-shot
-python -m hydra chat                                    # interactive
-python -m hydra tools                                   # list the tool set
-python -m hydra providers                               # show configured models
-python -m hydra setup                                   # guided provider setup
-python -m hydra doctor                                  # check deps for updates + CVEs
-```
-
-By default the agent's filesystem scope is the **current directory** and risky
-tools require approval (see below).
-
-## Watch — recurring & triggered runs
-
-Run a task automatically on a timer, when files change, or both — no daemon, no
-cron required. **Read-only by default** (the agent can analyze but not change
-anything); add `--yolo` to let it act.
-
-```bash
-# every 10 minutes (read-only):
-python -m hydra watch --every 10m "audit the repo for new TODOs and summarize them"
-
-# when code or tests change, re-run the suite and fix failures (allowed to act):
-python -m hydra watch --watch ./src --watch ./tests --yolo "run the tests; if any fail, fix them"
-
-# read the task fresh each cycle from a file, stop after 5 runs:
-python -m hydra watch --task-file task.md --every 1h --max-cycles 5
-```
-
-Triggers (use either or both): `--every <30s|10m|2h>` and/or `--watch <path>`
-(repeatable). Controls: `--poll`, `--debounce`, `--max-cycles`, `--stop-file`,
-`--yolo` (or `--approval-policy`). Stop with `Ctrl-C` (or by creating the
-`--stop-file`). It's a plain CLI — for OS-level scheduling, point `cron` / a
-`systemd` timer / Windows Task Scheduler at `hydra ask` or `hydra watch`.
-
-## Command reference
-
-Run any command as `hydra <cmd>` (installed) or `python -m hydra <cmd>`, and add
-`-h` to any command for its full flags. Flags common to the agent commands:
-`--provider`, `--model`, `--root <dir>` (filesystem scope), `--timeout`,
-`--max-iterations`, `--approval-policy {ask,allow,deny}`.
-
-**Run the agent**
-
-| Command | What it does |
+| Connection | Use it for |
 |---|---|
-| `ask "<prompt>"` | One-shot — work the prompt to completion. |
-| `chat` | Interactive multi-turn session with persistent history + memory. Bare `hydra` opens it too. In-session slash commands (`/model`, `/providers`, `/mode`, `/yolo`, `/mfa`, `/memory`, `/skills`, `/status`, `/help`, …) control the session — type `/help` inside chat. |
-| `watch ...` | Run on a timer and/or on file change — see [Watch](#watch--recurring--triggered-runs). |
-| `execute "<mission>"` | Planner → doer → auditor loop for larger missions. |
+| Ollama | Local chat and coding models |
+| OpenAI-compatible HTTP endpoint | Cloud services and local servers exposing chat completions |
+| Codex CLI | An installed, authenticated Codex command-line client |
+| Needle | Local structured tool selection |
+| Laya | Local typed decisions: choices, scores, and numbers |
 
-`ask` is the workhorse. Key flags: `--profile {auto,cloud,local}` ·
-`--provider`/`--model` override · `--root <dir>` scope (default: current dir) ·
-`--approval-policy {ask,allow,deny}` (default `ask`) · `--with-context` /
-`--truth-context` inject memory · `--auto-route` pick the model by task type ·
-`--trace-out <file>` write a JSON trace · `--runtime-only` show the resolved
-model/route without calling the model.
-
-**Set up & discover**
-
-| Command | What it does |
-|---|---|
-| `setup` | Guided provider setup (local Ollama, a cloud key, or Sign in with ChatGPT). |
-| `providers` | List configured providers. |
-| `models --provider <name>` | List a provider's models. |
-| `roles` | Show planner/doer/auditor model routing. |
-| `tools` | List the agent's tool set. |
-
-**Skills & memory**
-
-| Command | What it does |
-|---|---|
-| `skills list \| show <name> \| route "<prompt>" \| search "<q>"` | Inspect & route the skill library. |
-| `skills audit \| doctrine \| materialize \| doctor` | Audit skill coverage, print the skill doctrine, materialize the bundle catalogs into concrete `SKILL.md` docs, and health-check the library. |
-| `remember "<lesson>" --source <path>` | Save a sourced lesson to durable memory. |
-| `local-memory [--query "<q>"]` | Show or query durable memory. |
-
-**Inspect (read-only — no model, no mutation)**
-
-| Command | What it does |
-|---|---|
-| `audit <dir>` | Deterministic repo audit: evidence, hot files, hints. |
-| `locate "<name>"` | Find files/dirs by name under a root. |
-| `status` | Repo verification verdict. |
-| `code <file>` | Run a source file with syntax highlighting. |
-| `undo [--list]` | Restore the most recent file-edit snapshot(s). |
-| `ops recall "<q>"` | Keyword recall over saved lessons & evidence. `ops -h` lists the wider ops surface, including sandboxed `ops env create \| exec \| read \| write \| fetch` sessions. |
-
-**Health, security & control**
-
-| Command | What it does |
-|---|---|
-| `update` | Pull the latest Hydra from GitHub in one command (see [below](#updating)). |
-| `doctor [--fix]` | Check deps for updates + known CVEs (see [below](#keeping-your-install-secure-hydra-doctor)). |
-| `self-audit` | Run the agent's own classify→route→execute invariant checks. |
-| `telegram health \| listen \| send-proof \| notify \| callback \| poll` | Drive & approve from Telegram (see [below](#telegram-remote-optional)). |
-
-**Advanced** — `mission`, `continuation`, `declarative`, `capabilities`,
-`source`, `wiki`, `capability-score`, `competitive-score`, `task-eval`,
-`domain-pack`, `trace-bundle`, `aci`, `autonomy`: mission orchestration,
-capability scoring, and deeper introspection. Run `hydra <cmd> -h` for each.
-
-## Keeping your install secure (`hydra doctor`)
-
-`hydra doctor` checks every dependency (and `pip` itself) against PyPI for newer
-releases and against the [OSV](https://osv.dev) advisory database for known
-vulnerabilities — so you can keep your install current and safe.
+For a custom compatible server:
 
 ```bash
-hydra doctor              # report installed vs latest + any known CVEs
-hydra doctor --fix        # upgrade outdated / vulnerable packages to the latest
-hydra doctor --format json
+hydra setup --mode cloud --provider localserver --endpoint http://localhost:8000/v1 --model YOUR_MODEL --non-interactive
+hydra ask "Describe this repository" --provider localserver --approval-policy deny
 ```
 
-Read-only unless you pass `--fix`. It exits non-zero when a known vulnerability is
-found (useful in CI). Hydra ships current, vulnerability-free dependency floors;
-`doctor --fix` keeps them that way over time.
+The key can be omitted for an unauthenticated server. For a hosted service, use interactive setup to enter its key. The HTTP adapter expects OpenAI-compatible chat completions; a provider with a different native API needs a compatible gateway or its own adapter. Model IDs and endpoints are yours to configure.
 
-## Updating
+Planner, worker, and auditor roles can share a provider. Where independent review is required, configure `agentic.require_independent_auditor: true` in your role configuration. See the [model guide](docs/MODELS.md).
 
-Get the latest Hydra in **one command**:
+## Needle and Laya
+
+These open models are installable dependencies with distinct jobs:
+
+- [Cactus Compute Needle](https://github.com/cactus-compute/needle) predicts structured tool calls. Hydra executes those calls through its own tool and approval path. Needle is a tool selector, so use a chat model when you need explanations or long-form coding assistance.
+- [Laya](https://github.com/NandhaKishorM/laya), the open Jev-style decision model from Convai Innovations, answers typed questions about supplied state. Hydra exposes it through a decision API and command-line entry point.
+
+Install both alongside Hydra:
 
 ```bash
-hydra update            # pull + reinstall the newest version from GitHub
-hydra update --check    # show the update command without running it
+pipx install --force "hydraagent[needle,laya] @ git+https://github.com/Tcuzzo/HydraAgent_public.git"
 ```
 
-`hydra update` reinstalls from the public repo's latest commit (force-reinstall,
-since the version pin is stable). Prefer pipx? `pipx install --force
-git+https://github.com/Tcuzzo/HydraAgent_public.git` does the same. After updating,
-run `hydra doctor` to confirm your dependencies are current and safe.
+Or, from a clone in your virtual environment:
 
-## Configuration
+```bash
+python -m pip install -e ".[needle,laya]"
+```
 
-Copy `.env.example` to `.env` and fill in what you use. Everything is environment-
-driven; nothing is hardcoded. Common variables:
+Model weights are separate downloads. These extras are loaded when used, so the core CLI can run without the local model libraries. Configure a tuned Needle archive or Laya checkpoint by path; see [docs/MODELS.md](docs/MODELS.md).
 
-| Variable | Purpose |
+## Teach it your Hydra
+
+The [local training workflow](docs/TRAINING.md) builds labeled examples from explicit public and private source roots, records provenance, and separates training from evaluation. Start with repository navigation and typed routing; these tasks match Needle and Laya's interfaces.
+
+The public package contains training tools, not private repository contents or private-trained weights. Keep datasets and checkpoints outside the public checkout. Preparing a corpus is not training, and a completed training run is not proof of better coding performance: compare against a held-out evaluation before selecting a checkpoint for normal use.
+
+## Stay in control
+
+Filesystem tools are scoped to your working directory or explicit `--root`. The default `ask` policy requests approval for shell commands and file changes; noninteractive runs refuse those actions. Use `deny` for inspection or `allow` when you deliberately want unattended execution.
+
+```bash
+hydra ask "Review the error handling" --root ./my-project --approval-policy deny
+hydra watch --help
+hydra undo --list
+```
+
+A shell command can affect more than the workspace; approval is not an operating system sandbox. If you enable container execution, Hydra must find a working engine rather than silently run the command on the host. `undo` restores saved file edits; it cannot reverse external side effects.
+
+`hydra ask` exits nonzero when it fails or exhausts its iteration budget, while printing the available partial result. `--max-iterations` limits model turns and `--timeout` limits each model call. Tool execution and approval waits have their own limits. Optional Telegram and browser setup lives in the [command reference](docs/CLI-REFERENCE.md).
+
+## Find your next step
+
+| Need | Start here |
 |---|---|
-| `HYDRA_OPERATOR_NAME` | How the agent refers to you (default: "the operator") |
-| `HYDRA_CONFIG` | Path to your model-routing config |
-| `HYDRA_VEC0_PATH` | Path to a `sqlite-vec` extension if not pip-installed |
-| `HYDRA_TELEGRAM_BOT_TOKEN` | Telegram bot token (from @BotFather) |
-| `HYDRA_OPERATOR_DM_CHAT_ID` | Your Telegram chat ID (where approvals go) |
-| `HYDRA_OPERATOR_USERNAME` | Your Telegram @username (trusted operator) |
-| `HYDRA_OPERATOR_AUTH_DIR` | Where the TOTP secret for yolo mode is stored |
-| `HYDRA_DEFAULT_ROOT` | Default filesystem scope when `--root` is not passed |
-| `HYDRA_ASK_MAX_ITERATIONS` | Raise the agent-loop iteration cap (default 20) |
-| `HYDRA_CHROME_PATH` | Chrome/Chromium binary for the browser tools |
+| Check installed commands | `hydra --help` and `hydra tools` |
+| Inspect the selected model without calling it | `hydra ask "hello" --runtime-only` |
+| Check dependency advisories | `hydra doctor` |
+| Configure and train local models | [Models](docs/MODELS.md) · [Training](docs/TRAINING.md) |
+| Build and review a full-stack application | [Full-stack workflow for Hydra and BACKS](docs/FULLSTACK-WORKFLOW.md) |
+| Understand platform differences | [Platform notes](docs/PLATFORM-NOTES.md) |
+| Develop and run tests | [Quickstart](QUICKSTART.md) |
+| Report a vulnerability | [Security policy](SECURITY.md) |
 
-`.env.example` documents the full variable surface (~40 vars) with comments.
-
-## Trust & safety model
-
-Hydra is honest about what it can do: by design it can run a shell on your machine.
-Control that with the approval policy (`--approval-policy`):
-
-- **`ask`** (default) — risky tools (`bash`, `fs_write`, `fs_edit`) prompt you on an
-  interactive terminal; when run non-interactively (scripts/CI) they are **blocked**,
-  never auto-run. Safe, read-mostly tools run freely.
-- **`allow`** — run everything unattended. Only choose this when you trust the task
-  and scope. This is the "yolo" posture.
-- **`deny`** — refuse risky tools entirely.
-
-**Yolo (unattended) mode, gated by 2FA.** Over Telegram you can unlock `allow`
-behavior with a time-limited code from any TOTP authenticator app (e.g. Google
-Authenticator): run `/mfa setup`, scan the QR, then `/mode yolo <6-digit-code>`. The
-unlock expires after an hour and can be extended. There is no "always on" backdoor.
-
-**Path confinement for bounded writes.** A `fs_write`/`fs_edit` is auto-approved
-only when the resolved target is **inside the repo root** (checked with
-`Path.is_relative_to` — path-component equality, not a string prefix, so a sibling
-directory sharing a name prefix like `/repo` vs `/repo_evil` cannot escape). The
-action tier + approval gate:
-
-```mermaid
-flowchart TD
-    Action[Tool Action] --> Tier{Classify Action Tier}
-    Tier -- read-only --> Run[Run Freely]
-    Tier -- bounded write --> Path{Inside repo root?}
-    Path -- yes + auto-on --> Run
-    Path -- no --> Block[Refuse / Ask]
-    Tier -- risky shell --> Policy{Approval Policy}
-    Policy -- ask --> Prompt[Prompt on terminal / block non-interactive]
-    Policy -- allow --> Run
-    Policy -- deny --> Block
-    Prompt -- approve --> Run
-    Prompt -- deny --> Block
-```
-
-## Telegram remote (optional)
-
-1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
-2. Set `HYDRA_TELEGRAM_BOT_TOKEN`, `HYDRA_OPERATOR_DM_CHAT_ID`,
-   `HYDRA_OPERATOR_USERNAME` in `.env`.
-3. Run `python -m hydra telegram listen`.
-
-You can then chat with the agent, get plain-language approval prompts for risky
-actions, and unlock yolo mode — all from your phone. Untrusted senders can never
-trigger an action without your approval.
-
-## Extending Hydra
-
-Hydra is built to grow without you needing its internals:
-
-- **Bring your own model/provider** — add an entry to the provider registry;
-  HTTP providers speak the OpenAI-compatible chat + tool-call protocol. (The
-  **Sign in with ChatGPT** path is different — it shells the Codex CLI rather
-  than speaking HTTP. The Anthropic SDK path is deliberately not wired in this
-  edition.)
-- **Swap the embedding model** behind the memory kernel.
-- **Add tools/skills** — drop a `SKILL.md`; the skill spine auto-discovers and
-  routes to it. No core changes needed.
-- **Build a UI** — the CLI is scriptable; wrap it in a web or desktop front-end.
-- **Add multi-agent coordination** with any off-the-shelf framework — the loop is a
-  clean building block.
-
-## Architecture (one breath)
-
-`python -m hydra ask` → the agent loop (`hydra/loop.py`) calls your model, parses
-tool calls, runs them through the approval gate, feeds results back, and iterates
-until done — with the skill spine choosing context, the model router choosing the
-model, and the memory kernel remembering across runs.
-
-```mermaid
-flowchart TD
-    Prompt[Your Prompt] --> Ask[Hydra Ask]
-    Ask --> Runtime[Resolve Runtime Model And Optional Route]
-    Runtime --> PromptBuild[Build System Prompt And Skill Context]
-    Ask -. With Context Or Truth Context .-> MemoryContext[Optional Memory Context]
-    MemoryContext -.-> PromptBuild
-    PromptBuild --> Tools[Bind Tools]
-    Tools -. Available If Called .-> MemoryTools[Memory Recall And Remember Tools]
-    Tools --> Loop[Agent Loop]
-    Loop --> Model[Model Call]
-    Model --> Parser[Tool Call Parser]
-    Parser -- Tool Call --> Risk{Risky Tool?}
-    Parser -- No Tool Call --> Exit[Answer Delivered]
-    Risk -- No --> Runner[Tool Runner]
-    Risk -- Yes --> Gate[Approval Gate]
-    Gate -- Ask --> Runner
-    Gate -- Allow --> Runner
-    Gate -- Deny --> Feedback[Result Feedback]
-    Runner --> Feedback
-    Feedback --> Loop
-```
-
-### Model routing & fallback
-
-`classify_task` reads the prompt's complexity and picks a role (fast / reasoning /
-judge). `_create_client` builds the client for that role's model; if the primary
-provider is unavailable it walks a fallback ladder — other cloud providers, then a
-free cloud model, then local Ollama — and **swaps both the client and the model
-name** so the downgraded client is asked for a model it actually serves. The
-substituted model is recorded in `last_substitution` and reported in the routing
-decision. Provider model catalogs are queried live (`GET /v1/models`, 60s cached)
-and **fail open** — a model absent from the catalog is inconclusive, never a
-rejection, so valid newer models are not gated off a stale list.
-
-```mermaid
-flowchart TD
-    Classify[classify_task: complexity -> role] --> Create[_create_client: primary model]
-    Create -- available --> Use[Use primary client + model]
-    Create -- unavailable --> Cloud[Other cloud providers]
-    Cloud -- one available --> Sub[Substitute client + model name]
-    Cloud -- all unavailable --> Free[Free cloud model]
-    Free -- available --> Sub
-    Free -- unavailable --> Local[Local Ollama - last resort]
-    Local --> Sub
-    Sub --> Record[last_substitution + routing decision report the model used]
-    Use --> Loop[Agent Loop]
-    Record --> Loop
-```
-
-### Larger missions: `execute`
-
-`hydra execute "<mission>"` runs a Planner → doer → auditor loop for larger work.
-`route_and_execute` is the entry point: classify → route to a model → run the agent
-loop. **Phase 3 verification is not yet implemented** (`requires_verifier` is set
-for non-simple tasks but the verify step is a stub) — treat `execute` results as
-unverified today. The auto-fix repair loop (`auto_fix.enabled` on a worker job) is
-**not shipped in the public edition** — it depended on a private orchestration
-chain and was stripped; enabling it fails loud with a clear message.
-
-### `hydra code` — compile then run
-
-`hydra code foo.c|foo.rs` compiles the file to a binary next to the source and then
-**runs the binary** (reporting compile failures with stderr). Python / Go / JS /
-TS / Bash run directly. A missing runtime exits non-zero with a clear "install the
-runtime" message.
-
-## License
-
-**MIT** — see [LICENSE.md](LICENSE.md). Free for any use, including commercial.
-See [NOTICE.md](NOTICE.md) for third-party attributions and
-[PROVENANCE.md](PROVENANCE.md) for derivation.
-
-## Part of a family
-
-Hydra is one of a family of local-first, operator-owned, bring-your-own-model agents, alongside [bucks](https://github.com/Tcuzzo/bucks), a local-first trading agent that is paper-first and keeps you holding the keys.
-The shared philosophy is your machine, your keys, your models, a clear safety model, and a Telegram remote.
-
----
-
-## BACKS_AIOS discipline (Pub variant)
-
-HydraAgent now ships with the **BACKS_AIOS** skill pack embedded at
-`skills/backs-aios-skills-pub/` and an **alignment agent** that watches what this
-agent does. The alignment agent enforces the BACKS_AIOS discipline end-to-end.
-
-### What ships
-
-- 52 sanitized BACKS_AIOS skills (the public variant) at `skills/backs-aios-skills-pub/`
-- The alignment agent (a watchdog that catches bypass of the discipline)
-- Generic essence (no operator-named essence; sanitized for public use)
-- Tiered hardware support — whatever you run
-
-### Tier choice
-
-> **Tier choice:** Whatever you run. Local (Ollama on your own machine) or cloud (free
-> tier accounts). The skill pack picks the right route from your model's actual
-> config — no tier picking required.
-
-### What the discipline does
-
-- **Reflex Seam:** model decides; runtime owns state, files, rules. If the model
-  reaches for state it does not own, the system fails loud instead of guessing.
-- **No Mock Theater:** tests assert real side-effects (file / DB row / real DOM),
-  not mocks of the seam under change.
-- **Builder is not the Grader:** the failing test comes first; something that did
-  not write the code has to pass it.
-- **Alignment agent (new):** watches every tool call against the harness truthfulness;
-  flips Red if a model tries to bypass the discipline.
-
-### What cannot become
-
-- Reach for state it does not own. The Reflex Seam fails loud.
-- Bypass the alignment agent. The alignment agent detects bypass, flips the build
-  RED, strips tools.
-- Modify the alignment agent. The alignment agent is locked; any change requires the
-  operator's dual-factor.
-
-### Data + privacy
-
-- Tracks no real topology. LAN IPs / hostnames / paths are placeholders only.
-- No operator data shipped. Sanitized essence, scrubbed skills.
-- You can disable the BACKS_AIOS discipline at any time via the kill switch.
-
-### Needle — "the little embedder that could"
-
-- Routes models by similarity + replay-cache.
-- Routes agents by team-discovery schema.
-- O(1) per call via decision_id replay-cache.
-
-### Run on your own machine
-
-MIT license. NO WARRANTY. You read the source. You own your data.
-
-## BACKS_AIOS discipline (Pub variant)
-
-HydraAgent now ships with the **BACKS_AIOS** skill pack embedded at
-`skills/backs-aios-skills-pub/` and an **alignment agent** that watches what this
-agent does. The alignment agent enforces the BACKS_AIOS discipline end-to-end.
-
-### What ships
-
-- 52 sanitized BACKS_AIOS skills (the public variant) at `skills/backs-aios-skills-pub/`
-- The alignment agent (a watchdog that catches bypass of the discipline)
-- Generic essence (no operator-named essence; sanitized for public use)
-- Tiered hardware support — whatever you run
-
-### Tier choice
-
-> **Tier choice:** Whatever you run. Local (Ollama on your own machine) or cloud (free
-> tier accounts). The skill pack picks the right route from your model's actual
-> config — no tier picking required.
-
-### What the discipline does
-
-- **Reflex Seam:** model decides; runtime owns state, files, rules. If the model
-  reaches for state it does not own, the system fails loud instead of guessing.
-- **No Mock Theater:** tests assert real side-effects (file / DB row / real DOM),
-  not mocks of the seam under change.
-- **Builder is not the Grader:** the failing test comes first; something that did
-  not write the code has to pass it.
-- **Alignment agent (new):** watches every tool call against the harness truthfulness;
-  flips Red if a model tries to bypass the discipline.
-
-### What cannot become
-
-- Reach for state it does not own. The Reflex Seam fails loud.
-- Bypass the alignment agent. The alignment agent detects bypass, flips the build
-  RED, strips tools.
-- Modify the alignment agent. The alignment agent is locked; any change requires the
-  operator's dual-factor.
-
-### Data + privacy
-
-- Tracks no real topology. LAN IPs / hostnames / paths are placeholders only.
-- No operator data shipped. Sanitized essence, scrubbed skills.
-- You can disable the BACKS_AIOS discipline at any time via the kill switch.
-
-### Needle — "the little embedder that could"
-
-- Routes models by similarity + replay-cache.
-- Routes agents by team-discovery schema.
-- O(1) per call via decision_id replay-cache.
-
-### Run on your own machine
-
-MIT license. NO WARRANTY. You read the source. You own your data.
+Hydra's public edition includes the coding-agent runtime and public skill library. See [PROVENANCE.md](PROVENANCE.md) and [NOTICE.md](NOTICE.md) for origins and third-party notices.

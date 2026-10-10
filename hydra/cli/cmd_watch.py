@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 from hydra.cli.cmd_ask import _default_ask_max_iterations, cmd_ask
-from hydra.watch import WatchConfig, WatchLoop, parse_duration
+from hydra.watch import WatchConfig, WatchError, WatchLoop, parse_duration
 
 
 class WatchArgsError(Exception):
@@ -145,10 +145,10 @@ def cmd_watch(args: argparse.Namespace) -> int:
         return stop_file is not None and stop_file.exists()
 
     def run_cycle(reason: str) -> None:
-        task = resolve_task(getattr(args, "prompt", None), getattr(args, "task_file", None))
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"\n── hydra watch · cycle ({reason}) · {stamp} ──", flush=True)
         try:
+            task = resolve_task(getattr(args, "prompt", None), getattr(args, "task_file", None))
             cmd_ask(_ask_namespace(task, policy, args))
         except Exception as exc:  # one bad cycle must not kill the watcher
             print(f"hydra watch: cycle error: {exc}", file=sys.stderr, flush=True)
@@ -173,6 +173,10 @@ def cmd_watch(args: argparse.Namespace) -> int:
         run_cycle=run_cycle,
         stop_check=stop_check,
     )
-    cycles = loop.run()
+    try:
+        cycles = loop.run()
+    except WatchError as exc:
+        print(f"hydra watch: {exc}", file=sys.stderr)
+        return 2
     print(f"\nhydra watch: stopped after {cycles} cycle(s)", flush=True)
     return 0

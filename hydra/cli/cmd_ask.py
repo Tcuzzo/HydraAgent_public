@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from pathlib import Path
 
 from hydra.inter_agent import use_correlation_id, use_trace_id
 from hydra.llm import LlmError
-from hydra.loop import AgentLoop
+from hydra.loop import AgentLoop, LoopError
 from hydra.policy import POLICY_CHOICES
 from hydra.providers import DEFAULT_ENV_DIR, ProviderError
 from hydra.roles import RoleError, resolve_roles
@@ -149,18 +150,26 @@ def register_ask_command(
 
 
 def cmd_ask(args: argparse.Namespace) -> int:
+    if args.max_iterations < 1 or not math.isfinite(args.timeout) or args.timeout <= 0:
+        print("ask error: --max-iterations must be at least 1 and --timeout must be finite and positive", file=sys.stderr)
+        return 2
     root = _root_arg(args.root)
     if not root.is_dir():
         print(f"workspace root is not a directory: {root}", file=sys.stderr)
         return 2
-    runtime = _resolve_chat_runtime(args)
+    try:
+        runtime = _resolve_chat_runtime(args)
+    except (ProviderError, RoleError, ValueError) as e:
+        print(f"runtime error: {e}", file=sys.stderr)
+        return 2
     args.provider = runtime["provider"]
     if getattr(args, "runtime_only", False):
         _print_ask_identity(runtime, root, args.approval_policy, args.prompt)
         return 0
     try:
         client, cfg = _make_client_or_setup(args)
-    except ProviderError as e:
+    except (ProviderError, LlmError) as e:
+        print(f"provider error: {e}", file=sys.stderr)
         return 2
     model = args.model or cfg.model
     if not model:
@@ -250,6 +259,9 @@ def cmd_ask(args: argparse.Namespace) -> int:
                     timeout=args.timeout,
                 )
             break
+        except LoopError as e:
+            print(f"ask error: {e}", file=sys.stderr)
+            return 2
         except LlmError as e:
             if attempted_local_fallback or args.provider == "ollama":
                 print(f"LLM error: {e}", file=sys.stderr)
@@ -325,4 +337,4 @@ def cmd_ask(args: argparse.Namespace) -> int:
                 )
             if args.judge_fail_exit and judge_report["verdict"] != "PASS":
                 return 1
-    return 0
+    return 0 if result.halted_reason == "natural" else 1

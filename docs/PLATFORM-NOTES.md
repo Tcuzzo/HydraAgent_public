@@ -1,9 +1,11 @@
-# Platform notes — Windows and macOS
+# Platform notes
 
-Hydra runs on Linux, macOS and Windows. Three things behave differently, because
-the operating system either gives Hydra a capability or it does not. Where a
-capability is missing, Hydra switches that feature off and tells you out loud. It
-never pretends a feature is working.
+## Running on Windows and macOS
+
+Hydra works on Linux, macOS and Windows. Three things behave differently depending on
+which one you use, because the operating system either gives Hydra a capability or it
+does not. Where a capability is missing, Hydra switches that feature off and tells you
+out loud. It never pretends a feature is working.
 
 ### Running commands: works everywhere
 

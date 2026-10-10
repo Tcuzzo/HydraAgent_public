@@ -22,6 +22,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Local prediction SDKs; weights are selected/downloaded separately.
+needle = ["cactus-needle>=3.2.0,<4"]
+laya = ["laya>=0.4.2,<0.5"]
+# Training stays local. Native Windows JAX uses CPU; CUDA JAX needs Linux/WSL.
+training = ["cactus-needle[train]>=3.2.0,<4", "laya>=0.4.2,<0.5"]
 # Persistent vector memory (hydra/unified_memory.py). The `sqlite-vec` wheel
 # provides the vec0 extension; PEP-668 environments that cannot install it
 # system-wide fall back to the pinned vendored vec0.so shipped at
@@ -64,7 +69,7 @@ include = ["hydra*", "gateways*", "skills*", "core*"]
 
 [tool.setuptools.package-data]
 # Ship config + skill data next to the code (the agent loads these by package path).
-"hydra" = ["**/*.yaml", "**/*.yml", "**/*.json", "**/*.md", "_vendor/sqlite_vec/vec0.so"]
+"hydra" = ["**/*.yaml", "**/*.yml", "**/*.json", "**/*.md", "runtime_data/catalog/*/*.yaml", "_vendor/sqlite_vec/vec0.so"]
 "gateways" = ["**/*.yaml", "**/*.yml", "**/*.json", "**/*.md"]
 "skills" = ["**/*.md", "**/*.yaml", "**/*.yml", "**/*.json"]
 "core" = ["**/*.yaml", "**/*.yml", "**/*.json", "**/*.md"]

@@ -11,7 +11,7 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import yaml
@@ -53,37 +53,90 @@ REQUIRED_DECISION_KEYS = (
 
 
 def load_runtime_catalog(root: Path) -> RuntimeCatalog:
-    """Load declarative runtime contracts from a workspace root."""
-    root = root.resolve()
-    registry = _read_yaml(root / ".hydraAgent/tools/registry.yaml")
+    """Load product defaults, with per-file overrides in workspace .hydraAgent.
+
+    A workspace registry replaces the advertised tool list. Its contract paths
+    must remain inside .hydraAgent. Missing override files use bundled defaults;
+    invalid override files fail explicitly. The catalog root remains the user's
+    workspace so memory and execution never target the installed package.
+    """
+    root = root.expanduser().resolve()
+    if not root.is_dir():
+        raise DeclarativeRuntimeError(f"workspace is not a directory: {root}")
+    package_root = Path(__file__).resolve().parent.parent
+    bundled = package_root / "hydra/runtime_data/catalog"
+    if not bundled.is_dir():
+        bundled = package_root / ".hydraAgent"  # source/editable checkout
+    workspace = root / ".hydraAgent"
+
+    def contract_path(reference: str) -> Path:
+        relative = _catalog_relative_path(reference)
+        override = _confined_catalog_path(workspace, relative)
+        return override if override.exists() else _confined_catalog_path(bundled, relative)
+
+    registry = _read_yaml(contract_path("tools/registry.yaml"))
+    references = registry.get("tools", [])
+    if not isinstance(references, list):
+        raise DeclarativeRuntimeError("registry tools must be a list of relative contract paths")
     tools: dict[str, dict[str, Any]] = {}
-    for item in registry.get("tools", []):
-        contract = _read_yaml(root / str(item))
+    for item in references:
+        contract = _read_yaml(contract_path(item))
         for tool_id, tool_contract in _iter_tool_contracts(contract, str(item)):
             tool_contract = dict(tool_contract)
             tool_contract["_contract_path"] = str(item)
             tools[tool_id] = tool_contract
 
-    skills_path = root / ".hydraAgent/skills/index.yaml"
+    skills_path = contract_path("skills/index.yaml")
     skills = _read_yaml(skills_path) if skills_path.exists() else {"skills": []}
-    skills = _merge_materialized_skills(root, skills, available_tools=set(tools))
+    if not skills_path.is_relative_to(workspace.resolve()):
+        # Bundled index paths describe installed documentation, not files the
+        # user must copy into every fresh workspace.
+        skills = dict(skills)
+        skills["skills"] = [
+            dict(item, path=str(package_root / item["path"]))
+            if isinstance(item, dict) and isinstance(item.get("path"), str) else item
+            for item in skills.get("skills", [])
+        ]
+    skills = _merge_materialized_skills(root, skills, available_tools=set(tools), source_root=package_root)
+    if root != package_root:
+        skills = _merge_materialized_skills(root, skills, available_tools=set(tools))
     return RuntimeCatalog(
         root=root,
         tools=tools,
-        ux=_read_yaml(root / ".hydraAgent/ux/response-contracts.yaml"),
+        ux=_read_yaml(contract_path("ux/response-contracts.yaml")),
         policies={
-            "danger_gates": _read_yaml(root / ".hydraAgent/policies/danger-gates.yaml"),
-            "trust_tiers": _read_yaml(root / ".hydraAgent/policies/trust-tiers.yaml"),
+            "danger_gates": _read_yaml(contract_path("policies/danger-gates.yaml")),
+            "trust_tiers": _read_yaml(contract_path("policies/trust-tiers.yaml")),
             # BACKS dev-mode seam — the hallucination-resistance floor. Loaded
             # here so the planner brief carries the invariants, the sniper and
             # anti-mock-theater rules, and the dev-mode playbook.
-            "backs_invariants": _read_yaml(root / ".hydraAgent/policies/backs-invariants.yaml"),
-            "sniper_testing": _read_yaml(root / ".hydraAgent/policies/sniper-testing.yaml"),
-            "anti_mock_theater": _read_yaml(root / ".hydraAgent/policies/anti-mock-theater.yaml"),
-            "dev_mode_playbook": _read_yaml(root / ".hydraAgent/playbooks/dev-mode-elite-build.yaml"),
+            "backs_invariants": _read_yaml(contract_path("policies/backs-invariants.yaml")),
+            "sniper_testing": _read_yaml(contract_path("policies/sniper-testing.yaml")),
+            "anti_mock_theater": _read_yaml(contract_path("policies/anti-mock-theater.yaml")),
+            "dev_mode_playbook": _read_yaml(contract_path("playbooks/dev-mode-elite-build.yaml")),
         },
         skills=skills,
     )
+
+
+def _catalog_relative_path(reference: str) -> Path:
+    if not isinstance(reference, str) or not reference.strip():
+        raise DeclarativeRuntimeError("catalog reference must be a non-empty relative path")
+    if PureWindowsPath(reference).drive or PureWindowsPath(reference).root or PurePosixPath(reference).is_absolute():
+        raise DeclarativeRuntimeError(f"catalog reference must be relative: {reference}")
+    parts = PurePosixPath(reference.replace("\\", "/")).parts
+    if parts and parts[0] == ".hydraAgent":
+        parts = parts[1:]
+    if not parts or ".." in parts:
+        raise DeclarativeRuntimeError(f"catalog reference must stay within .hydraAgent: {reference}")
+    return Path(*parts)
+
+
+def _confined_catalog_path(base: Path, relative: Path) -> Path:
+    target = (base / relative).resolve()
+    if not target.is_relative_to(base.resolve()):
+        raise DeclarativeRuntimeError(f"catalog reference must stay within .hydraAgent: {relative}")
+    return target
 
 
 def _brief_models() -> dict[str, str]:
@@ -536,6 +589,7 @@ def _merge_materialized_skills(
     skills: dict[str, Any],
     *,
     available_tools: set[str],
+    source_root: Path | None = None,
 ) -> dict[str, Any]:
     raw = skills.get("skills", [])
     declared = list(raw) if isinstance(raw, list) else []
@@ -545,7 +599,7 @@ def _merge_materialized_skills(
         if isinstance(item, dict)
     }
     merged = list(declared)
-    for path in sorted((root / "hydra" / "schemes").rglob("SKILL.md")):
+    for path in sorted(((source_root or root) / "hydra" / "schemes").rglob("SKILL.md")):
         item = _materialized_skill_index_item(root, path, available_tools=available_tools)
         skill_id = item["skill_id"]
         if skill_id in seen:
@@ -554,7 +608,7 @@ def _merge_materialized_skills(
         merged.append(item)
     updated = dict(skills)
     updated["skills"] = merged
-    updated["materialized_skill_count"] = len(merged) - len(declared)
+    updated["materialized_skill_count"] = sum(bool(item.get("materialized")) for item in merged if isinstance(item, dict))
     return updated
 
 
@@ -706,6 +760,7 @@ def _executor_requires_root(contract: dict[str, Any]) -> bool:
         "grep",
         "glob",
         "shell",
+        "todo",
         "skill_library.search",
         "skill_search",
         "spawn_subagent",

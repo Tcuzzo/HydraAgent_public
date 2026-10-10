@@ -322,7 +322,7 @@ def test_declarative_safe_shell_executes_without_approval_queue_or_telegram(tmp_
                     "id": "shell",
                     "action": "run shell",
                     "tool_id": "shell",
-                    "arguments": {"command": "printf ok"},
+                    "arguments": {"command": "echo ok"},
                     "expected_evidence": "stdout",
                 }
             ],
@@ -334,7 +334,7 @@ def test_declarative_safe_shell_executes_without_approval_queue_or_telegram(tmp_
     )
 
     assert result["results"][0]["ok"] is True
-    assert result["results"][0]["stdout"] == "ok"
+    assert result["results"][0]["stdout"].strip() == "ok"
     assert not (tmp_path / "approvals.jsonl").exists()
 
 
@@ -416,7 +416,7 @@ def test_declarative_planner_approval_flag_is_not_a_second_gate(tmp_path):
                     "id": "shell",
                     "action": "run shell",
                     "tool_id": "shell",
-                    "arguments": {"command": "printf safe"},
+                    "arguments": {"command": "echo safe"},
                     "expected_evidence": "stdout",
                 }
             ],
@@ -427,7 +427,8 @@ def test_declarative_planner_approval_flag_is_not_a_second_gate(tmp_path):
         approval_policy=policy,
     )
 
-    assert result["results"][0]["stdout"] == "safe"
+    assert result["results"][0]["ok"] is True
+    assert result["results"][0]["stdout"].strip() == "safe"
     assert not (tmp_path / "approvals.jsonl").exists()
 
 
