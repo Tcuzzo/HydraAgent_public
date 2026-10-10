@@ -404,8 +404,33 @@ def _local_gpu_fallback_client(args: argparse.Namespace):
 def _resolve_chat_runtime(args: argparse.Namespace) -> dict[str, str]:
     profile = getattr(args, "profile", "auto") or "auto"
     default_provider, default_model = CHAT_PROFILE_DEFAULTS[profile]
-    provider = getattr(args, "provider", None) or default_provider
-    model = getattr(args, "model", None) or default_model
+    provider = getattr(args, "provider", None) or os.environ.get("HYDRA_PROVIDER")
+    env_dir = getattr(args, "env_dir", None)
+    if not provider and profile == "auto":
+        # Setup writes provider env files. Prefer a configured default, then
+        # another configured provider, so a local/custom setup can start chat.
+        env_root = Path(env_dir) if env_dir else DEFAULT_ENV_DIR
+        candidates = [default_provider]
+        if env_root.is_dir():
+            candidates += [p.name[5:] for p in sorted(env_root.glob(".env.*"))
+                           if p.is_file() and p.name not in {".env.hydra", ".env.needle"}]
+        if any(os.environ.get(key) for key in ("OLLAMA_MODEL", "OLLAMA_ENDPOINT", "OLLAMA_BASE_URL")):
+            candidates.append("ollama")
+        for candidate in dict.fromkeys(candidates):
+            try:
+                cfg = resolve(candidate, env_dir=env_dir)
+            except ProviderError:
+                continue
+            provider = cfg.name
+            break
+    provider = provider or default_provider
+    model = getattr(args, "model", None)
+    if not model:
+        try:
+            model = resolve(provider, env_dir=env_dir).model
+        except ProviderError:
+            model = ""
+        model = model or (default_model if provider == default_provider else "")
     route = default_runtime_route()
     route["conversation_provider"] = provider
     if profile == "local":
@@ -682,7 +707,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
     # Launch command unchanged: `hydra chat`
     try:
         client, cfg = _make_client_or_setup(args)
-    except ProviderError as e:
+    except (ProviderError, LlmError) as e:
         print(f"provider error: {e}", file=sys.stderr)
         return 2
     model = args.model or cfg.model or model
@@ -796,7 +821,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
             args.provider = provider_name
             try:
                 client, cfg = _make_client_or_setup(args)
-            except ProviderError as e:
+            except (ProviderError, LlmError) as e:
                 print(f"provider error: {e}", file=sys.stderr)
                 return True
             model = args.model or cfg.model or runtime["model"]

@@ -1,6 +1,6 @@
 # Quickstart
 
-Run Hydra in about a minute.
+Install Hydra, connect a model, and run your first task.
 
 ## 1. Install
 
@@ -29,7 +29,7 @@ Pick one path:
 ## 3. Ask Hydra to do something
 
 ```bash
-hydra ask "summarize this folder"
+hydra ask "summarize this folder" --approval-policy deny
 ```
 
 Run it from the folder you want Hydra to see. It reads, searches, and edits files within that folder, and (with your approval) can run shell commands on your machine.
@@ -38,6 +38,29 @@ Run it from the folder you want Hydra to see. It reads, searches, and edits file
 
 Risky tools ask first; in scripts or CI they are blocked unless you opt in with `--approval-policy allow`.
 
+## Develop from source
+
+```bash
+git clone https://github.com/Tcuzzo/HydraAgent_public.git
+cd HydraAgent_public
+python -m venv .venv
+```
+
+Activate it with `source .venv/bin/activate` on Linux/macOS or
+`.venv\Scripts\Activate.ps1` in Windows PowerShell. Then:
+
+```bash
+python -m pip install -e ".[test]" -c constraints.txt
+python -m hydra --help
+python -m hydra tools
+python -m pytest -q
+```
+
+Optional local models: `python -m pip install -e ".[needle,laya]"`.
+Training: `python -m pip install -e ".[training]"` in a separate environment.
+The pinned core constraints do not lock the optional ML dependency trees.
+See [model configuration](docs/MODELS.md) and [training](docs/TRAINING.md).
+
 ## More
 
-See [README.md](README.md#command-reference) for the full command reference.
+See the [command reference](docs/CLI-REFERENCE.md) for the complete CLI guide.

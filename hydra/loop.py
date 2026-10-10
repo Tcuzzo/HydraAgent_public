@@ -219,14 +219,18 @@ class AgentLoop:
         messages: list[dict] = [dict(m) for m in initial_messages or []]
         if not messages and self.system_prompt:
             messages.append({"role": "system", "content": self.system_prompt})
-        # L2 fix: strip any prior trace-context messages before appending the
-        # fresh one so feeding result.messages back never grows the count past 1.
-        _TRACE_CTX_MARKER = "Hydra inter-agent trace context"
+        # Runtime instructions belong to one run. Reusing a transcript must
+        # not tell the next task that its fresh budget is already exhausted.
+        _RUN_MARKERS = (
+            "Hydra inter-agent trace context", "SYNTHESIS REQUIRED",
+            "_phantom_recovery_",
+        )
         messages = [
             m for m in messages
             if not (
                 m.get("role") == "system"
-                and _TRACE_CTX_MARKER in m.get("content", "")
+                and isinstance(m.get("content"), str)
+                and any(marker in m["content"] for marker in _RUN_MARKERS)
             )
         ]
         messages.append(
@@ -410,7 +414,7 @@ class AgentLoop:
                     )
 
             tool_calls = list(resp.tool_calls)
-            if not tool_calls and tools:
+            if not tool_calls and tools and not phantom_tool_recovery:
                 bridged = extract_bridged_tool_call(resp.content)
                 if bridged is not None:
                     tool_calls = [
@@ -486,6 +490,10 @@ class AgentLoop:
                 try:
                     with use_trace_id(run_trace_id):
                         result = tool.invoke(**tc.arguments)
+                    # Serialization is part of dispatch: nested unsupported
+                    # values and circular containers must follow the same
+                    # recoverable error path as an exception from the tool.
+                    payload = _serialize_tool_result(result)
                 except Exception as e:  # noqa: BLE001
                     err = f"{type(e).__name__}: {e}"
                     payload = json.dumps({"error": err})
@@ -513,7 +521,6 @@ class AgentLoop:
                     continue
 
                 tool_duration_ms = int((time.time() - tool_started) * 1000)
-                payload = _serialize_tool_result(result)
                 record_step(
                     LoopStep(
                         step=iteration,

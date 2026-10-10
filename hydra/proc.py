@@ -22,8 +22,8 @@ Windows
       System32 WSL launcher is never used -- see ``resolve_bash``.
     * Process isolation: ``CREATE_NEW_PROCESS_GROUP`` flag (equivalent to POSIX
       new-session from the scheduling perspective).
-    * Kill: ``proc.terminate()`` sends CTRL_BREAK_EVENT to the group, then
-      ``taskkill /F /T /PID`` kills the entire tree.  ``os.killpg`` /
+    * Kill: ``taskkill /F /T /PID`` kills the entire tree while the parent
+      still exists; ``proc.terminate()`` is a fallback. ``os.killpg`` /
       ``os.getpgid`` / ``signal.SIGKILL`` are **never referenced** on Windows.
 
 This module contains ALL the ``os.killpg`` / ``os.getpgid`` / ``signal.SIGKILL``
@@ -249,19 +249,22 @@ def kill_tree(proc: subprocess.Popen) -> None:
 
 def _windows_kill_tree(proc: subprocess.Popen) -> None:
     """Windows-specific process tree kill via taskkill."""
-    # First try proc.terminate() which sends CTRL_BREAK_EVENT to the group.
+    # taskkill needs the parent's PID alive to discover descendants. On Windows
+    # terminate() kills only that process (it does not send CTRL_BREAK_EVENT),
+    # so calling it first can orphan the very descendants we need to stop.
     try:
-        proc.terminate()
-    except (OSError, PermissionError):
-        pass
-    # Then use taskkill /F /T to forcibly kill all descendants.
-    try:
-        subprocess.run(
+        result = subprocess.run(
             ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
             capture_output=True,
             timeout=5,
         )
+        if result.returncode == 0:
+            return
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+    try:
+        proc.terminate()
+    except OSError:
         pass
 
 

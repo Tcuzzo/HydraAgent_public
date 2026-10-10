@@ -20,7 +20,7 @@ from typing import Any
 import yaml
 
 from hydra.llm import LlmError, OllamaClient, ChatMessage
-from hydra.providers import ProviderError, make_client
+from hydra.providers import ProviderError, make_client, list_providers
 from hydra.model_routing import load_routing
 
 
@@ -156,8 +156,15 @@ class ModelRouter:
                 type(config).__name__ if config is not None else "None",
             )
             config = {}
-        agentic = config.get("agentic", {})
-        roles = agentic.get("roles", {})
+        agentic = config.get("agentic") or {}
+        if not isinstance(agentic, dict):
+            raise ProviderError("agentic config must be a mapping")
+        roles = agentic.get("roles") or {}
+        if not isinstance(roles, dict):
+            raise ProviderError("agentic.roles config must be a mapping")
+        if not roles:
+            self._load_defaults()
+            return
 
         # When a role omits provider/model, fall back to the single source of
         # truth (hydra/model_routing.yaml) instead of bare literals, so the
@@ -171,18 +178,18 @@ class ModelRouter:
         # cloud planner call just to decide they are simple. Keep the router lane
         # explicit and local from the SSOT even when the config file is partial.
         if "router" not in roles:
-            router_entry = routing.role_entry("router")
             self.models["router"] = ModelConfig(
                 name="router",
                 provider=router_provider,
                 model=router_model,
-                base_url=router_entry.base_url or "http://127.0.0.1:11434",
                 max_tokens=512,
                 temperature=0.0,
             )
 
         # Load role-based models
         for role_name, role_config in roles.items():
+            if not isinstance(role_config, dict):
+                raise ProviderError(f"role {role_name!r} config must be a mapping")
             provider = role_config.get("provider", worker_provider)
             model = role_config.get("model", worker_model)
 
@@ -201,7 +208,6 @@ class ModelRouter:
                 name="auditor",
                 provider=auditor_provider,
                 model=auditor_model,
-                base_url="https://api.ollama.cloud",
             )
     
     def _load_defaults(self):
@@ -229,7 +235,6 @@ class ModelRouter:
                 name="router",
                 provider=router_provider,
                 model=router_model,
-                base_url="http://127.0.0.1:11434",
                 max_tokens=512,
                 temperature=0.0,
             ),
@@ -237,7 +242,6 @@ class ModelRouter:
                 name="planner",
                 provider=planner_provider,
                 model=planner_model,
-                base_url="https://api.ollama.cloud",
                 max_tokens=8192,
                 temperature=0.2,
             ),
@@ -245,7 +249,6 @@ class ModelRouter:
                 name="doer",
                 provider=doer_provider,
                 model=doer_model,
-                base_url="https://api.ollama.cloud",
                 max_tokens=4096,
                 temperature=0.0,
             ),
@@ -253,7 +256,6 @@ class ModelRouter:
                 name="worker",
                 provider=worker_provider,
                 model=worker_model,
-                base_url="http://127.0.0.1:11434",  # SSOT: hydra/model_routing.yaml (unified 2026-06-11)
                 max_tokens=2048,
                 temperature=0.0,
             ),
@@ -261,7 +263,6 @@ class ModelRouter:
                 name="auditor",
                 provider=auditor_provider,
                 model=auditor_model,
-                base_url="https://api.ollama.cloud",
                 max_tokens=2048,
                 temperature=0.0,
             ),
@@ -300,7 +301,6 @@ class ModelRouter:
 
         # Use fast router model for classification
         router_model = self.models.get("router") or list(self.models.values())[0]
-        client = self._create_client(router_model)
         
         prompt = f"""Classify this task's complexity.
 
@@ -322,6 +322,7 @@ Output JSON exactly:
         
         messages = [ChatMessage(role="user", content=prompt)]
         try:
+            client = self._create_client(router_model)
             response = client.chat(
                 messages,
                 # Use the SUBSTITUTED model name, not the original. _create_client
@@ -338,6 +339,8 @@ Output JSON exactly:
                 timeout=10.0,
             )
             result = json.loads(response.content.strip())
+            if not isinstance(result, dict):
+                raise ValueError("router response must be a JSON object")
             complexity = TaskComplexity(result.get("complexity", "moderate"))
             requires_verifier = result.get("requires_verifier", True)
             requires_human_approval = result.get("requires_human_approval", False)
@@ -393,7 +396,11 @@ Output JSON exactly:
         """True if a role resolves to a model on the local GPU (127.0.0.1)."""
         cfg = self.models.get(role)
         base = (getattr(cfg, "base_url", "") or "") if cfg else ""
-        return "127.0.0.1" in base or "localhost" in base
+        if not base:
+            return bool(cfg and cfg.provider == "ollama")
+        from urllib.parse import urlsplit
+
+        return urlsplit(base).hostname in {"127.0.0.1", "localhost", "::1"}
 
     def _cloud_substitute_role(self) -> str:
         """A cloud role to stand in for a local role when the GPU is busy.
@@ -480,18 +487,43 @@ Output JSON exactly:
                 return make_client(provider)
             return make_client(provider, env_dir=self.env_dir)
 
+        def _model(cfg: Any, default: str) -> str:
+            value = getattr(cfg, "model", None)
+            return value if isinstance(value, str) and value else default
+
         # 1. The configured provider. For mundane/read tasks this is already a
         #    local model (free, reliable) — we return it as-is, no cloud forced.
         first_err: Exception | None = None
         try:
             client, cfg = _mk(requested)
+            if isinstance(client, OllamaClient):
+                if model_config.base_url:
+                    client.endpoint = model_config.base_url.rstrip("/")
+                if model_config.api_key_env:
+                    key = os.environ.get(model_config.api_key_env)
+                    if not key:
+                        raise ProviderError(f"role requires missing API key variable {model_config.api_key_env}")
+                    client.api_key = key
             self.last_substitution = {
-                "requested": requested, "used": getattr(cfg, "name", requested),
+                "requested": requested, "used": model_config.model or _model(cfg, ""),
+                "used_provider": getattr(cfg, "name", requested),
                 "downgraded_to_local": False, "note": "",
             }
             return client
         except Exception as exc:  # ProviderError or any construction error
             first_err = exc
+
+        # A role can directly describe a compatible endpoint without an env file.
+        if model_config.base_url and requested not in list_providers():
+            api_key = os.environ.get(model_config.api_key_env) if model_config.api_key_env else None
+            if not model_config.api_key_env or api_key:
+                client = OllamaClient(endpoint=model_config.base_url, api_key=api_key)
+                self.last_substitution = {
+                    "requested": requested, "used": model_config.model,
+                    "used_provider": requested, "downgraded_to_local": False,
+                    "note": "explicit role endpoint",
+                }
+                return client
 
         # 2. Other CLOUD providers (by provider name) before touching local.
         #    This loop handles provider-level fallbacks (e.g. a second cloud provider).
@@ -507,7 +539,8 @@ Output JSON exactly:
                 requested, first_err, getattr(cfg, "name", candidate),
             )
             self.last_substitution = {
-                "requested": requested, "used": getattr(cfg, "name", candidate),
+                "requested": requested, "used": _model(cfg, model_config.model),
+                "used_provider": getattr(cfg, "name", candidate),
                 "downgraded_to_local": False,
                 "note": f"cloud substitution for {requested}",
             }
@@ -547,6 +580,7 @@ Output JSON exactly:
             self.last_substitution = {
                 "requested": requested,
                 "used": free_model,
+                "used_provider": free_provider,
                 "downgraded_to_local": False,
                 "note": f"free-cloud fallback: {primary_model} -> {free_model}",
             }
@@ -559,12 +593,13 @@ Output JSON exactly:
         )
         try:
             client, cfg = _mk("ollama")
-            used = getattr(cfg, "name", "ollama")
+            used = _model(cfg, load_routing().role_pair("worker")[1])
         except Exception:
             client = OllamaClient(endpoint="http://localhost:11434")
-            used = "ollama"
+            used = load_routing().role_pair("worker")[1]
         self.last_substitution = {
             "requested": requested, "used": used,
+            "used_provider": "ollama",
             "downgraded_to_local": True,
             "note": f"all cloud providers unavailable ({first_err}); local fallback",
         }
@@ -660,7 +695,7 @@ def route_and_execute(
             "complexity": decision.complexity.value,
             "role": decision.recommended_model,
             "model": _routed_model,
-            "provider": selected_model.provider,
+            "provider": _substitution.get("used_provider") or selected_model.provider,
             "reasoning": decision.reasoning,
             "estimated_cost_usd": decision.estimated_cost_usd,
             "estimated_latency_ms": decision.estimated_latency_ms,

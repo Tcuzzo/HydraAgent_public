@@ -22,6 +22,24 @@ class AutonomousMissionError(Exception):
 MAX_GOAL_ATTEMPTS = 12
 
 
+def review_issues(review: dict[str, Any]) -> list[str]:
+    """Extract findings from both native review trees and supplied reviewers."""
+    issues = [str(issue) for issue in (review.get("issues") or [])]
+    for check in review.get("checks") or []:
+        if not check.get("passed"):
+            issues.append(f"{check.get('name', 'review check')}: {check.get('detail', '')}")
+    for child in review.get("child_reviews") or []:
+        issues.extend(review_issues(child))
+    return list(dict.fromkeys(issues))
+
+
+def carry_mission_context(batch: dict[str, Any], goal: str) -> None:
+    """Workers consume job goals, so batch-only repair context is insufficient."""
+    for job in batch.get("jobs", []):
+        objective = job.get("goal", "")
+        job["goal"] = f"{goal}\n\nWorker objective: {objective}"
+
+
 def compose_multiturn_goal(
     base_goal: str, attempts: list[dict[str, Any]], *, max_attempts: int = MAX_GOAL_ATTEMPTS
 ) -> str:
@@ -81,6 +99,8 @@ def run_autonomous_mission_v2(
     
     Loops until verdict=accepted or max_cycles hit. No gates.
     """
+    if not isinstance(max_cycles, int) or isinstance(max_cycles, bool) or max_cycles < 1:
+        raise AutonomousMissionError("max_cycles must be an integer >= 1")
     if not prompt.strip():
         raise AutonomousMissionError("prompt must be a non-empty string")
     root = repo_root.expanduser().resolve()
@@ -98,6 +118,7 @@ def run_autonomous_mission_v2(
     for cycle in range(1, max_cycles + 1):
         cycle_goal = compose_multiturn_goal(prompt, attempts)
         batch = build_worker_batch_from_plan(plan_path, batch_id=f"{mission_id}-batch-c{cycle}", goal=cycle_goal)
+        carry_mission_context(batch, cycle_goal)
         if attempts:
             # Structured trajectory is also stamped on the batch artifact for
             # review. (Normalization drops it before the worker, which is why
@@ -113,7 +134,7 @@ def run_autonomous_mission_v2(
             {
                 "cycle": cycle,
                 "verdict": verdict,
-                "issues": [str(issue) for issue in (review.get("issues") or [])],
+                "issues": review_issues(review),
                 "failure_reason": worker_result.get("failure_reason"),
             }
         )

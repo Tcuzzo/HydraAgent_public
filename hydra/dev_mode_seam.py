@@ -24,6 +24,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEV_MODE_ROOT = REPO_ROOT / ".hydraAgent"
+BUNDLED_DEV_MODE_ROOT = Path(__file__).resolve().parent / "runtime_data" / "catalog"
 
 # (contract key, relative path, top-level list key or None)
 _CONTRACTS: dict[str, tuple[str, str | None]] = {
@@ -73,13 +74,16 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 
 def load_dev_mode_contracts(root: str | Path | None = None) -> dict[str, Any]:
-    """Load the dev-mode constitution from ``.hydraAgent/``. Real file reads.
+    """Load explicit contracts or the installed/source public defaults.
 
     Returns a dict with one entry per contract plus a ``loaded`` map and the
     resolved ``root``. A missing contract is reported as loaded=False (loud),
     never silently faked.
     """
-    base = Path(root).resolve() if root is not None else DEV_MODE_ROOT
+    if root is not None:
+        base = Path(root).expanduser().resolve()
+    else:
+        base = BUNDLED_DEV_MODE_ROOT if BUNDLED_DEV_MODE_ROOT.is_dir() else DEV_MODE_ROOT
     out: dict[str, Any] = {}
     for key, (rel, _) in _CONTRACTS.items():
         out[key] = _read_yaml(base / rel)
@@ -128,7 +132,7 @@ def build_backs_dev_mode_doctrine(root: str | Path | None = None) -> str:
     lines: list[str] = [
         "BACKS dev-mode seam (hallucination-resistance floor)",
         "",
-        "Loaded live from .hydraAgent/. A skill named but not invoked did not happen.",
+        f"Loaded from {contracts['root']}. A skill named but not invoked did not happen.",
         "Ground in these invariants BEFORE reasoning. The agent never invents; "
         "it verifies.",
         "",

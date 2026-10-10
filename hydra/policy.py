@@ -92,7 +92,7 @@ class ApprovalPolicy:
     # writes to (decide_request), so a real button press resolves the wait.
     #
     # Default is False so every existing call site keeps the old immediate-raise
-    # contract (and existing tests don't block). guarded() opts INTO the wait.
+    # contract. guarded() also waits when an approval notification is delivered.
     wait_for_approval: bool = False
     approval_poll_interval: float = 1.0
     approval_wait_timeout: float = 1800.0  # 30 min: a sane bound, not forever.
@@ -303,6 +303,10 @@ class ApprovalPolicy:
         arguments_preview = _preview_arguments(tool_name, arguments)
         duplicate = self._find_pending_duplicate(tool_name, summary, arguments_preview)
         if duplicate is not None:
+            # A previous queued request does not prove that a consumer is live
+            # now. Explicit wait policies can continue polling that same queue.
+            if not self.wait_for_approval:
+                self._wait_this_call = False
             return duplicate
         stamp = uuid.uuid4().hex[:8]
         run_id = f"approval-{stamp}"
@@ -347,8 +351,13 @@ class ApprovalPolicy:
                 from gateways.telegram.live import notify_approval
 
                 # Pass the clock so quiet hours (1am-6am) holds routine pings.
-                notify_approval(approval, now=datetime.now())
+                delivery = notify_approval(approval, now=datetime.now())
+                delivered = isinstance(delivery, dict) and delivery.get("ok") is True and not delivery.get("held")
+                if not delivered and not self.wait_for_approval:
+                    self._wait_this_call = False
             except Exception as exc:
+                if not self.wait_for_approval:
+                    self._wait_this_call = False
                 logging.getLogger(__name__).warning(
                     "notify_approval failed (approval %s will not be announced): %s",
                     request_id,
