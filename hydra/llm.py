@@ -4,8 +4,8 @@ Mirrors OpenMono's `IProvider` / `ILlmClient` pattern (see
 `src/OpenMono.Cli/Llm/ProviderRegistry.cs`) but in Python, stdlib-only.
 This is the keystone of "Hydra": every higher-level reasoning surface
 (agent loop, planner, builder iteration) depends on `chat()` returning
-real LLM output from a local model. No cloud API, no `anthropic`
-import, no `claude_api` import — §2 of PRINCIPLES.md stays in force.
+real LLM output from a configured local or cloud model. No provider SDK is
+needed for OpenAI-compatible HTTP servers.
 
 Default backend: Ollama's OpenAI-compatible endpoint at
 `http://localhost:11434/v1/chat/completions`. Drop-in replaceable via
@@ -17,11 +17,13 @@ Maturity: SCAFFOLDED. Promoted to PROVEN by §10.20.
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import socket
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from typing import Iterable, Protocol
 
@@ -33,7 +35,7 @@ _LOG = logging.getLogger(__name__)
 # window. Module-level (process-wide) because provider keys/endpoints are
 # stable per process and the cost of one extra call is the bug we prevent.
 _CLOUD_MODEL_TTL_SECONDS: float = 60.0
-_cloud_model_cache: dict[str, tuple[float, list[str]]] = {}
+_cloud_model_cache: dict[tuple[str, str], tuple[float, list[str]]] = {}
 
 
 @dataclass
@@ -53,7 +55,7 @@ class ToolCall:
     """One tool the model wants invoked, parsed from the OpenAI-style
     `tool_calls[].function` shape. `arguments_raw` is the raw JSON
     string the model emitted; `arguments` is the parsed dict (or {} if
-    the model emitted garbage — caller decides how to handle)."""
+    invalid arguments raise LlmError before they can reach a tool)."""
 
     id: str
     name: str
@@ -104,18 +106,17 @@ class LlmClient(Protocol):
 
 
 def _parse_tool_calls(raw: list[dict]) -> list[ToolCall]:
-    """Parse OpenAI-shaped `tool_calls` into our dataclass. Malformed
-    entries are skipped rather than raised — different Ollama models
-    serialize edge cases differently, and the agent loop's tool
-    dispatcher will surface real failures via its own error path."""
+    """Parse calls without turning malformed arguments into executable defaults."""
+    if not isinstance(raw, list):
+        raise LlmError("chat: tool_calls must be a list")
     out: list[ToolCall] = []
     for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        fn = entry.get("function") or {}
+        if not isinstance(entry, dict) or not isinstance(entry.get("function"), dict):
+            raise LlmError("chat: each tool call must contain a function object")
+        fn = entry["function"]
         name = fn.get("name")
         if not isinstance(name, str) or not name:
-            continue
+            raise LlmError("chat: tool call name must be a non-empty string")
         args_raw = fn.get("arguments", "")
         if isinstance(args_raw, dict):
             # Some servers pre-parse arguments to a dict.
@@ -125,11 +126,11 @@ def _parse_tool_calls(raw: list[dict]) -> list[ToolCall]:
             try:
                 args_dict = json.loads(args_raw) if args_raw else {}
                 if not isinstance(args_dict, dict):
-                    args_dict = {}
-            except json.JSONDecodeError:
-                args_dict = {}
+                    raise LlmError(f"chat: arguments for {name!r} must be an object")
+            except json.JSONDecodeError as exc:
+                raise LlmError(f"chat: invalid JSON arguments for {name!r}") from exc
         else:
-            args_raw, args_dict = "", {}
+            raise LlmError(f"chat: arguments for {name!r} must be an object or JSON string")
         out.append(
             ToolCall(
                 id=str(entry.get("id") or ""),
@@ -152,14 +153,9 @@ class OllamaClient:
 
     When `api_key` is set, every request includes `Authorization: Bearer
     <api_key>`. When unset, no header is sent (local Ollama doesn't
-    require one). The §2 doctrine forbids the `anthropic` / `claude_api`
-    Python packages, not OpenAI-compatible HTTP — so this client is
-    free to talk to OpenAI-compatible HTTP hosts, as long as the key
-    comes from operator-configured env outside the repo.
+    require one). Model names are passed through unchanged for every family.
 
-    `/api/tags` is Ollama-specific; for hosts that don't expose it,
-    `list_models()` will raise `LlmError` and the caller should fall
-    back to the provider's own catalog or skip discovery.
+    Catalog discovery supports Ollama `/api/tags` and compatible `/v1/models`.
     """
 
     def __init__(
@@ -170,6 +166,11 @@ class OllamaClient:
     ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.api_key = api_key
+
+    @property
+    def api_base(self) -> str:
+        """Accept either a server root or a versioned OpenAI base URL."""
+        return self.endpoint if urlsplit(self.endpoint).path.rstrip("/") else self.endpoint + "/v1"
 
     # --- public ----------------------------------------------------------
 
@@ -192,7 +193,7 @@ class OllamaClient:
         `tool_calls`, tool-response messages) which would lose fields if
         forced through `ChatMessage`.
         """
-        if not model:
+        if not isinstance(model, str) or not model.strip():
             raise LlmError("chat: model must be a non-empty string")
         msgs: list[dict] = []
         for m in messages:
@@ -217,17 +218,21 @@ class OllamaClient:
         if tools:
             body["tools"] = tools
         payload = self._post_json(
-            f"{self.endpoint}/v1/chat/completions", body, timeout=timeout
+            f"{self.api_base}/chat/completions", body, timeout=timeout
         )
+        if not isinstance(payload, dict):
+            raise LlmError("chat: response must be a JSON object")
         choices = payload.get("choices") or []
-        if not choices:
+        if not isinstance(choices, list) or not choices:
             raise LlmError(
                 f"chat: response has no choices — model {model!r} may not "
                 f"exist or the server returned an error: "
                 f"{payload.get('error') or payload}"
             )
         first = choices[0]
-        msg = first.get("message") or {}
+        if not isinstance(first, dict) or not isinstance(first.get("message"), dict):
+            raise LlmError("chat: choices[0].message must be an object")
+        msg = first["message"]
         content = msg.get("content")
         # When the model emits only tool_calls, some servers return
         # content as null. Coerce to empty string for the dataclass
@@ -240,12 +245,19 @@ class OllamaClient:
             )
         tool_calls = _parse_tool_calls(msg.get("tool_calls") or [])
         usage = payload.get("usage") or {}
+        if not isinstance(usage, dict):
+            raise LlmError("chat: usage must be an object")
+        try:
+            prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+            completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        except (TypeError, ValueError) as exc:
+            raise LlmError("chat: token usage must contain numbers") from exc
         return ChatResponse(
             content=content,
             model=payload.get("model", model),
             finish_reason=first.get("finish_reason", ""),
-            prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
-            completion_tokens=int(usage.get("completion_tokens", 0) or 0),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
             raw=payload,
             tool_calls=tool_calls,
         )
@@ -270,10 +282,8 @@ class OllamaClient:
         shared seam.
         """
         # Local Ollama speaks /api/tags, not the OpenAI /models shape.
-        is_local = (
-            self.endpoint.startswith("http://localhost")
-            or self.endpoint.startswith("http://127.0.0.1")
-        )
+        parsed = urlsplit(self.endpoint)
+        is_local = parsed.hostname in {"localhost", "127.0.0.1", "::1"} and not parsed.path.rstrip("/")
         if is_local:
             try:
                 payload = self._get_json(f"{self.endpoint}/api/tags", timeout=timeout)
@@ -290,7 +300,7 @@ class OllamaClient:
                 # try/except and fail-open / print a clear error. Returning []
                 # silently (the old behavior) hid the failure and broke the
                 # documented contract.
-                raise
+                pass  # llama.cpp/vLLM also run locally; try the standard catalog.
             except Exception as e:  # noqa: BLE001
                 # Wrap any non-transport failure (e.g. malformed payload shape)
                 # so the contract "raises LlmError on failure" holds for ALL
@@ -304,20 +314,23 @@ class OllamaClient:
         # window. No hardcoded fallback — a stale list used as a denylist is
         # the exact bug this closes.
         now = time.monotonic()
-        cached = _cloud_model_cache.get(self.endpoint)
+        cache_key = (self.api_base, hashlib.sha256((self.api_key or "").encode()).hexdigest())
+        cached = _cloud_model_cache.get(cache_key)
         if cached is not None:
             expires_at, cached_names = cached
             if now < expires_at:
                 return list(cached_names)
 
-        payload = self._get_json(f"{self.endpoint}/models", timeout=timeout)
+        payload = self._get_json(f"{self.api_base}/models", timeout=timeout)
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+            raise LlmError("model catalog response must contain a data list")
         # OpenAI-compatible shape: {"data": [{"id": "..."}, ...]}.
         names: list[str] = []
         for entry in payload.get("data") or []:
             mid = entry.get("id") if isinstance(entry, dict) else None
             if isinstance(mid, str) and mid:
                 names.append(mid)
-        _cloud_model_cache[self.endpoint] = (now + _CLOUD_MODEL_TTL_SECONDS, names)
+        _cloud_model_cache[cache_key] = (now + _CLOUD_MODEL_TTL_SECONDS, names)
         _LOG.debug(
             "live catalog for %s: %d models (cached %.0fs)",
             self.endpoint,
@@ -408,7 +421,10 @@ class OllamaClient:
                 f"timed out talking to {req.full_url} after {timeout}s"
             ) from e
         try:
-            return json.loads(raw)
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                raise LlmError(f"JSON response from {req.full_url} must be an object")
+            return payload
         except json.JSONDecodeError as e:
             raise LlmError(
                 f"non-JSON response from {req.full_url}: {raw[:200]!r}"

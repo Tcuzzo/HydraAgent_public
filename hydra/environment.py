@@ -13,6 +13,8 @@ from typing import Any
 from urllib.parse import urlparse
 import urllib.request
 
+from hydra.http_policy import open_checked
+
 
 SESSION_SCHEMA = "hydra.environment.session.v1"
 COMMAND_SCHEMA = "hydra.environment.command.v1"
@@ -202,20 +204,23 @@ def fetch_session_url(
     timeout_seconds: int = 20,
     max_chars: int = 50000,
 ) -> dict[str, Any]:
-    # SSRF guard: resolve and reject private/internal IPs BEFORE any network activity
-    parsed = urlparse(url)
-    host = parsed.hostname
-    if host is None:
-        raise EnvironmentError("invalid URL: missing host")
-    allowed, reason = _is_ip_allowed(host)
-    if not allowed:
-        raise EnvironmentError(f"refusing to fetch private/internal address: {host} ({reason})")
+    def validate(target: str) -> None:
+        if not isinstance(target, str) or urlparse(target).scheme not in ("http", "https"):
+            raise EnvironmentError("url must start with http:// or https://")
+        host = urlparse(target).hostname
+        if host is None:
+            raise EnvironmentError("invalid URL: missing host")
+        allowed, reason = _is_ip_allowed(host)
+        if not allowed:
+            raise EnvironmentError(f"refusing to fetch private/internal address: {host} ({reason})")
+
+    validate(url)
     
     session = session_status(env_root, session_id)
     if not isinstance(url, str) or not url.startswith(("http://", "https://")):
         raise EnvironmentError("url must start with http:// or https://")
     request = urllib.request.Request(url, headers={"User-Agent": "HydraAgent/1.0"})
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+    with open_checked(request, validate=validate, timeout=timeout_seconds) as response:
         raw = response.read(max_chars + 1)
         text = raw[:max_chars].decode("utf-8", errors="replace")
         packet = {

@@ -33,6 +33,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+from hydra.proc import _shell_argv
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -292,9 +294,9 @@ def run_sandboxed_shell(
     timeout: float = 120,
     env: dict[str, str] | None = None,
 ) -> ExecResult:
-    """Convenience wrapper: run a shell string via ``sh -c``."""
+    """Run a shell string through the same platform shell as Hydra's tools."""
     return run_sandboxed(
-        ["sh", "-c", shell_cmd],
+        _shell_argv(shell_cmd),
         workspace=workspace,
         network=network,
         timeout=timeout,

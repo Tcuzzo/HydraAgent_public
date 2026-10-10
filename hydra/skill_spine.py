@@ -119,6 +119,12 @@ SKILL_ROUTE_KEYWORDS = {
         "resolve unknowns",
         "never run lost",
     ),
+    # Optional public playbooks: discover them locally, but do not require them
+    # for the core runtime or silently download them.
+    "frontend-design": ("frontend design", "responsive ui", "web interface"),
+    "webapp-testing": ("webapp testing", "browser proof", "browser testing"),
+    "differential-review": ("differential review", "security review", "security diff"),
+    "variant-analysis": ("variant analysis", "bug variants", "same root cause"),
 }
 
 
@@ -171,8 +177,11 @@ def list_skill_records(root: str | Path | None = None) -> list[SkillRecord]:
 
 def find_skill(name: str, root: str | Path | None = None) -> SkillRecord:
     wanted = name.strip()
-    for record in list_skill_records(root):
-        if record.name == wanted or record.path.parent.name == wanted:
+    available = _dedupe_skill_records(list_skill_records(root))
+    if wanted in available:
+        return available[wanted]
+    for record in available.values():
+        if record.path.parent.name == wanted:
             return record
     raise KeyError(f"trusted skill not found: {wanted}")
 
@@ -277,7 +286,7 @@ def build_agent_system_prompt(base_prompt: str, root: str | Path | None = None) 
 def route_skill_names(prompt: str) -> list[str]:
     text = prompt.lower()
     routed: list[str] = []
-    for name in CORE_SKILL_NAMES:
+    for name in SKILL_ROUTE_KEYWORDS:
         keywords = SKILL_ROUTE_KEYWORDS.get(name, ())
         if any(_contains_keyword(text, keyword) for keyword in keywords):
             routed.append(name)
@@ -286,7 +295,13 @@ def route_skill_names(prompt: str) -> list[str]:
 
 def route_skill_records(prompt: str, root: str | Path | None = None) -> list[SkillRecord]:
     available = _dedupe_skill_records(list_skill_records(root))
-    return [available[name] for name in route_skill_names(prompt) if name in available]
+    names = route_skill_names(prompt)
+    # Explicitly naming any installed skill works without editing the built-in
+    # keyword registry. Boundaries avoid selecting similarly prefixed names.
+    for name in available:
+        if name not in names and _contains_keyword(prompt.lower(), name):
+            names.append(name)
+    return [available[name] for name in names if name in available]
 
 
 def build_routed_skill_context(prompt: str, root: str | Path | None = None) -> str:
@@ -300,12 +315,14 @@ def build_routed_skill_context(prompt: str, root: str | Path | None = None) -> s
             f"Prompt matched {len(records)} trusted skill(s) and "
             f"{len(capability_cards)} native capability card(s). Apply these playbooks before answering."
         ),
+        "Summaries select playbooks. Use skill_show to read each SKILL.md, follow next_offset for remaining pages, and read relevant linked references before applying it.",
     ]
     for record in records:
         lines.extend(
             [
                 "",
                 f"skill: {record.name}",
+                f"source: {record.path}",
                 f"description: {record.description}",
                 f"summary: {record.summary}",
             ]

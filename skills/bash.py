@@ -98,7 +98,19 @@ def run(
                 "command": command,
                 "cwd": str(root_resolved),
             }
-        # No engine found — fall through to host path (honest degrade).
+        # An explicitly requested boundary must never silently become host execution.
+        return {
+            "ok": False,
+            "exit_code": -1,
+            "stdout": "",
+            "stderr": "Container sandbox requested, but no podman or docker engine was found.",
+            "duration_s": 0.0,
+            "timed_out": False,
+            "truncated": False,
+            "command": command,
+            "cwd": str(root_resolved),
+            "reason": "no-container-engine",
+        }
     # --- end container cage ---
 
     start = time.monotonic()

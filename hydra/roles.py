@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 from core.config import ConfigError, load
-from hydra.providers import FORBIDDEN_PROVIDER_NAMES, ProviderError, resolve
+from hydra.providers import ProviderError, resolve
 
 
 ROLE_NAMES = ("planner", "doer", "auditor")
@@ -53,14 +53,6 @@ def _role_from_config(role: str, data: dict) -> RoleSpec:
             f"role {role!r} requires provider, model, and family "
             f"or a known selector"
         )
-    provider_l = str(provider).lower()
-    family_l = str(family).lower()
-    if provider_l in FORBIDDEN_PROVIDER_NAMES or "claude" in provider_l or "anthropic" in provider_l:
-        raise RoleError(f"role {role!r} selected forbidden provider {provider!r}")
-    if "claude" in family_l or "anthropic" in family_l:
-        raise RoleError(f"role {role!r} selected forbidden family {family!r}")
-    if "claude" in str(model).lower() or "anthropic" in str(model).lower():
-        raise RoleError(f"role {role!r} selected forbidden model {model!r}")
     return RoleSpec(
         role=role,
         provider=str(provider),
@@ -85,7 +77,9 @@ def resolve_roles_from_dict(config: dict) -> RoleSet:
         for name in ROLE_NAMES
     }
     auditor = resolved["auditor"]
-    for name in ("planner", "doer"):
+    # Independence is a deployment choice; a shared local server can serve
+    # different families and a single-model installation remains usable.
+    for name in (("planner", "doer") if agentic.get("require_independent_auditor", False) else ()):
         role = resolved[name]
         if role.family == auditor.family:
             raise RoleError(
