@@ -9,7 +9,7 @@ metadata:
     - linux
     - darwin
     tier: workspace
-    authored_by: auto-skill-generator
+    generated_by: auto-skill-generator
     generated_at: 2026-05-27 06:14:10 UTC
     source_task: task-9f8ab3cbdfc9
     confidence: 0.9
