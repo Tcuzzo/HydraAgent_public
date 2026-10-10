@@ -1,5 +1,18 @@
 # Provenance
 
+## Public orchestration additions
+
+The personal-orchestration preview adds new generic specialist profiles, a bounded
+task-graph CLI and official MCP integration. The public canon and essence text is
+authored for this edition; it does not publish the private original's canon or
+methodology. Optional private overlays are loaded from outside the source tree and
+are not release assets. The following extraction record describes the original
+public baseline; it is not a claim that later releases contain no orchestration.
+
+The optional Zapier harness references official SDK packages under Zapier's terms;
+those packages are not copied or relicensed as part of Hydra. Project and human
+skill-author credit is distinct from development-tool credit.
+
 This repository — **Hydra (public edition)** — is a sanitized, lean extraction of a
 larger private agent codebase ("the original"). It contains the general-purpose
 coding-agent core only: no private orchestration methodology, no media/studio

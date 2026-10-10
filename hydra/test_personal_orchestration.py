@@ -21,7 +21,7 @@ def test_profile_export_detects_private_data_without_echo(tmp_path):
     from hydra.public_profiles import export_profiles, PublicProfileError
     source = tmp_path / 'source'
     source.mkdir()
-    payload = {'id': 'kaizen', 'canon': 'Contact confidential.person@company.test', 'essence': 'PDCA', 'license': 'MIT', 'credits': ['Cuzzo and BACKS AIOS']}
+    payload = {'id': 'kaizen', 'edition': 'generic-public', 'canon': 'Contact confidential.person@company.test', 'essence': 'PDCA', 'license': 'MIT', 'credits': ['Cuzzo and BACKS AIOS']}
     (source / 'kaizen.json').write_text(json.dumps(payload))
     destination = tmp_path / 'public'
     with pytest.raises(PublicProfileError) as err:
@@ -74,4 +74,3 @@ def test_mcp_unknown_effects_are_not_readonly():
     from hydra.mcp_bridge import is_read_only
     assert not is_read_only({'read_only_tools': []}, 'delete_record')
     assert is_read_only({'read_only_tools': ['lookup']}, 'lookup')
-
