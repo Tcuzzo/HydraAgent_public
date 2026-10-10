@@ -40,6 +40,8 @@ class _FcntlBackedMsvcrt:
     Only used on POSIX to drive the Windows branch of ``file_lock``. Like the
     real msvcrt, it locks ``nbytes`` starting at the fd's CURRENT position and
     raises ``OSError`` when a non-blocking request cannot be granted.
+    Unlike msvcrt, lockf owns locks per process, so this stand-in is suitable
+    for these separate-process tests only, not same-process thread tests.
     """
 
     LK_UNLCK = 0
@@ -182,8 +184,13 @@ def _singleton_holder(lock_base: str, ready_path: str, stop_path: str, windows_b
 
 
 def _assert_second_caller_is_refused(tmp_path: Path, *, windows_backend: bool) -> None:
+    import hydra.file_lock as fl
     from hydra.file_lock import acquire_singleton_lock
 
+    original_backend = {
+        name: getattr(fl, name)
+        for name in ("_HAVE_FCNTL", "fcntl", "_HAVE_MSVCRT", "msvcrt")
+    }
     lock_base = tmp_path / "listener-bot"
     ready = tmp_path / "ready"
     stop = tmp_path / "stop"
@@ -212,6 +219,10 @@ def _assert_second_caller_is_refused(tmp_path: Path, *, windows_backend: bool) -
         assert fd is None
         assert reported == holder_pid, f"expected holder pid {holder_pid}, got {reported}"
     finally:
+        # The POSIX stand-in uses process-owned lockf locks. Leaving it active
+        # here makes subsequent thread tests bypass the native flock backend.
+        for name, value in original_backend.items():
+            setattr(fl, name, value)
         stop.write_text("stop")
         holder.join(timeout=60)
 
@@ -224,6 +235,55 @@ def test_singleton_lock_refuses_second_holder_on_native_backend(tmp_path: Path) 
 def test_singleton_lock_refuses_second_holder_on_windows_backend(tmp_path: Path) -> None:
     """Same truth on the Windows backend — it used to say 'you own it' to all."""
     _assert_second_caller_is_refused(tmp_path, windows_backend=True)
+
+
+@pytest.mark.parametrize("fail_acquire", [False, True])
+def test_windows_singleton_probe_restores_parent_backend(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_acquire: bool
+) -> None:
+    """A simulated backend must not leak into later same-process thread tests."""
+    import hydra.file_lock as fl
+
+    names = ("_HAVE_FCNTL", "fcntl", "_HAVE_MSVCRT", "msvcrt")
+    original = {name: getattr(fl, name) for name in names}
+    replacement = {name: object() for name in names}
+    events = []
+
+    class Holder:
+        def start(self):
+            (tmp_path / "ready").write_text("123")
+
+        def join(self, timeout):
+            assert (tmp_path / "stop").read_text() == "stop"
+            events.append("joined")
+
+    class Context:
+        def Process(self, **kwargs):
+            return Holder()
+
+    def force_backend():
+        # Register originals with the outer fixture so a failed regression
+        # cannot itself poison later tests. The helper must restore them first.
+        for name, value in replacement.items():
+            monkeypatch.setattr(fl, name, value)
+
+    def acquire(path):
+        assert all(getattr(fl, name) is value for name, value in replacement.items())
+        if fail_acquire:
+            raise RuntimeError("probe failed")
+        return False, None, 123
+
+    monkeypatch.setattr(mp, "get_context", lambda method: Context())
+    monkeypatch.setattr(f"{__name__}._force_windows_backend", force_backend)
+    monkeypatch.setattr(fl, "acquire_singleton_lock", acquire)
+    if fail_acquire:
+        with pytest.raises(RuntimeError, match="probe failed"):
+            _assert_second_caller_is_refused(tmp_path, windows_backend=True)
+    else:
+        _assert_second_caller_is_refused(tmp_path, windows_backend=True)
+
+    assert events == ["joined"]
+    assert all(getattr(fl, name) is value for name, value in original.items())
 
 
 def test_singleton_lock_is_released_when_holder_process_exits(tmp_path: Path) -> None:
