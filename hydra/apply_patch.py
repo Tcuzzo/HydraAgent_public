@@ -26,10 +26,11 @@ here instead of calling path.write_text directly.
 from __future__ import annotations
 
 import ast
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
+
+from hydra.atomic_write import atomic_write_bytes
 
 if TYPE_CHECKING:
     from hydra.edit_checkpoints import CheckpointStore
@@ -223,10 +224,11 @@ def apply_patch(
     if err:
         return PatchFailure(reason=err)
 
-    # --- 2. Read current content (newline='' preserves \r\n, \r, \n as-is) ---
-    text = target.read_text(encoding="utf-8", newline="")
-    bytes_before = len(text.encode("utf-8"))
-    pre_image_bytes = target.read_bytes()  # exact bytes for checkpoint
+    # Read once: preserve all newline forms and checkpoint the exact bytes
+    # used to construct the edit (Path.read_text(newline=) requires Python 3.13).
+    pre_image_bytes = target.read_bytes()
+    text = pre_image_bytes.decode("utf-8")
+    bytes_before = len(pre_image_bytes)
 
     # --- 3. old_block must be a non-empty string ---
     if not isinstance(old_block, str) or old_block == "":
@@ -288,21 +290,11 @@ def apply_patch(
             pre_image=pre_image_bytes,
         )
 
-    # --- 8. Atomic write (mirrors skills/fs_edit.py lines 106–125) ---
+    # --- 8. Atomic write with an exclusively created temporary sibling ---
     payload = new_text.encode("utf-8")
-    tmp = target.with_name(target.name + ".hydra-tmp")
     try:
-        with tmp.open("wb") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, target)
+        atomic_write_bytes(target, payload)
     except OSError as e:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
         return PatchFailure(reason=f"write failed for {target}: {e}")
 
     rel = str(target.relative_to(root.resolve()))
@@ -388,22 +380,12 @@ def create_file(
             pre_image=None,
         )
 
-    # --- 4. Atomic write via sibling-temp + os.replace ---
+    # --- 4. Atomic create; refuse a target another writer created meanwhile ---
     target_resolved.parent.mkdir(parents=True, exist_ok=True)
     payload = content.encode("utf-8")
-    tmp = target_resolved.with_name(target_resolved.name + ".hydra-tmp")
     try:
-        with tmp.open("wb") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, target_resolved)
+        atomic_write_bytes(target_resolved, payload, overwrite=False)
     except OSError as e:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
         return PatchFailure(reason=f"create_file write failed for {target_resolved}: {e}")
 
     rel = str(target_resolved.relative_to(root_resolved))

@@ -17,6 +17,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from hydra.http_policy import open_checked
+
 
 class SkillError(Exception):
     """A skill refused the request or could not complete it."""
@@ -36,18 +38,19 @@ def run(
 ) -> dict:
     if not allowed_hosts:
         raise SkillError("allowed_hosts is empty; refusing fetch")
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise SkillError(f"unsupported scheme {parsed.scheme!r}")
-    host = (parsed.hostname or "").lower()
     allowed = {h.lower() for h in allowed_hosts}
-    if host not in allowed:
-        raise SkillError(
-            f"host {host!r} not in allow-list {sorted(allowed)}"
-        )
+    def validate(target: str) -> None:
+        parsed = urllib.parse.urlparse(target)
+        if parsed.scheme not in ("http", "https"):
+            raise SkillError(f"unsupported scheme {parsed.scheme!r}")
+        host = (parsed.hostname or "").lower()
+        if host not in allowed:
+            raise SkillError(f"host {host!r} not in allow-list {sorted(allowed)}")
+
+    validate(url)
     req = urllib.request.Request(url, headers={"User-Agent": user_agent})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with open_checked(req, validate=validate, timeout=timeout) as resp:
             raw = resp.read(max_bytes + 1)
             status = resp.status
             content_type = resp.headers.get("Content-Type", "")

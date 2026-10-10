@@ -130,13 +130,13 @@ def resolve_vec0_extension() -> str | None:
     (it appends ``.so``/``.dylib`` itself), or ``None`` if nothing resolves.
     """
     override = os.environ.get("HYDRA_VEC0_PATH")
-    if override and Path(override).exists():
+    if override and _extension_file_exists(override):
         return _strip_ext(override)
 
     try:  # the wheel, if a venv install exists
         sqlite_vec = importlib.import_module("sqlite_vec")
         loadable = sqlite_vec.loadable_path()
-        if loadable and Path(loadable).exists():
+        if loadable and _extension_file_exists(loadable):
             return _strip_ext(loadable)
     except Exception:
         pass
@@ -144,6 +144,15 @@ def resolve_vec0_extension() -> str | None:
     if _VENDORED_VEC0.exists():
         return _strip_ext(str(_VENDORED_VEC0))
     return None
+
+
+def _extension_file_exists(path: str) -> bool:
+    # sqlite_vec.loadable_path() deliberately omits the platform suffix;
+    # SQLite appends it when loading. Checking only the stem skips a valid
+    # installed wheel and incorrectly falls back to the Linux-only vendor file.
+    return Path(path).is_file() or any(
+        Path(f"{path}{suffix}").is_file() for suffix in (".so", ".dylib", ".dll")
+    )
 
 
 def _strip_ext(path: str) -> str:
@@ -335,7 +344,10 @@ class UnifiedMemory:
         embedder: _Embedder = embed_nomic,
     ) -> None:
         self.path = Path(path).expanduser() if path else DEFAULT_DB_PATH
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise BackendUnavailable(f"cannot create memory directory {self.path.parent}: {exc}") from exc
         self._embedder = embedder
         # Derive the vector dimension from the embedder so a test-injected fake
         # (e.g. 14-dim bag-of-words) and the production 768-d nomic embedder
@@ -361,7 +373,10 @@ class UnifiedMemory:
         reason = vec0_unavailable_reason()
         if reason:
             raise BackendUnavailable(f"vector memory unavailable: {reason}")
-        con = sqlite3.connect(str(self.path))
+        try:
+            con = sqlite3.connect(str(self.path))
+        except sqlite3.Error as exc:
+            raise BackendUnavailable(f"cannot open memory database {self.path}: {exc}") from exc
         con.row_factory = sqlite3.Row
         ext = resolve_vec0_extension()
         if not ext:
@@ -382,10 +397,14 @@ class UnifiedMemory:
                 con.enable_load_extension(False)
             except Exception:
                 pass
-        con.executescript(_SCHEMA)
-        self._ensure_vec_table(con)
-        self._migrate_schema_v2(con)
-        con.commit()
+        try:
+            con.executescript(_SCHEMA)
+            self._ensure_vec_table(con)
+            self._migrate_schema_v2(con)
+            con.commit()
+        except sqlite3.Error as exc:
+            con.close()
+            raise BackendUnavailable(f"cannot initialize memory database {self.path}: {exc}") from exc
         return con
 
     def _ensure_vec_table(self, con: sqlite3.Connection) -> None:

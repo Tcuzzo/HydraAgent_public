@@ -26,9 +26,9 @@ Maturity: SCAFFOLDED. Promoted by §10.21.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
+from hydra.atomic_write import atomic_write_bytes
 from skills.fs_read import SkillError
 
 DEFAULT_MAX_BYTES = 1024 * 1024  # 1 MiB
@@ -130,19 +130,9 @@ def run(
 
     # Atomic write: write to a sibling temp file then os.replace().
     # Prevents readers from seeing a partially-written file.
-    tmp = target_resolved.with_name(target_resolved.name + ".hydra-tmp")
     try:
-        with tmp.open("wb") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, target_resolved)
+        atomic_write_bytes(target_resolved, payload, overwrite=overwrite)
     except OSError as e:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
         raise SkillError(f"write failed for {target_resolved}: {e}") from e
 
     return {

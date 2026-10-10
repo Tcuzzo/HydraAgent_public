@@ -7,6 +7,7 @@
 # mocks) that sleeps longer than the timeout and assert the caller gets an
 # ExecResult with returncode == EXEC_TIMEOUT_EXIT_CODE and partial stdout.
 import subprocess
+import sys
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -16,7 +17,14 @@ from hydra.exec_backend import (
     ExecResult,
     _reset_capability_cache,
     run_sandboxed,
+    run_sandboxed_shell,
 )
+
+
+def test_shell_runner_uses_a_shell_available_on_the_current_platform(tmp_path):
+    result = run_sandboxed_shell("echo hydra-shell-portable", workspace=tmp_path, timeout=10)
+    assert result.returncode == 0
+    assert "hydra-shell-portable" in result.stdout
 
 
 def test_run_on_host_timeout_returns_structured_execresult(tmp_path):
@@ -41,7 +49,7 @@ def test_run_on_host_timeout_returns_structured_execresult(tmp_path):
     eb._BWRAP_CAPABLE = False
     try:
         result = run_sandboxed(
-            ["sh", "-c", "echo partial-out; sleep 60"],
+            [sys.executable, "-c", "import time; print('partial-out', flush=True); time.sleep(60)"],
             workspace=Path(tmp_path),
             timeout=12,
         )
@@ -92,7 +100,7 @@ def test_run_on_host_timeout_via_transport_shim(tmp_path):
             side_effect=_force_timeout_with_partial_stdout,
         ):
             result = run_sandboxed(
-                ["sh", "-c", "echo partial-out; sleep 60"],
+                [sys.executable, "-c", "import time; print('partial-out', flush=True); time.sleep(60)"],
                 workspace=Path(tmp_path),
                 timeout=12,
             )
@@ -111,7 +119,7 @@ def test_timeout_does_not_raise(tmp_path):
     eb._BWRAP_CAPABLE = False
     try:
         result = run_sandboxed(
-            ["sh", "-c", "sleep 30"],
+            [sys.executable, "-c", "import time; time.sleep(30)"],
             workspace=Path(tmp_path),
             timeout=0.3,
         )
@@ -127,7 +135,7 @@ def test_normal_command_still_runs(tmp_path):
     eb._BWRAP_CAPABLE = False
     try:
         result = run_sandboxed(
-            ["sh", "-c", "echo hello-exit-7; exit 7"],
+            [sys.executable, "-c", "print('hello-exit-7'); raise SystemExit(7)"],
             workspace=Path(tmp_path),
             timeout=10,
         )

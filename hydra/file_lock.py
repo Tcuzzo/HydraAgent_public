@@ -44,6 +44,7 @@ every platform alike rather than a platform-specific surprise.
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
 import time
 from pathlib import Path
@@ -118,7 +119,9 @@ def _lock_exclusive(handle: IO[bytes], *, blocking: bool) -> bool:
         flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
         try:
             fcntl.flock(handle.fileno(), flags)
-        except OSError:
+        except OSError as exc:
+            if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                raise
             if blocking:
                 raise
             return False
@@ -132,7 +135,9 @@ def _lock_exclusive(handle: IO[bytes], *, blocking: bool) -> bool:
             try:
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, _WIN_LOCK_BYTES)
                 return True
-            except OSError:
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                    raise
                 if not blocking:
                     return False
                 time.sleep(delay)

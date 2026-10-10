@@ -4,3 +4,19 @@ recursive-include gateways *.yaml *.yml *.json *.md
 recursive-include skills *.md *.yaml *.yml *.json
 recursive-include core *.yaml *.yml *.json *.md
 include README.md NOTICE.md PROVENANCE.md LICENSE.md .env.example
+# Only reviewed product contracts; no memory, local configuration or secrets.
+include .hydraAgent/tools/registry.yaml
+include .hydraAgent/tools/filesystem.yaml
+include .hydraAgent/tools/skill-library.yaml
+include .hydraAgent/tools/subagents.yaml
+include .hydraAgent/tools/shell.yaml
+include .hydraAgent/tools/web.yaml
+include .hydraAgent/tools/system.yaml
+include .hydraAgent/skills/index.yaml
+include .hydraAgent/ux/response-contracts.yaml
+include .hydraAgent/policies/danger-gates.yaml
+include .hydraAgent/policies/trust-tiers.yaml
+include .hydraAgent/policies/backs-invariants.yaml
+include .hydraAgent/policies/sniper-testing.yaml
+include .hydraAgent/policies/anti-mock-theater.yaml
+include .hydraAgent/playbooks/dev-mode-elite-build.yaml

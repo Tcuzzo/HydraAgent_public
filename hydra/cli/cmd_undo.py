@@ -18,9 +18,6 @@ import argparse
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
 def register_undo_command(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "undo",
@@ -40,8 +37,8 @@ def register_undo_command(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--root",
-        default=str(REPO_ROOT),
-        help="repo root whose checkpoint stack to use (default: HydraAgent repo root)",
+        default=".",
+        help="workspace whose checkpoint stack to use (default: current directory)",
     )
 
 
