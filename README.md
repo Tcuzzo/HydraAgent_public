@@ -4,6 +4,8 @@
 
 Hydra is a coding and operations agent that runs from your terminal. Give it a repository and a goal: it can explore files, make edits, run commands, check its work, and keep useful context between sessions. Use a local model, connect a cloud service, or mix providers for different tasks.
 
+**Created by Cuzzo (Tcuzzo) with BACKS AIOS.** Models and coding assistants are tools used within AIOS. [Project and skill credits](PROVENANCE.md#project-and-tool-credit).
+
 Python 3.11+ · Linux, macOS, Windows · [MIT](LICENSE.md)
 
 [Get started](#get-started) · [Choose your models](#choose-your-models) · [Needle and Laya](#needle-and-laya) · [Training](docs/TRAINING.md) · [Command reference](docs/CLI-REFERENCE.md)
