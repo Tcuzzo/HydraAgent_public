@@ -36,6 +36,13 @@ dist/
 .ruff_cache/
 .coverage
 htmlcov/
+# Training material and checkpoints may contain private repository information.
+training-data/
+checkpoints/
+*.safetensors
+*.cact
+*.pt
+*.pth
 .venv/
 venv/
 env/

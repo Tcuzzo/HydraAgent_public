@@ -9,14 +9,11 @@ Built-in providers:
   - `ollama` — local, no auth, `http://localhost:11434`. Loads
     `OLLAMA_API_KEY` from `.env.ollama` if present (hosted Ollama).
   - `ollama-cloud` — cloud Ollama endpoint, `OLLAMA_CLOUD_API_KEY` from `.env.ollama-cloud`.
-  - any user-named entry whose env file declares `<NAME>_API_KEY`
-    and `<NAME>_ENDPOINT` (plus optional `<NAME>_MODEL`).
+  - `needle` — optional local tool-selection SDK; Hydra executes tool calls.
+  - any named OpenAI-compatible endpoint, with an optional API key and model.
 
-Forbidden providers: `anthropic` and `claude_api`. The §2 prohibition
-stays in force at the factory boundary even if a user were to drop a
-`.env.anthropic` file — the factory refuses to construct it.
-This is the runtime mirror of the verifier's `forbidden_dependencies`
-import check.
+Provider names and model families are unrestricted. A named provider still
+needs the matching transport: native proprietary APIs need a compatible proxy.
 
 Maturity: SCAFFOLDED. Promoted by §10.24.
 """
@@ -34,9 +31,8 @@ from hydra.llm import OllamaClient
 DEFAULT_ENV_DIR = Path(os.path.expanduser("~/.hydraAgent/workspace"))
 
 
-# Provider names whose construction is refused at the factory regardless
-# of operator env files. Mirrors the §2 forbidden_dependencies list.
-FORBIDDEN_PROVIDER_NAMES = frozenset({"anthropic", "claude_api", "claude"})
+# Compatibility export; model families are selected by the user.
+FORBIDDEN_PROVIDER_NAMES: frozenset[str] = frozenset()
 
 
 # Built-in provider defaults. `env_file` is read from `env_dir` at
@@ -53,6 +49,10 @@ class _ProviderSpec:
 
 
 _BUILTINS: dict[str, _ProviderSpec] = {
+    "needle": _ProviderSpec(
+        name="needle", env_file=".env.needle", endpoint_default="",
+        model_default="needle3", requires_key=False,
+    ),
     "ollama": _ProviderSpec(
         name="ollama",
         env_file=".env.ollama",
@@ -81,8 +81,6 @@ _BUILTINS: dict[str, _ProviderSpec] = {
     # subscription via browser OAuth (run `codex login` once). No endpoint and no
     # api_key (requires_key=False; the OAuth lives in the CLI, never copied).
     # `make_client` returns a CodexClient for it instead of the HTTP OllamaClient.
-    # Not on FORBIDDEN_PROVIDER_NAMES — only anthropic/claude_api/claude are
-    # blocked — so this is allowed.
     "codex": _ProviderSpec(
         name="codex",
         env_file=".env.codex",
@@ -158,17 +156,11 @@ def list_providers() -> list[str]:
 def resolve(
     name: str, *, env_dir: str | Path | None = None
 ) -> ProviderConfig:
-    """Resolve a provider name into a ProviderConfig. Refuses
-    forbidden names; raises `ProviderError` on missing required keys
+    """Resolve a provider name into a ProviderConfig. Raises `ProviderError` on missing required keys
     or unknown unconfigured names."""
-    if not name or not isinstance(name, str):
-        raise ProviderError(f"provider name must be a non-empty string, got {name!r}")
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
+        raise ProviderError(f"provider name must use letters, digits, underscores, or hyphens, got {name!r}")
     name = _canonical_provider_name(name)
-    if name.lower() in FORBIDDEN_PROVIDER_NAMES:
-        raise ProviderError(
-            f"provider {name!r} is on the §2 forbidden list — "
-            f"`anthropic` / `claude_api` cannot be wired up"
-        )
     env_root = Path(env_dir) if env_dir else DEFAULT_ENV_DIR
 
     spec = _BUILTINS.get(name)
@@ -178,13 +170,13 @@ def resolve(
         env_path = env_root / f".env.{name}"
         env = _parse_env_file(env_path)
         upper = _env_prefix(name)
-        endpoint = env.get(f"{upper}_ENDPOINT")
-        api_key = env.get(f"{upper}_API_KEY")
-        model = env.get(f"{upper}_MODEL") or ""
-        if not endpoint or not api_key:
+        endpoint = _lookup_env_value(env, f"{upper}_ENDPOINT") or _lookup_env_value(env, f"{upper}_BASE_URL")
+        api_key = _lookup_env_value(env, f"{upper}_API_KEY")
+        model = _lookup_env_value(env, f"{upper}_MODEL") or ""
+        if not endpoint:
             raise ProviderError(
                 f"unknown provider {name!r}: expected "
-                f"{env_path} with {upper}_ENDPOINT + {upper}_API_KEY"
+                f"{upper}_ENDPOINT in the process environment or {env_path}"
             )
         return ProviderConfig(
             name=name, endpoint=endpoint, model=model, api_key=api_key
@@ -226,6 +218,10 @@ def make_client(
     crash.
     """
     cfg = resolve(name, env_dir=env_dir)
+    if cfg.name == "needle":
+        from hydra.needle_client import NeedleClient
+
+        return NeedleClient(model=cfg.model), cfg
     if cfg.name == "codex":
         # Imported lazily so the HTTP path never pays for the codex module and
         # there is no import cycle.

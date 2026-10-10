@@ -222,8 +222,9 @@ class Guardrails:
     def _is_safe_path(self, path: str) -> bool:
         """Check if a path is within safe bounds."""
         try:
-            resolved = Path(path).resolve()
             repo_resolved = self.repo_root.resolve()
+            target = Path(path)
+            resolved = (target if target.is_absolute() else repo_resolved / target).resolve()
             # Must be within repo root. Use is_relative_to, NOT str.startswith —
             # a sibling directory sharing a name prefix (repo_root=/home/op/repo
             # vs target=/home/op/repo_evil/secret) would pass a startswith check
@@ -252,6 +253,14 @@ class Guardrails:
         
         if tier == ActionTier.BOUNDED_WRITE and self.config.allow_bounded_write_auto:
             return True, "Bounded write auto-approved", None
+
+        if tier in (ActionTier.READ_ONLY, ActionTier.BOUNDED_WRITE):
+            return False, "Automatic approval disabled for this action tier", {
+                "requires_approval": True,
+                "action_type": action_type,
+                "action_details": action_details,
+                "tier": tier.value,
+            }
         
         if tier == ActionTier.DESTRUCTIVE:
             if not self.config.require_approval_for_destructive:

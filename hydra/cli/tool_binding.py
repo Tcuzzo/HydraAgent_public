@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable
 
 from hydra.lessons import remember_lesson
@@ -36,25 +36,26 @@ from skills import todo as skill_todo
 DEFAULT_FILESYSTEM_ROOT = Path(os.environ.get("HYDRA_DEFAULT_ROOT", "")).expanduser().resolve() if os.environ.get("HYDRA_DEFAULT_ROOT") else Path.cwd()
 
 
-def guarded(policy: ApprovalPolicy, tool_name: str, fn: Callable[..., object]) -> Callable[..., object]:
-    """Wrap a tool so a gated call WAITS for the operator's decision and, on
-    APPROVE, actually RE-RUNS the tool.
+def guarded(
+    policy: ApprovalPolicy,
+    tool_name: str,
+    fn: Callable[..., object],
+    *,
+    non_destructive_auto_allow: bool = True,
+) -> Callable[..., object]:
+    """Require approval once before executing a tool.
 
-    This is the re-execution seam (operator's #1 bug: tapping Approve in Telegram
-    did nothing). policy.require() queues the approval, sends the Telegram buttons,
-    and — because we run it with wait_for_approval ON — blocks until the operator
-    decides. require() returns on APPROVE (we then call fn, so the gated action
-    actually runs) and raises on DENY/TIMEOUT (fn never runs). When the underlying
-    policy isn't a waiting policy (e.g. allow mode / non-risky tool), require()
-    returns straight through and the tool runs immediately, unchanged.
+    A configured approval consumer may wait and resume the action on approval.
+    Ordinary noninteractive CLI calls queue and refuse immediately, because no
+    consumer was configured to answer a blocking approval request.
     """
     def _invoke(**kwargs):
-        # wait=True opts THIS call into the blocking re-execution seam without
-        # cloning the policy (the policy is mutated live — plan_mode toggled per
-        # turn — so a snapshot clone would go stale). require() returns on APPROVE,
-        # raises on DENY/TIMEOUT (and on the immediate-raise queue path when the
-        # policy isn't a waiting one — e.g. untrusted surface / deny mode).
-        policy.require(tool_name, kwargs, wait=True)
+        policy.require(
+            tool_name,
+            kwargs,
+            wait=policy.wait_for_approval or policy.notify_telegram,
+            non_destructive_auto_allow=non_destructive_auto_allow,
+        )
         result = fn(**kwargs)
         # The gated action actually ran — mark its run record done so it doesn't
         # linger as 'queued'. Best-effort: never let bookkeeping break a real result.
@@ -263,10 +264,34 @@ def _skill_search_tool(root: Path, *, query: str, limit: int = 8) -> dict[str, o
     )
 
 
-def _skill_show_tool(*, name: str, max_chars: int = 4000) -> dict[str, object]:
+def _skill_show_tool(
+    *, name: str, max_chars: int = 4000, relative_path: str = "SKILL.md", offset: int = 0
+) -> dict[str, object]:
     try:
         record = find_skill(name)
-    except KeyError as exc:
+        relative = Path(relative_path)
+        windows_relative = PureWindowsPath(relative_path)
+        if (
+            relative.is_absolute() or windows_relative.root or windows_relative.drive
+            or ".." in relative.parts or ".." in windows_relative.parts
+        ):
+            raise ValueError("skill reference must be a relative path inside its registered skill directory")
+        base = record.path.parent.resolve()
+        source = (base / relative).resolve()
+        if not source.is_relative_to(base):
+            raise ValueError("skill reference resolves outside its registered skill directory")
+        if isinstance(offset, bool) or not isinstance(offset, int) or not 0 <= offset <= 1024 * 1024:
+            raise ValueError("offset must be an integer between 0 and 1048576")
+        # Bound both the file read and each page. Skill references are text,
+        # and no helper script is executed by this tool.
+        with source.open("r", encoding="utf-8", errors="replace") as stream:
+            content = stream.read(1024 * 1024 + 1)
+        if len(content) > 1024 * 1024:
+            raise ValueError("skill reference exceeds the 1 MiB text limit")
+        page_size = _clamped_limit(max_chars, default=4000, maximum=12000)
+        page = content[offset:offset + page_size]
+        next_offset = offset + len(page) if offset + len(page) < len(content) else None
+    except (KeyError, OSError, ValueError, TypeError) as exc:
         return {
             "ok": False,
             "schema": "hydra.skills.show.v1",
@@ -276,12 +301,14 @@ def _skill_show_tool(*, name: str, max_chars: int = 4000) -> dict[str, object]:
     return {
         "ok": True,
         "schema": "hydra.skills.show.v1",
-        **_skill_payload(
-            record,
-            include_rendered=True,
-            max_chars=_clamped_limit(max_chars, default=4000, maximum=12000),
-        ),
-        "next_step": "Use fs_read on path for the complete local SKILL.md when full instructions are needed.",
+        **_skill_payload(record),
+        "path": source.as_posix(),
+        "relative_path": relative_path,
+        "content": page,
+        "offset": offset,
+        "next_offset": next_offset,
+        "truncated": next_offset is not None,
+        "next_step": "Read remaining pages using next_offset; use relative_path for linked references inside this skill directory.",
     }
 
 
@@ -356,6 +383,13 @@ def bind_tools(
         notify_telegram=notify_telegram,
         surface_trusted=surface_trusted,
     )
+    # The main agent and declarative runner share the public shell contract.
+    # Workspace overrides are resolved by the same catalog loader as installed
+    # package defaults. Only an explicit boolean true loosens the public gate.
+    from hydra.declarative_runtime import load_runtime_catalog
+
+    shell_contract = load_runtime_catalog(root).tools.get("shell", {})
+    shell_auto_allow = (shell_contract.get("policy") or {}).get("non_destructive_auto_allow") is True
     resolved_memory_root = _memory_root_arg(memory_root)
     resolved_memory_workspace_root = (
         Path(memory_workspace_root).expanduser().resolve()
@@ -395,12 +429,8 @@ def bind_tools(
                 },
                 "required": ["path", "content"],
             },
-            invoke=guarded(
-                policy,
-                "fs_write",
-                lambda path, content, overwrite=False: skill_fs_write.run(
-                    path, content, root=root, overwrite=overwrite
-                ),
+            invoke=lambda path, content, overwrite=False: skill_fs_write.run(
+                path, content, root=root, overwrite=overwrite
             ),
         ),
         Tool(
@@ -424,16 +454,12 @@ def bind_tools(
                 },
                 "required": ["path", "old_string", "new_string"],
             },
-            invoke=guarded(
-                policy,
-                "fs_edit",
-                lambda path, old_string, new_string, count=1: skill_fs_edit.run(
-                    path,
-                    old_string,
-                    new_string,
-                    root=root,
-                    count=count if count != "all" else "all",
-                ),
+            invoke=lambda path, old_string, new_string, count=1: skill_fs_edit.run(
+                path,
+                old_string,
+                new_string,
+                root=root,
+                count=count if count != "all" else "all",
             ),
         ),
         Tool(
@@ -507,15 +533,11 @@ def bind_tools(
                 },
                 "required": ["lesson"],
             },
-            invoke=guarded(
-                policy,
-                "memory_remember",
-                lambda lesson, source="agent_tool", tags=None: remember_lesson(
-                    lesson,
-                    source=source or "agent_tool",
-                    tags=tags if isinstance(tags, list) else ["agent-tool"],
-                    memory_root=resolved_memory_root,
-                ),
+            invoke=lambda lesson, source="agent_tool", tags=None: remember_lesson(
+                lesson,
+                source=source or "agent_tool",
+                tags=tags if isinstance(tags, list) else ["agent-tool"],
+                memory_root=resolved_memory_root,
             ),
         ),
         Tool(
@@ -574,18 +596,23 @@ def bind_tools(
         Tool(
             name="skill_show",
             description=(
-                "Show one trusted local skill by name, with source path and compact "
-                "instructions. Use fs_read on the returned path for the full SKILL.md."
+                "Read a trusted local skill's complete instructions in bounded pages. "
+                "Use relative_path for linked references within that skill directory; "
+                "continue with next_offset until the content is complete."
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
                     "max_chars": {"type": "integer", "default": 4000},
+                    "relative_path": {"type": "string", "default": "SKILL.md"},
+                    "offset": {"type": "integer", "default": 0},
                 },
                 "required": ["name"],
             },
-            invoke=lambda name, max_chars=4000: _skill_show_tool(name=name, max_chars=max_chars),
+            invoke=lambda name, max_chars=4000, relative_path="SKILL.md", offset=0: _skill_show_tool(
+                name=name, max_chars=max_chars, relative_path=relative_path, offset=offset
+            ),
         ),
         Tool(
             name="skill_route",
@@ -658,11 +685,7 @@ def bind_tools(
                 },
                 "required": ["command"],
             },
-            invoke=guarded(
-                policy,
-                "bash",
-                lambda command, timeout=60: skill_bash.run(command, root=root, timeout=timeout),
-            ),
+            invoke=lambda command, timeout=60: skill_bash.run(command, root=root, timeout=timeout),
         ),
         Tool(
             name="system_stats",
@@ -810,10 +833,15 @@ def bind_tools(
     # so the untrusted-surface escalation can stop a non-operator from running ANY action
     # tool (e.g. agent_send_message, collab_assign, spawn_subagent). require() is a no-op
     # for research tools and for non-destructive tools on a trusted surface, so wrapping
-    # uniformly is cheap. Re-wrapping the already-guarded risky tools is harmless — the
-    # first require() short-circuits before the inner one runs.
+    # uniformly is cheap. Gate each tool exactly once: a second wrapper would
+    # request the same approval again after the operator already approved it.
     for _t in _built:
-        _t.invoke = guarded(policy, _t.name, _t.invoke)
+        _t.invoke = guarded(
+            policy,
+            _t.name,
+            _t.invoke,
+            non_destructive_auto_allow=shell_auto_allow if _t.name == "bash" else True,
+        )
     return _built
 
 

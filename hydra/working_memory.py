@@ -18,6 +18,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Dict, Optional, Tuple
 from collections import defaultdict
+from functools import wraps
+
+from hydra.atomic_write import atomic_write_bytes
+from hydra.file_lock import locked_path
 
 
 WORKING_MEMORY_DIR = Path.home() / ".hydra-working-memory"
@@ -196,6 +200,20 @@ def _index_file_path(memory_id: str) -> Path:
     return _ensure_memory_dir() / f"{safe_id}_index.json"
 
 
+def _locked_memory(function):
+    """Serialize each complete memory/index mutation across runtime processes."""
+    @wraps(function)
+    def call(memory_id, *args, **kwargs):
+        with locked_path(_memory_file_path(memory_id)):
+            return function(memory_id, *args, **kwargs)
+    return call
+
+
+def _write_json(path: Path, data: Dict[str, Any]) -> None:
+    atomic_write_bytes(path, json.dumps(data, indent=2, sort_keys=True).encode("utf-8"))
+
+
+@_locked_memory
 def create_memory(memory_id: str, description: Optional[str] = None) -> None:
     """Create a new working memory instance."""
     memory_file = _memory_file_path(memory_id)
@@ -217,8 +235,7 @@ def create_memory(memory_id: str, description: Optional[str] = None) -> None:
         }
     }
 
-    with open(memory_file, "w") as f:
-        json.dump(memory_data, f, indent=2, sort_keys=True)
+    _write_json(memory_file, memory_data)
 
     # Create empty index
     index_data = {
@@ -230,8 +247,7 @@ def create_memory(memory_id: str, description: Optional[str] = None) -> None:
         "text_index": {}  # Simple keyword index for now
     }
 
-    with open(_index_file_path(memory_id), "w") as f:
-        json.dump(index_data, f, indent=2, sort_keys=True)
+    _write_json(_index_file_path(memory_id), index_data)
 
 
 def _load_memory(memory_id: str) -> Dict[str, Any]:
@@ -240,7 +256,7 @@ def _load_memory(memory_id: str) -> Dict[str, Any]:
     if not memory_file.exists():
         raise WorkingMemoryError(f"Memory {memory_id} does not exist")
 
-    with open(memory_file, "r") as f:
+    with open(memory_file, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -249,8 +265,7 @@ def _save_memory(memory_id: str, memory_data: Dict[str, Any]) -> None:
     memory_file = _memory_file_path(memory_id)
     memory_data["stats"]["last_updated"] = datetime.now(timezone.utc).isoformat()
 
-    with open(memory_file, "w") as f:
-        json.dump(memory_data, f, indent=2, sort_keys=True)
+    _write_json(memory_file, memory_data)
 
 
 def _load_index(memory_id: str) -> Dict[str, Any]:
@@ -266,19 +281,17 @@ def _load_index(memory_id: str) -> Dict[str, Any]:
             "type_index": {},
             "text_index": {}
         }
-        with open(index_file, "w") as f:
-            json.dump(index_data, f, indent=2, sort_keys=True)
+        _write_json(index_file, index_data)
         return index_data
 
-    with open(index_file, "r") as f:
+    with open(index_file, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def _save_index(memory_id: str, index_data: Dict[str, Any]) -> None:
     """Save index data to file."""
     index_file = _index_file_path(memory_id)
-    with open(index_file, "w") as f:
-        json.dump(index_data, f, indent=2, sort_keys=True)
+    _write_json(index_file, index_data)
 
 
 # The wall clock alone cannot mint unique ids: coarse clock ticks (Windows:
@@ -319,6 +332,7 @@ def _update_index(memory_id: str, entry: MemoryEntry) -> None:
     _save_index(memory_id, index_data)
 
 
+@_locked_memory
 def add_entry(
     memory_id: str,
     content: str,
@@ -369,6 +383,7 @@ def get_entry(memory_id: str, entry_id: str) -> Optional[Dict[str, Any]]:
     return memory_data["entries"].get(entry_id)
 
 
+@_locked_memory
 def search_entries(
     memory_id: str,
     query: Optional[str] = None,
@@ -450,6 +465,7 @@ def get_recent_entries(memory_id: str, limit: int = 10) -> List[Dict[str, Any]]:
     return search_entries(memory_id, limit=limit)
 
 
+@_locked_memory
 def add_entity(
     memory_id: str,
     name: str,
@@ -491,6 +507,7 @@ def get_entities_by_type(memory_id: str, entity_type: str) -> List[Dict[str, Any
     return entities
 
 
+@_locked_memory
 def add_entity_relation(
     memory_id: str,
     entity_name: str,
@@ -545,6 +562,7 @@ def list_memories() -> List[Dict[str, Any]]:
     return sorted(memories, key=lambda m: m.get("created_at", ""), reverse=True)
 
 
+@_locked_memory
 def delete_memory(memory_id: str) -> None:
     """Delete a working memory instance."""
     memory_file = _memory_file_path(memory_id)
