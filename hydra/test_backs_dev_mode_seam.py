@@ -15,6 +15,7 @@ Target before running (sniper discipline, inv sniper_4):
 from __future__ import annotations
 
 import sys
+import shutil
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -84,6 +85,27 @@ def test_doctrine_loud_when_contracts_missing(tmp_path: Path) -> None:
     doctrine = build_backs_dev_mode_doctrine(tmp_path)
     assert "NOT LOADED" in doctrine
     assert "model priors" in doctrine
+
+
+def test_installed_dev_mode_loads_real_packaged_contracts(tmp_path, monkeypatch):
+    from hydra import dev_mode_seam
+
+    packaged = tmp_path / "hydra" / "runtime_data" / "catalog"
+    for relative, _ in dev_mode_seam._CONTRACTS.values():
+        destination = packaged / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(REPO / ".hydraAgent" / relative, destination)
+    monkeypatch.setattr(dev_mode_seam, "DEV_MODE_ROOT", tmp_path / "missing-source-root")
+    monkeypatch.setattr(dev_mode_seam, "BUNDLED_DEV_MODE_ROOT", packaged, raising=False)
+
+    contracts = load_dev_mode_contracts()
+    assert all(contracts["loaded"].values())
+    assert Path(contracts["root"]) == packaged
+    doctrine = build_backs_dev_mode_doctrine()
+    assert "NOT LOADED" not in doctrine
+    assert "Resolve every symbol against the installed artifact" in doctrine
+    # An explicit empty root must not silently pick up installed defaults.
+    assert "NOT LOADED" in build_backs_dev_mode_doctrine(tmp_path / "explicit-missing")
 
 
 # --- C. Real routing to the dev-mode skills ----------------------------------

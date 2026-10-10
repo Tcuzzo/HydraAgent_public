@@ -57,6 +57,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from hydra.atomic_write import atomic_write_bytes
+
 # Sentinel: the file did not exist before the mutation (i.e., it was created).
 ABSENT = "__HYDRA_ABSENT__"
 
@@ -83,20 +85,7 @@ def _atomic_write_bytes(target: Path, payload: bytes) -> None:
     This is the SAME atomic pattern used by apply_patch — the single sanctioned
     write path.  Callers must not open-code raw write()s for undo.
     """
-    tmp = target.with_name(target.name + ".hydra-undo-tmp")
-    try:
-        with tmp.open("wb") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, target)
-    except OSError:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
-        raise
+    atomic_write_bytes(target, payload)
 
 
 # ---------------------------------------------------------------------------
@@ -164,13 +153,8 @@ class CheckpointStore:
             return []
 
     def _write_index(self, entries: list[dict[str, Any]]) -> None:
-        tmp = self._index_path.with_suffix(".json.tmp")
         payload = json.dumps(entries, indent=2).encode("utf-8")
-        with tmp.open("wb") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, self._index_path)
+        atomic_write_bytes(self._index_path, payload)
 
     def _content_path(self, seq: int) -> Path:
         return self.storage_root / f"snap-{seq:08d}.bin"
@@ -208,21 +192,7 @@ class CheckpointStore:
         else:
             content_sha = hashlib.sha256(pre_image).hexdigest()
             content_size = len(pre_image)
-            # ATOMIC write: sibling-temp + os.replace (matches _atomic_write_bytes contract)
-            tmp_snap = content_file.with_name(content_file.name + ".hydra-tmp")
-            try:
-                with tmp_snap.open("wb") as f:
-                    f.write(pre_image)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp_snap, content_file)
-            except OSError:
-                if tmp_snap.exists():
-                    try:
-                        tmp_snap.unlink()
-                    except OSError:
-                        pass
-                raise
+            atomic_write_bytes(content_file, pre_image)
 
         entry: dict[str, Any] = {
             "seq": seq,

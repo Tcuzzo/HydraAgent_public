@@ -554,7 +554,7 @@ def _apply_single_action(root: Path, action: Any) -> None:
             raise WorkerJobError("write_text action requires string text")
         if path.exists():
             # Existing file: route through apply_patch (syntax gate + atomic write)
-            old_block = path.read_text(encoding="utf-8", newline="")
+            old_block = path.read_bytes().decode("utf-8")
             result = apply_patch(file=path, old_block=old_block, new_block=text, root=root)
             if isinstance(result, PatchFailure):
                 raise WorkerJobError(f"write_text rejected for {path.relative_to(root)}: {result.reason}")

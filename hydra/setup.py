@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from hydra.providers import DEFAULT_ENV_DIR, FORBIDDEN_PROVIDER_NAMES
+from hydra.providers import DEFAULT_ENV_DIR
 
 
 class SetupError(Exception):
@@ -59,8 +59,8 @@ SETUP_LINKS = {
 def env_prefix(provider: str) -> str:
     if not provider or not isinstance(provider, str):
         raise SetupError(f"provider must be a non-empty string, got {provider!r}")
-    if provider.lower() in FORBIDDEN_PROVIDER_NAMES:
-        raise SetupError(f"provider {provider!r} is forbidden")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", provider):
+        raise SetupError("provider must contain only letters, numbers, hyphens or underscores")
     prefix = re.sub(r"[^A-Za-z0-9]", "_", provider).upper().strip("_")
     if not prefix:
         raise SetupError(f"provider {provider!r} has no usable env prefix")
@@ -75,21 +75,25 @@ def write_env_file(
 ) -> SetupResult:
     prefix = env_prefix(provider)
     root = Path(env_dir) if env_dir else DEFAULT_ENV_DIR
-    root.mkdir(parents=True, exist_ok=True)
     path = root / f".env.{provider}"
     lines = [
         "# HydraAgent provider config. Keep this file outside the repo.",
     ]
     written: list[str] = []
     for key, value in values.items():
+        if not isinstance(key, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]*", key):
+            raise SetupError("configuration keys must be uppercase environment names")
         if value is None or value == "":
             continue
+        if not isinstance(value, str) or any(c in value for c in ("\r", "\n", "\0")):
+            raise SetupError(f"configuration value for {key} must be a single line")
         if not key.startswith(prefix + "_") and not key.startswith("CODEX_"):
             raise SetupError(f"key {key!r} does not match provider prefix {prefix!r}")
         lines.append(f"{key}={value}")
         written.append(key)
     if len(lines) == 1:
         raise SetupError(f"no values supplied for provider {provider!r}")
+    root.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     try:
         os.chmod(path, 0o600)
@@ -197,7 +201,7 @@ def setup_cloud_provider(
     *,
     endpoint: str,
     model: str,
-    api_key: str,
+    api_key: str | None = None,
     env_dir: str | Path | None = None,
 ) -> SetupResult:
     prefix = env_prefix(provider)
@@ -205,8 +209,6 @@ def setup_cloud_provider(
         raise SetupError("cloud endpoint is required")
     if not model:
         raise SetupError("cloud model is required")
-    if not api_key:
-        raise SetupError("cloud api key is required")
     return write_env_file(
         provider,
         {

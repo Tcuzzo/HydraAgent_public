@@ -8,6 +8,7 @@ Linux/macOS/Windows (polling only — no inotify, threads, or signals).
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,10 +64,27 @@ class WatchLoop:
     def run(self) -> int:
         """Run until a stop condition; return the number of cycles executed."""
         cfg = self.config
+        for name, value, allow_zero in (
+            ("interval_seconds", cfg.interval_seconds, False),
+            ("poll_seconds", cfg.poll_seconds, False),
+            ("debounce_seconds", cfg.debounce_seconds, True),
+        ):
+            if value is None and name == "interval_seconds":
+                continue
+            if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                    or not math.isfinite(value) or value < 0
+                    or (value == 0 and not allow_zero)):
+                raise WatchError(f"{name} must be finite and {'nonnegative' if allow_zero else 'positive'}")
+        if cfg.max_cycles is not None and (
+            not isinstance(cfg.max_cycles, int) or isinstance(cfg.max_cycles, bool) or cfg.max_cycles < 0
+        ):
+            raise WatchError("max_cycles must be an integer >= 0")
         if cfg.interval_seconds is None and not cfg.watch_paths:
             raise WatchError(
                 "watch needs at least one trigger: set interval_seconds or watch_paths"
             )
+        if cfg.max_cycles == 0:
+            return 0
 
         cycles = 0
         last_run = self._clock()

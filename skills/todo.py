@@ -29,9 +29,9 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
-import os
 from pathlib import Path
 
+from hydra.atomic_write import atomic_write_bytes
 from skills.fs_read import SkillError
 
 STORE_NAME = ".hydra_todos.json"
@@ -84,19 +84,9 @@ def _save(root: Path, todos: list[dict], next_id: int) -> None:
     payload = json.dumps(
         {"next_id": next_id, "todos": todos}, indent=2
     ).encode("utf-8")
-    tmp = store.with_name(store.name + ".hydra-tmp")
     try:
-        with tmp.open("wb") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, store)
+        atomic_write_bytes(store, payload)
     except OSError as e:
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
         raise SkillError(f"todo store write failed: {e}") from e
 
 
