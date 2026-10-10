@@ -18,6 +18,8 @@ Python 3.11+ · Linux, macOS, Windows · [MIT](LICENSE.md)
 - **Keep context:** save project lessons and recall them in later sessions.
 - **Choose where inference runs:** use local compute, cloud APIs, or both.
 - **Add capabilities:** load local skill playbooks, enable browser tools, or connect Telegram.
+- **Coordinate specialists:** run a bounded team for vision, design, engineering, testing, review, Kaizen and Lean Six Sigma.
+- **Connect your apps:** expose Hydra through MCP or attach configured MCP servers, including the official Zapier SDK harness.
 
 Try a concrete request: “Find why the tests fail, make the smallest fix, and run the relevant tests.” Hydra's usefulness depends on the selected model and the tools available on your machine.
 
@@ -46,6 +48,30 @@ hydra ask "Explain this project's entry point" --provider ollama --model qwen3:8
 ```
 
 That model is an example; choose one that fits your hardware and supports the tasks you need. Run `hydra models --provider ollama` to inspect installed models. See [QUICKSTART.md](QUICKSTART.md) for development installation and first-run checks.
+
+## Personal orchestration preview
+
+Hydra now includes an experimental specialist-team runtime and optional MCP connections. It is a working foundation for a personal orchestrator; it does not yet promise unattended operation across arbitrary apps or verified quality from every model.
+
+```bash
+python -m pip install -e ".[mcp]"
+hydra team list
+hydra team plan "Improve this project and review the changes" --provider ollama --model YOUR_MODEL --output team.json
+hydra team run team.json --root . --approval-policy allow
+```
+
+Inspect the plan before running it. `allow` authorizes its writer roles to edit files and execute commands. Tasks have explicit dependencies, concurrency and iteration limits, and subprocess deadlines. Readers can run together; workspace writers are ordered to avoid conflicting edits. Each task can select its own provider, model and declared family.
+
+The seven public profiles include canon and essence instructions used by the worker, not just role labels. Local private overlays stay outside the source repository. Image evidence can be attached to tasks using a compatible multimodal HTTP provider. A completed run is recorded as execution success, **not a quality certification**.
+
+```bash
+hydra mcp serve --root .
+hydra zapier setup --directory ./my-zapier-harness
+```
+
+Hydra's MCP server is read-only by default. The Zapier command prepares pinned official SDK dependencies; installation and account login follow separately. Local models and local MCP servers do not require a Hydra subscription. Zapier's SDK beta, hosted MCP and individual connected services have their own terms and usage limits; unlimited free app access is not promised.
+
+See the [personal orchestration guide](docs/PERSONAL-ORCHESTRATION.md) for team plans, MCP configuration, Zapier setup, private profiles, public export and current limitations.
 
 ## Choose your models
 

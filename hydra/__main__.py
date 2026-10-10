@@ -115,6 +115,7 @@ from hydra.cli.cmd_workbench import (  # noqa: E402
 )
 from hydra.cli.cmd_undo import cmd_undo, register_undo_command  # noqa: E402
 from hydra.cli.tool_binding import bind_tools as _bind_tools  # noqa: E402
+from hydra.cli.cmd_personal import register_personal_commands, cmd_personal  # noqa: E402
 
 
 # ── self-audit command ────────────────────────────────────────────────────────
@@ -206,6 +207,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # (loop + swarm command registration removed)
     # SLICE 2 CUT: register_lol_run_command and register_worker_commands removed (lol/worker sauce stripped).
     register_undo_command(sub)
+    register_personal_commands(sub)
 
     # self-audit: hydra self-audit
     _sa = sub.add_parser("self-audit", help="Run HYDRA's self-audit (classify->route->execute invariants)")
@@ -268,6 +270,10 @@ def main(argv: list[str] | None = None) -> int:
         # SLICE 2 CUT: worker + lol-run removed (worker_orchestrator/lol_runner sauce stripped).
         "undo": cmd_undo,
         "self-audit": _cmd_self_audit,
+        "team": cmd_personal,
+        "mcp": cmd_personal,
+        "public-profiles": cmd_personal,
+        "zapier": cmd_personal,
     }[args.cmd](args)
 
 

@@ -268,6 +268,51 @@ def _windows_kill_tree(proc: subprocess.Popen) -> None:
         pass
 
 
+def kill_owned_group(proc: subprocess.Popen) -> None:
+    """Kill our isolated group even after its leader exits; never use foreign PIDs."""
+    if _IS_POSIX and _HAS_KILLPG:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+    else:
+        _windows_kill_tree(proc)
+
+
+def windows_process_parents() -> dict[int, int]:
+    """One bounded Toolhelp snapshot; avoids querying every process for metadata."""
+    if not _IS_WINDOWS:
+        return {}
+    import ctypes
+    from ctypes import wintypes
+    class Entry(ctypes.Structure):
+        _fields_ = [('size', wintypes.DWORD), ('usage', wintypes.DWORD),
+                    ('pid', wintypes.DWORD), ('heap', ctypes.c_size_t),
+                    ('module', wintypes.DWORD), ('threads', wintypes.DWORD),
+                    ('parent', wintypes.DWORD), ('priority', wintypes.LONG),
+                    ('flags', wintypes.DWORD), ('exe', wintypes.WCHAR * 260)]
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(Entry)]
+    kernel.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(Entry)]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    snapshot = kernel.CreateToolhelp32Snapshot(2, 0)
+    if snapshot == ctypes.c_void_p(-1).value:
+        return {}
+    result = {}
+    try:
+        entry = Entry()
+        entry.size = ctypes.sizeof(Entry)
+        present = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
+        while present:
+            result[int(entry.pid)] = int(entry.parent)
+            present = kernel.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel.CloseHandle(snapshot)
+    return result
+
+
 # ── Result type ───────────────────────────────────────────────────────────────
 
 

@@ -22,6 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = ["mcp>=2.3.0,<3"]
 # Local prediction SDKs; weights are selected/downloaded separately.
 needle = ["cactus-needle>=3.2.0,<4"]
 laya = ["laya>=0.4.2,<0.5"]

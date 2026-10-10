@@ -366,6 +366,8 @@ def bind_tools(
     memory_workspace_root: str | Path | None = None,
     notify_telegram: bool = False,
     surface_trusted: bool = True,  # UNLOCKED: operator controls all surfaces directly
+    include_mcp: bool = True,
+    read_only_mcp: bool = False,
 ) -> list[Tool]:
     """Wrap every skill with `root` pre-bound so the LLM only sees task args.
 
@@ -842,6 +844,9 @@ def bind_tools(
             _t.invoke,
             non_destructive_auto_allow=shell_auto_allow if _t.name == "bash" else True,
         )
+    if include_mcp and os.environ.get('HYDRA_MCP_CONFIG'):
+        from hydra.mcp_bridge import bind_mcp_tools
+        _built.extend(bind_mcp_tools(os.environ['HYDRA_MCP_CONFIG'], policy, read_only=read_only_mcp))
     return _built
 
 

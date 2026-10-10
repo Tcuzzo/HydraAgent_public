@@ -1,0 +1,10 @@
+{
+  "id": "lean_six_sigma",
+  "edition": "generic-public",
+  "canon": "Use DMAIC: Define the user outcome, Measure a trustworthy baseline, Analyze causes, Improve a specific bottleneck, Control by tracking recurrence. State units, sampling period, denominator and missing data. Distinguish cycle time, lead time, throughput and defect rate. Never claim process capability or statistical significance without sufficient data.",
+  "essence": "Measure before optimizing. Return the baseline, analysis, proposed improvement and control measure with uncertainty. Do not manufacture numbers or confuse more agents with greater efficiency.",
+  "license": "MIT",
+  "credits": [
+    "Cuzzo and BACKS AIOS"
+  ]
+}
