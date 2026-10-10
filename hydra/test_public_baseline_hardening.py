@@ -127,7 +127,8 @@ def test_ci_test_toolchain_ships_pytest_asyncio() -> None:
     )
     assert "pytest" in declared, "pyproject's [test] extra must declare pytest"
     ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert re.search(r'pip install -e "\.\[test\]" -c constraints\.txt', ci), (
+    installs = re.findall(r'pip install -e "\.\[([^]]+)\]" -c constraints\.txt', ci)
+    assert any('test' in {extra.strip() for extra in extras.split(',')} for extras in installs), (
         "ci.yml's test step must install the [test] extra (which declares "
         "pytest-asyncio) under constraints.txt -- declared deps, pinned versions"
     )

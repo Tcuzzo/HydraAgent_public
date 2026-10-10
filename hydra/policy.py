@@ -24,14 +24,14 @@ from hydra.workbench_runs import append_record as append_run_record
 from hydra.workbench_runs import create_run
 
 
-RISKY_TOOLS = frozenset({"bash", "fs_write", "fs_edit", "memory_remember", "worker_job"})
+RISKY_TOOLS = frozenset({"bash", "fs_write", "fs_edit", "memory_remember", "worker_job", "mcp_call"})
 
 # Tools that mutate state — blocked in plan mode.  This is a broader list than
 # RISKY_TOOLS: plan mode enforces read-only discipline so even low-risk mutating
 # tools (apply_patch, etc.) are denied.
 MUTATING_TOOLS = frozenset({
     "bash", "fs_write", "fs_edit", "apply_patch",
-    "memory_remember", "worker_job",
+    "memory_remember", "worker_job", "mcp_call",
 })
 POLICY_CHOICES = ("allow", "ask", "deny")
 
