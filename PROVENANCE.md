@@ -6,6 +6,33 @@ coding-agent core only: no private orchestration methodology, no media/studio
 pipelines, no multi-machine swarm, and no operator-private infrastructure, identity,
 or secrets.
 
+## Project and tool credit
+
+Hydra is Cuzzo's (Tcuzzo's) project, developed with BACKS AIOS. Credit Cuzzo for
+project authorship and BACKS AIOS as the development platform. Human contributors
+receive credit for their actual contributions.
+
+Codex (OpenAI), Claude/Claude Code (Anthropic), and other models or coding
+assistants receive **tool credit only**. They are tools used within AIOS, not
+project authors or co-authors. Record the tools actually used in plain provenance
+text or a `Tool-Used:` commit trailer; do not add model or vendor identities to
+`Co-Authored-By:`, author lists, or copyright notices. This policy applies to every
+model family and provider.
+
+Original skill creators retain credit for their work. This includes the existing
+Matt Pocock scaffold credits in the skill library and the upstream creators of
+other incorporated skills. Preserve their source links, notices, and licenses.
+Attribution to an upstream publisher such as Anthropic for actual borrowed skill
+content is source attribution; it does not give Claude or Anthropic co-authorship
+of Hydra. See [the full-stack workflow](docs/FULLSTACK-WORKFLOW.md#provenance-and-limits)
+for the separately installable skill pack's sources and licenses.
+
+The repository's [Claude Code settings](.claude/settings.json) replace its default
+co-author footer with tool credit in future commits and pull requests. All coding
+assistants should follow [AGENTS.md](AGENTS.md). Historical model co-author trailers
+predating this policy describe tool use and do not confer project authorship.
+Changing these files does not remove those trailers from existing Git history.
+
 ## Original fingerprint
 
 The private original was hashed at extraction time so this public edition can be
