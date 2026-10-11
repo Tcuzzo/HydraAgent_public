@@ -140,6 +140,12 @@ hydra undo --list
 
 A shell command can affect more than the workspace; approval is not an operating system sandbox. If you enable container execution, Hydra must find a working engine rather than silently run the command on the host. `undo` restores saved file edits; it cannot reverse external side effects.
 
+Worker verification that requests a sandbox requires Linux with working Bubblewrap
+(`sudo apt-get install bubblewrap` on Ubuntu). It returns `sandbox unavailable`
+without running the command when confinement is unavailable, including on native
+Windows and macOS. Ordinary local CLI tools remain available on all three systems;
+use a Linux environment for confined worker verification.
+
 `hydra ask` exits nonzero when it fails or exhausts its iteration budget, while printing the available partial result. `--max-iterations` limits model turns and `--timeout` limits each model call. Tool execution and approval waits have their own limits. Optional Telegram and browser setup lives in the [command reference](docs/CLI-REFERENCE.md).
 
 ## Find your next step
