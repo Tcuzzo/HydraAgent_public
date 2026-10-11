@@ -261,10 +261,23 @@ flowchart TD
 ### Larger missions: `execute`
 
 `hydra execute "<mission>"` runs a Planner → doer → auditor loop for larger work.
-`route_and_execute` is the entry point: classify → route to a model → run the agent
-loop. **Phase 3 verification is not yet implemented** (`requires_verifier` is set
-for non-simple tasks but the verify step is a stub) — treat `execute` results as
-unverified today. The auto-fix repair loop (`auto_fix.enabled` on a worker job) is
+Its CLI handler, `hydra.cli.cmd_execution.cmd_execute`, runs the configured
+planner, doer, and auditor. `--audit-mode auto` uses the configured reviewer;
+`--audit-mode local` explicitly requests planner self-review, and `--no-audit`
+skips review. Review receives bounded task and tool evidence with Hydra-dispatched tools disabled and
+returns a `pass`, `fail`, or `inconclusive` text judgement. Native Codex planners
+and reviewers use its read-only filesystem sandbox; native tools and separately
+configured external services remain governed by the Codex setup. The reviewer
+receives Hydra's code-review canon and essence. Self-review is labeled; a passing text
+review is not independent certification or proof that tests passed. Unfinished
+steps, unavailable reviewers, and failed or malformed reviews return nonzero.
+
+Models stay loaded by default. `--unload-between-roles` explicitly requests
+unloading through the configured loopback Ollama endpoint; coordinate with other
+GPU users. An optional unload failure warns without discarding completed work.
+
+The separate `route_and_execute` library helper is not the CLI entry point.
+The auto-fix repair loop (`auto_fix.enabled` on a worker job) is
 **not shipped in the public edition** — it depended on a private orchestration
 chain and was stripped; enabling it fails loud with a clear message.
 
