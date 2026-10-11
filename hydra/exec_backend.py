@@ -5,9 +5,9 @@ Public API
 run_sandboxed(cmd, *, workspace, network=False, timeout, env=None) -> ExecResult
 
   Runs ``cmd`` (a list of strings) inside a bwrap(1) sandbox when bwrap is
-  available and unprivileged user namespaces are enabled.  Falls back to a
-  plain subprocess run on the host with a WARNING log if bwrap is absent or
-  userns is disabled.
+  available and unprivileged user namespaces are enabled. If confinement is
+  unavailable, returns a nonzero result without executing the command. Ordinary
+  explicitly authorized host commands use the existing local execution tools.
 
 Sandbox guarantees (Linux + bwrap path)
 ----------------------------------------
@@ -155,13 +155,12 @@ def run_sandboxed(
         result = _run_in_bwrap(cmd, workspace=workspace, network=network, timeout=timeout, env=env)
         return ExecResult(returncode=result.returncode, stdout=result.stdout, sandboxed=True)
     else:
-        log.warning(
-            "hydra.exec_backend: bwrap sandbox unavailable — "
-            "running command on the host WITHOUT confinement. "
-            "Install bwrap and enable unprivileged_userns_clone=1 for sandboxing."
+        message = (
+            "bwrap sandbox unavailable; command not executed. "
+            "Install bubblewrap and enable unprivileged user namespaces for sandboxed execution."
         )
-        result = _run_on_host(cmd, workspace=workspace, timeout=timeout, env=env)
-        return ExecResult(returncode=result.returncode, stdout=result.stdout, sandboxed=False)
+        log.warning("hydra.exec_backend: %s", message)
+        return ExecResult(returncode=126, stdout=message, sandboxed=False)
 
 
 def _build_bwrap_cmd(
@@ -186,6 +185,14 @@ def _build_bwrap_cmd(
     ro("/etc")
     ro("/sbin")
     ro("/run/openssl", "/run/openssl")  # some distros put certs here
+
+    # Hosted Python and virtual environments may live outside /usr (for example
+    # setup-python's tool cache). Expose only the active interpreter roots read
+    # only, so verifier subprocesses retain their installed dependencies.
+    for prefix in sorted({sys.prefix, sys.base_prefix}):
+        root = Path(prefix).resolve()
+        if root.is_dir() and root != Path(root.anchor) and not root.is_relative_to('/usr'):
+            ro(str(root))
 
     # Special filesystems
     bwrap.extend(["--proc", "/proc"])

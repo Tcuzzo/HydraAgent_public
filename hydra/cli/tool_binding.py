@@ -366,6 +366,8 @@ def bind_tools(
     memory_workspace_root: str | Path | None = None,
     notify_telegram: bool = False,
     surface_trusted: bool = True,  # UNLOCKED: operator controls all surfaces directly
+    include_mcp: bool = True,
+    read_only_mcp: bool = False,
 ) -> list[Tool]:
     """Wrap every skill with `root` pre-bound so the LLM only sees task args.
 
@@ -397,6 +399,18 @@ def bind_tools(
         else root
     )
     _built = [
+        Tool(
+            name="source_lookup",
+            description="Locate source paths and symbols through a shared incremental index before broad grep/glob. Returns content keys; source_read verifies current bytes.",
+            parameters={"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}}, "required": ["query"]},
+            invoke=lambda query, limit=8: _source_lookup(root, query, limit),
+        ),
+        Tool(
+            name="source_read",
+            description="Read a located source key, refusing stale content. If stale, call source_lookup again. Bounded to 1 MiB.",
+            parameters={"type": "object", "properties": {"key": {"type": "string"}, "max_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576}}, "required": ["key"]},
+            invoke=lambda key, max_bytes=32768: _source_read(root, key, max_bytes),
+        ),
         Tool(
             name="fs_read",
             description="Read a text file from the workspace. Returns content + bytes_read. Use max_bytes to cap large files.",
@@ -829,6 +843,15 @@ def bind_tools(
         # SEAM CUT: studio_stitch/studio_edit tools removed (hydra.studio stripped).
         # SEAM CUT: backbone_ideate/produce/watch tools removed (hydra.backbone is stripped).
     ]
+    from hydra.decision_tools import laya_decide, needle_select
+    _built.extend([
+        Tool(name='laya_decide', description='Ask the optional local Laya model typed choice/score/noul questions. Returns evidence, not authority; executes no actions.',
+             parameters={'type': 'object', 'properties': {'state': {}, 'questions': {'type': 'object'}}, 'required': ['state', 'questions']},
+             invoke=laya_decide),
+        Tool(name='needle_select', description='Ask optional CPU Needle to select among named tools. Works beside any chat model. Proposes calls only; never executes them.',
+             parameters={'type': 'object', 'properties': {'query': {'type': 'string'}, 'candidates': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1, 'maxItems': 32}}, 'required': ['query', 'candidates']},
+             invoke=lambda query, candidates: needle_select(query, candidates, _built)),
+    ])
     # Rule 1: the approval gate must see EVERY tool call, not just the four risky ones,
     # so the untrusted-surface escalation can stop a non-operator from running ANY action
     # tool (e.g. agent_send_message, collab_assign, spawn_subagent). require() is a no-op
@@ -842,8 +865,31 @@ def bind_tools(
             _t.invoke,
             non_destructive_auto_allow=shell_auto_allow if _t.name == "bash" else True,
         )
+    if include_mcp and os.environ.get('HYDRA_MCP_CONFIG'):
+        from hydra.mcp_bridge import bind_mcp_tools
+        _built.extend(bind_mcp_tools(os.environ['HYDRA_MCP_CONFIG'], policy, read_only=read_only_mcp))
     return _built
 
 
 def root_arg(value: str | None) -> Path:
     return Path(value).expanduser().resolve() if value else DEFAULT_FILESYSTEM_ROOT
+
+
+def _source_lookup(root, query, limit):
+    from hydra.source_index import SourceIndex
+    import os
+    index = SourceIndex(root)
+    result = index.search(query, limit=limit)
+    if os.environ.get('HYDRA_SOURCE_SEMANTIC') == '1':
+        from hydra.source_semantic import search
+        from hydra.llm import LlmError
+        try:
+            result['semantic'] = search(index, query, limit=limit)
+        except (ValueError, OSError, RuntimeError, ImportError, LlmError):
+            result['semantic'] = {'status': 'unavailable', 'next_step': 'Check local embedding configuration; lexical matches remain available.'}
+    return result
+
+
+def _source_read(root, key, max_bytes):
+    from hydra.source_index import SourceIndex
+    return SourceIndex(root).read(key, max_bytes=max_bytes)

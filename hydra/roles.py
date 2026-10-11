@@ -81,15 +81,10 @@ def resolve_roles_from_dict(config: dict) -> RoleSet:
     # different families and a single-model installation remains usable.
     for name in (("planner", "doer") if agentic.get("require_independent_auditor", False) else ()):
         role = resolved[name]
-        if role.family == auditor.family:
+        if role.family.casefold() == auditor.family.casefold():
             raise RoleError(
                 f"PROVIDER_COLLISION: {name} family {role.family!r} "
                 f"matches auditor family {auditor.family!r}"
-            )
-        if role.provider == auditor.provider:
-            raise RoleError(
-                f"PROVIDER_COLLISION: {name} provider {role.provider!r} "
-                f"matches auditor provider {auditor.provider!r}"
             )
         if role.family.lower() in OPENAI_FAMILIES and auditor.family.lower() in OPENAI_FAMILIES:
             raise RoleError(

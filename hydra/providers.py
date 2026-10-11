@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from hydra.llm import OllamaClient
+from hydra.llm import LlmError, OllamaClient
 
 
 DEFAULT_ENV_DIR = Path(os.path.expanduser("~/.hydraAgent/workspace"))
@@ -201,7 +201,7 @@ def resolve(
     )
 
 
-def make_client(
+def _make_transport_client(
     name: str, *, env_dir: str | Path | None = None
 ):
     """Build a configured client for `name` and return it along with the
@@ -236,3 +236,27 @@ def make_client(
         return client, cfg
     client = OllamaClient(endpoint=cfg.endpoint, api_key=cfg.api_key)
     return client, cfg
+
+
+def make_client(name: str, *, env_dir: str | Path | None = None, health_path: str | Path | None = None):
+    """Build the requested transport with durable health checks on every chat."""
+    from hydra.provider_health import attach_health
+    client, cfg = _make_transport_client(name, env_dir=env_dir)
+    return attach_health(client, cfg, health_path=health_path), cfg
+
+
+def make_runtime_client(name: str, *, model: str | None = None, family: str = '',
+                        env_dir: str | Path | None = None, health_path: str | Path | None = None,
+                        fallbacks=()):
+    """Explicit bounded fallback, preserving the actual provider/model/family."""
+    from hydra.provider_health import RoutedClient
+    def factory(provider):
+        return make_client(provider, env_dir=env_dir, health_path=health_path)
+    try:
+        client, cfg = factory(name)
+    except (ProviderError, LlmError):
+        if not fallbacks:
+            raise
+        client, cfg = None, ProviderConfig(name=name, endpoint='', model=model or '', api_key=None)
+    return RoutedClient(client, cfg, model=model or cfg.model, family=family,
+                        fallbacks=fallbacks, factory=factory, health_path=health_path), cfg
