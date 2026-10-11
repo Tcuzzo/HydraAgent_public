@@ -114,6 +114,15 @@ the model/revision and `device: GPU` (or a detected `GPU.0`). The adapter checks
 OpenVINO's device inventory and fails explicitly when the device is absent.
 It does not silently call CPU work an iGPU success. See
 [Sentence Transformers OpenVINO setup](https://sbert.net/docs/sentence_transformer/usage/efficiency.html).
+An AMD iGPU needs an appropriate backend instead. One local option is a
+[llama.cpp Vulkan embedding server](https://github.com/ggml-org/llama.cpp/tree/master/tools/server)
+with a supported dedicated embedding GGUF. Run `llama-server --list-devices`,
+select the exact detected AMD device with `--device`, and use `--embeddings`
+with the model's documented pooling. Bind it to loopback and point the `openai`
+embedding configuration at its `/v1` endpoint. Use the actual GGUF checksum as
+the revision. Verify device/offload logs as well as the returned vector; HTTP
+success alone does not prove iGPU execution. Driver readiness and device support
+must be verified before assigning work to either GPU.
 The 4080/OCuLink topology below is a deployment design, not a benchmark of that hardware.
 
 ```mermaid
