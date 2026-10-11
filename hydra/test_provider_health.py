@@ -58,7 +58,10 @@ def test_route_identity_separates_accounts_and_endpoints_but_not_provider_aliase
 
 def test_store_concurrent_updates_do_not_lose_routes(tmp_path):
     from hydra.provider_health import HealthStore, Route
-    store = HealthStore(tmp_path / 'health.json')
+    # This checks serialized data integrity, not shared-runner disk throughput.
+    # Keep the production one-second fail-fast default; give this 24-write stress
+    # case a separate finite budget. The held-lock test below checks fast refusal.
+    store = HealthStore(tmp_path / 'health.json', lock_timeout=10.0)
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(lambda i: store.record_failure(Route('p', str(i)), LlmError('timeout', kind='timeout')), range(24)))
     assert len(store.snapshot()['routes']) == 24
