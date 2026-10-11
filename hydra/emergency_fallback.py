@@ -1,28 +1,21 @@
-"""hydra.emergency_fallback — Universal emergency model fallback.
+"""Checkpoint a failed mission and optionally select an explicit recovery route.
 
-When cloud (Ollama Cloud) fails, instantly switch to the local life-support model:
-- Local ollama/qwen2.5-coder:7b (always works on local Ollama)
-
-No hanging, no blocking, no permission errors.
+Client construction and catalog reachability never prove a model can run.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 from pathlib import Path
 from typing import Any, Callable
 
 
-FALLBACK_CHAIN = [
-    # Local Ollama — the last-resort fallback when all cloud providers are down.
-    {"provider": "ollama", "model": "qwen2.5-coder:7b", "timeout": 30},
-]
+FALLBACK_CHAIN = []  # Legacy embedding hook; no implicit model/provider guesses.
 
-# Never-expires life-support model. Local Ollama at localhost:11434 is the
-# always-available assumption. When a provider fails mid-mission the agent
-# switches to this rather than crashing.
+# Legacy identifiers retained for injected-client callers, not default routing.
 LIFE_SUPPORT_PROVIDER = "ollama"
 LIFE_SUPPORT_MODEL = "qwen2.5-coder:7b"
 LIFE_SUPPORT_ENDPOINT = "http://localhost:11434"
@@ -50,6 +43,9 @@ def classify_provider_error(error: BaseException) -> str:
     operator-facing ``LlmError`` message signatures emitted by ``hydra.llm``
     (HTTP code + reason), so it works without a live network.
     """
+    kind = getattr(error, 'kind', 'unknown')
+    if kind != 'unknown':
+        return 'auth' if kind in {'authentication', 'permission'} else kind
     msg = str(error).lower()
     # Auth: explicit 401/403 or a key-rejection phrase.
     if "401" in msg or "403" in msg or "unauthorized" in msg or "forbidden" in msg:
@@ -112,32 +108,16 @@ def probe_model(provider: str, model: str, timeout: float = 5.0) -> bool:
 
 
 def get_emergency_model(preferred_model: str | None = None) -> dict[str, Any]:
-    """Get the best available model using emergency fallback chain.
-    
-    Returns dict with provider, model, and whether fallback was used.
-    """
-    # If preferred model is local, just use it
-    if preferred_model and preferred_model.startswith("ollama/"):
-        return {"provider": "ollama", "model": preferred_model.split("/")[-1], "used_fallback": False}
-    
-    # Try fallback chain
-    for i, fallback in enumerate(FALLBACK_CHAIN):
-        if probe_model(fallback["provider"], fallback["model"], fallback["timeout"]):
-            return {
-                "provider": fallback["provider"],
-                "model": fallback["model"],
-                "used_fallback": i > 0,
-                "original_model": preferred_model,
-            }
-    
-    # All probes failed — default to local (always available)
-    return {
-        "provider": "ollama",
-        "model": "qwen2.5-coder:7b",
-        "used_fallback": True,
-        "original_model": preferred_model,
-        "warning": "All cloud probes failed, using local model",
-    }
+    """Select only an explicit provider/model pair; no availability claim."""
+    if preferred_model and '/' in preferred_model:
+        provider, model = preferred_model.split('/', 1)
+        if provider and model:
+            return {'provider': provider, 'model': model, 'used_fallback': False, 'availability': 'unverified'}
+    provider = os.environ.get('HYDRA_EMERGENCY_PROVIDER', '').strip()
+    model = os.environ.get('HYDRA_EMERGENCY_MODEL', '').strip()
+    if provider and model:
+        return {'provider': provider, 'model': model, 'used_fallback': True, 'availability': 'unverified'}
+    raise EmergencyFallbackError('No emergency route configured; set HYDRA_EMERGENCY_PROVIDER and HYDRA_EMERGENCY_MODEL or choose a configured role fallback')
 
 
 def with_emergency_fallback(func: Callable, preferred_model: str | None = None):
@@ -166,14 +146,12 @@ def with_emergency_fallback(func: Callable, preferred_model: str | None = None):
 
 
 def _default_local_client_factory() -> tuple[Any, str]:
-    """Build the local life-support client (localhost Ollama).
-
-    Deferred import so callers that never trip the fallback don't pay the
-    import cost, and so tests can inject their own factory.
-    """
-    from hydra.llm import OllamaClient
-
-    return OllamaClient(endpoint=LIFE_SUPPORT_ENDPOINT), LIFE_SUPPORT_MODEL
+    """Build only the explicitly configured recovery route, with health guards."""
+    from hydra.providers import make_runtime_client
+    route = get_emergency_model()
+    client, _cfg = make_runtime_client(route['provider'], model=route['model'],
+                                     family=os.environ.get('HYDRA_EMERGENCY_FAMILY', ''))
+    return client, route['model']
 
 
 def engage_life_support_fallback(
@@ -185,35 +163,29 @@ def engage_life_support_fallback(
     checkpoint_state: dict[str, Any],
     local_client_factory: Callable[[], tuple[Any, str]] | None = None,
 ) -> dict[str, Any]:
-    """Switch a failed autonomous mission to the local life-support model.
+    """Checkpoint a failure and select an explicitly configured recovery route.
 
-    Called when a provider chat call raises during an autonomous/local
-    mission. It:
-
-      1. Classifies ``error`` (auth vs timeout vs connection vs other).
-      2. Builds the local life-support client (ollama/qwen2.5-coder:7b).
-      3. Checkpoints ``checkpoint_state`` to
-         ``evidence/{mission_id}/s6_pause_checkpoint.json`` so the mission can
-         resume from exactly where the provider died.
-      4. Returns a structured payload the caller surfaces to the operator —
-         the substitution is **never silent** (it reuses the
-         ``model_router.last_substitution`` shape: ``requested`` / ``used`` /
-         ``downgraded_to_local`` / ``note``).
-
-    No destructive actions: it only writes one JSON checkpoint under
-    ``evidence/`` and returns a client. It does not crash the mission.
+    The returned route has not completed a call and is not certified available.
+    If selection fails, return client=None and preserve the paused checkpoint.
     """
     error_class = classify_provider_error(error)
     if error_class == "auth":
         ledger_reason = "provider_auth_fallback_engaged"
     else:
-        # timeout / connection / other all funnel to the timeout reason on the
-        # ledger transition map (the never-expires local model is the cure for
-        # any non-auth provider outage).
+        # Preserve the existing ledger reason vocabulary for paused missions.
         ledger_reason = "provider_timeout_fallback_engaged"
 
+    from hydra.atomic_write import atomic_write_bytes
+    from hydra.provider_health import safe_message
+    if not re.fullmatch(r'[a-zA-Z0-9_-]{1,128}', mission_id):
+        raise ValueError('mission ID must be a safe identifier')
     factory = local_client_factory or _default_local_client_factory
-    client, used_model = factory()
+    selection_error = None
+    try:
+        client, used_model = factory()
+    except Exception as exc:
+        client, used_model = None, None
+        selection_error = safe_message(str(exc))
 
     root = Path(repo_root).expanduser().resolve()
     checkpoint_dir = root / "evidence" / mission_id
@@ -223,31 +195,31 @@ def engage_life_support_fallback(
     checkpoint = dict(checkpoint_state)
     checkpoint["mission_id"] = mission_id
     checkpoint["error_class"] = error_class
-    checkpoint["error_message"] = str(error)
+    checkpoint["error_message"] = safe_message(str(error))
+    checkpoint["failure"] = error.to_dict() if hasattr(error, "to_dict") else {"kind": error_class, "message": safe_message(str(error))}
+    checkpoint["recovery_route_error"] = selection_error
     checkpoint["requested_provider"] = requested_provider
     checkpoint["life_support_model"] = used_model
     checkpoint["paused_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    checkpoint_path.write_text(
-        json.dumps(checkpoint, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    atomic_write_bytes(checkpoint_path, (json.dumps(checkpoint, indent=2, sort_keys=True) + "\n").encode())
 
     substitution = {
         "requested": requested_provider,
         "used": used_model,
-        "downgraded_to_local": True,
+        "downgraded_to_local": client is not None and (getattr(client, "requested_route", {}) or {}).get("provider", "ollama") == "ollama",
+        "status": "selected_unverified" if client is not None else "unavailable",
         "note": (
             f"provider {requested_provider!r} failed ({error_class}); switched to "
             f"local life-support {used_model!r}"
         ),
     }
 
-    # Plain-English operator notice (§8/§12 — no blobs/paths in the headline).
-    operator_message = (
-        f"Heads up: the {requested_provider} model is unavailable "
-        f"({_plain_cause(error_class)}). I switched to the local "
-        f"{used_model} life-support model and paused the mission so it can "
-        f"resume cleanly once {requested_provider} is back."
-    )
+    if client is None:
+        operator_message = f"The {requested_provider} model failed ({_plain_cause(error_class)}). The mission is checkpointed and paused. {selection_error}"
+        substitution['note'] = 'No recovery route selected; mission paused'
+    else:
+        operator_message = f"The {requested_provider} model failed ({_plain_cause(error_class)}). Recovery route {used_model!r} is configured but has not completed a call. The mission is checkpointed and paused."
+        substitution['note'] = 'Explicit recovery route selected; availability unverified'
 
     return {
         "error_class": error_class,
@@ -266,5 +238,9 @@ def _plain_cause(error_class: str) -> str:
         "auth": "its credentials were rejected",
         "timeout": "it timed out",
         "connection": "it could not be reached",
+        "budget": "its account has no available budget",
+        "rate_limit": "the provider rate limit was reached",
+        "retired": "the provider explicitly retired it",
+        "model_unavailable": "model availability needs catalog refresh",
         "other": "it returned an error",
     }.get(error_class, "it returned an error")

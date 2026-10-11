@@ -16,13 +16,18 @@ from hydra.exec_backend import (
     EXEC_TIMEOUT_EXIT_CODE,
     ExecResult,
     _reset_capability_cache,
-    run_sandboxed,
+    _run_on_host,
     run_sandboxed_shell,
 )
 
 
 def test_shell_runner_uses_a_shell_available_on_the_current_platform(tmp_path):
-    result = run_sandboxed_shell("echo hydra-shell-portable", workspace=tmp_path, timeout=10)
+    with patch('hydra.exec_backend.run_sandboxed') as sandbox:
+        run_sandboxed_shell("echo hydra-shell-portable", workspace=tmp_path, timeout=10)
+    assert sandbox.call_args.kwargs['network'] is False
+    # Explicitly test the host transport with the wrapper's actual shell argv;
+    # unavailable confinement must never authorize this path implicitly.
+    result = _run_on_host(sandbox.call_args.args[0], workspace=tmp_path, timeout=10, env=None)
     assert result.returncode == 0
     assert "hydra-shell-portable" in result.stdout
 
@@ -40,18 +45,17 @@ def test_run_on_host_timeout_returns_structured_execresult(tmp_path):
     12s timeout.
     """
     _reset_capability_cache()
-    # Force the host path by making bwrap unavailable.  Patch the capability
-    # probe result directly (the probe is a free in-process organ, not an
-    # external leaf — patching the cached flag is the seam test boundary, not
-    # mock theater: the actual subprocess.run is REAL).
+    # The host transport is invoked explicitly. An unavailable sandbox never
+    # authorizes host fallback; this independent transport still has timeouts.
     import hydra.exec_backend as eb
     eb._PROBE_DONE = True
     eb._BWRAP_CAPABLE = False
     try:
-        result = run_sandboxed(
+        result = _run_on_host(
             [sys.executable, "-c", "import time; print('partial-out', flush=True); time.sleep(60)"],
             workspace=Path(tmp_path),
             timeout=12,
+            env=None,
         )
     finally:
         _reset_capability_cache()
@@ -83,7 +87,7 @@ def _force_timeout_with_partial_stdout(*args, **kwargs):
 def test_run_on_host_timeout_via_transport_shim(tmp_path):
     """Layer B — DETERMINISTIC transport-leaf shim.  Mock the wire
     (subprocess.run) so the timeout ALWAYS fires with partial stdout,
-    independent of spawn latency.  The real run_sandboxed bytes->str
+    independent of spawn latency.  The real host transport bytes->str
     decode, None->"" fallback, and ExecResult(EXEC_TIMEOUT_EXIT_CODE)
     translation must STILL run end to end.  Mock the wire, never the
     brain.
@@ -99,10 +103,11 @@ def test_run_on_host_timeout_via_transport_shim(tmp_path):
             "hydra.exec_backend.subprocess.run",
             side_effect=_force_timeout_with_partial_stdout,
         ):
-            result = run_sandboxed(
+            result = _run_on_host(
                 [sys.executable, "-c", "import time; print('partial-out', flush=True); time.sleep(60)"],
                 workspace=Path(tmp_path),
                 timeout=12,
+                env=None,
             )
     finally:
         _reset_capability_cache()
@@ -118,10 +123,11 @@ def test_timeout_does_not_raise(tmp_path):
     eb._PROBE_DONE = True
     eb._BWRAP_CAPABLE = False
     try:
-        result = run_sandboxed(
+        result = _run_on_host(
             [sys.executable, "-c", "import time; time.sleep(30)"],
             workspace=Path(tmp_path),
             timeout=0.3,
+            env=None,
         )
     finally:
         _reset_capability_cache()
@@ -134,10 +140,11 @@ def test_normal_command_still_runs(tmp_path):
     eb._PROBE_DONE = True
     eb._BWRAP_CAPABLE = False
     try:
-        result = run_sandboxed(
+        result = _run_on_host(
             [sys.executable, "-c", "print('hello-exit-7'); raise SystemExit(7)"],
             workspace=Path(tmp_path),
             timeout=10,
+            env=None,
         )
     finally:
         _reset_capability_cache()
