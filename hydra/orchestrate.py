@@ -24,10 +24,10 @@ import re
 import subprocess
 import time
 from dataclasses import dataclass, field, asdict
-from threading import Lock
+from threading import Lock, Thread
 from typing import Any
 
-from hydra.proc import kill_tree, popen_portable
+from hydra.proc import kill_owned_group, popen_portable, windows_process_parents
 
 
 SCHEMA = "hydra.orchestrate.v1"
@@ -239,7 +239,7 @@ def render_graph_text(report: dict[str, Any]) -> str:
 def _validate(tasks: list[SubagentTask], max_concurrency: int) -> None:
     if not isinstance(tasks, list) or not tasks:
         raise OrchestrateError("tasks must be a non-empty list of SubagentTask")
-    if max_concurrency <= 0:
+    if type(max_concurrency) is not int or max_concurrency <= 0:
         raise OrchestrateError("max_concurrency must be a positive integer")
     seen_ids: set[str] = set()
     for task in tasks:
@@ -254,7 +254,7 @@ def _validate(tasks: list[SubagentTask], max_concurrency: int) -> None:
             raise OrchestrateError(f"task {task.id!r}: command must be a non-empty list")
         if not all(isinstance(part, str) for part in task.command):
             raise OrchestrateError(f"task {task.id!r}: every command part must be a string")
-        if not isinstance(task.timeout_seconds, int) or task.timeout_seconds <= 0:
+        if type(task.timeout_seconds) is not int or task.timeout_seconds <= 0:
             raise OrchestrateError(
                 f"task {task.id!r}: timeout_seconds must be a positive integer"
             )
@@ -269,6 +269,113 @@ def _validate(tasks: list[SubagentTask], max_concurrency: int) -> None:
             raise OrchestrateError(f"task {task.id!r}: depends_on must be a list of task ids")
 
 
+def _capture(proc, timeout: int, process_started: float):
+    """Drain both pipes continuously, retaining only a bounded prefix per stream.
+
+    Reader joins share a deadline, so inherited pipes cannot hang dispatch after
+    a parent exits. Daemon readers own their pipes and close them on EOF.
+    Success patterns are evaluated against the retained prefix only.
+    """
+    buffers = [bytearray(), bytearray()]
+    counts = [0, 0]
+
+    def drain(stream, index):
+        try:
+            while chunk := stream.read(8192):
+                counts[index] += len(chunk)
+                remaining = MAX_OUTPUT_BYTES - len(buffers[index])
+                if remaining > 0:
+                    buffers[index].extend(chunk[:remaining])
+        except (OSError, ValueError):
+            pass
+        finally:
+            stream.close()
+
+    readers = [Thread(target=drain, args=(stream, i), daemon=True)
+               for i, stream in enumerate((proc.stdout, proc.stderr))]
+    for reader in readers:
+        reader.start()
+    deadline = time.monotonic() + timeout
+    timed_out = False
+    import psutil
+    descendants = {}
+    parent_exited = None
+    try:
+        # Keep handles while the parent still exists; a later timeout may find
+        # that parent already gone while grandchildren retain its output pipes.
+        while True:
+            try:
+                for child in psutil.Process(proc.pid).children(recursive=True):
+                    descendants[(child.pid, child.create_time())] = child
+            except psutil.Error:
+                pass
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(proc.args, timeout)
+            try:
+                proc.wait(timeout=min(0.01, remaining))
+                parent_exited = time.time()
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        for reader in readers:
+            reader.join(max(0, deadline - time.monotonic()))
+        timed_out = any(reader.is_alive() for reader in readers)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+    if timed_out:
+        # Nested tool processes can create their own process groups. Snapshot
+        # descendants before killing the worker, then kill those groups too.
+        try:
+            for child in psutil.Process(proc.pid).children(recursive=True):
+                descendants[(child.pid, child.create_time())] = child
+        except psutil.Error:
+            pass
+        if os.name == 'nt':
+            # Windows retains parent PIDs after exit. Recover ordinary orphans
+            # missed between polling ticks, bounded by the parent's lifetime.
+            candidates = windows_process_parents()
+            parents = {proc.pid: (process_started, parent_exited or time.time())}
+            for child in descendants.values():
+                try:
+                    parents[child.pid] = (child.create_time(), time.time())
+                except psutil.Error:
+                    pass
+            for _ in range(32):
+                added = False
+                for pid, ppid in candidates.items():
+                    bounds = parents.get(ppid)
+                    if not bounds or pid in parents:
+                        continue
+                    try:
+                        child = psutil.Process(pid)
+                        created = child.create_time()
+                        if bounds[0] <= created <= bounds[1]:
+                            descendants[(pid, created)] = child
+                            parents[pid] = (created, time.time())
+                            added = True
+                    except psutil.Error:
+                        pass
+                if not added:
+                    break
+        kill_owned_group(proc)
+        for child in descendants.values():
+            try:
+                child.kill()
+            except psutil.Error:
+                pass
+        psutil.wait_procs(list(descendants.values()), timeout=1)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        cleanup = time.monotonic() + 1
+        for reader in readers:
+            reader.join(max(0, cleanup - time.monotonic()))
+    values = [bytes(buf).decode('utf-8', errors='replace') for buf in buffers]
+    return values[0], values[1], counts[0], counts[1], timed_out
+
+
 def _run_one(task: SubagentTask) -> dict[str, Any]:
     started = time.time()
     popen_env = None
@@ -281,7 +388,7 @@ def _run_one(task: SubagentTask) -> dict[str, Any]:
             stderr=subprocess.PIPE,
             cwd=task.cwd,
             env=popen_env,
-            text=True,
+            text=False,
         )
     except FileNotFoundError as e:
         return _result(
@@ -295,13 +402,8 @@ def _run_one(task: SubagentTask) -> dict[str, Any]:
             started_at=started,
             success_pattern_matched=None,
         )
-    try:
-        stdout, stderr = proc.communicate(timeout=task.timeout_seconds)
-    except subprocess.TimeoutExpired:
-        kill_tree(proc)
-        stdout, stderr = proc.communicate()
-        stdout_bytes = len((stdout or "").encode("utf-8", errors="replace"))
-        stderr_bytes = len((stderr or "").encode("utf-8", errors="replace"))
+    stdout, stderr, stdout_bytes, stderr_bytes, timed_out = _capture(proc, task.timeout_seconds, started)
+    if timed_out:
         return _result(
             task,
             status="timeout",
@@ -314,8 +416,6 @@ def _run_one(task: SubagentTask) -> dict[str, Any]:
             success_pattern_matched=None,
         )
 
-    stdout_bytes = len((stdout or "").encode("utf-8", errors="replace"))
-    stderr_bytes = len((stderr or "").encode("utf-8", errors="replace"))
     pattern_matched: bool | None = None
     if task.success_pattern is not None:
         pattern_matched = bool(re.search(task.success_pattern, stdout or ""))

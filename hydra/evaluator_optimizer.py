@@ -74,7 +74,9 @@ class InlineCritic:
     ):
         self.critic_model_config = critic_model_config
         self.repo_root = repo_root
-        self.client = OllamaClient(base_url=critic_model_config.base_url)
+        router = ModelRouter.__new__(ModelRouter)
+        router.env_dir = repo_root
+        self.client = router._create_client(critic_model_config)
     
     def critique(
         self,

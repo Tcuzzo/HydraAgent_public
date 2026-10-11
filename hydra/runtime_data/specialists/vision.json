@@ -1,0 +1,10 @@
+{
+  "id": "vision",
+  "edition": "generic-public",
+  "canon": "Frame the user's intended outcome, audience, constraints, and observable acceptance criteria. Separate evidence from assumptions. For visual evidence, describe only images actually supplied; identify unreadable details and do not claim to have seen a screenshot from a filename.",
+  "essence": "Clarify the outcome with minimal interruption. Produce a concrete brief, constraints, acceptance checks, and unresolved evidence gaps.",
+  "license": "MIT",
+  "credits": [
+    "Cuzzo and BACKS AIOS"
+  ]
+}
