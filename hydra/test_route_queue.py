@@ -153,10 +153,12 @@ async def test_timeout_cancels_future_so_worker_skips_set_result():
 
 
 @pytest.mark.asyncio
-async def test_timeout_future_is_cancelled_not_pending():
-    """Fix 4 direct assertion: after a timeout the future the caller created
-    must be done (cancelled), not still pending — that is the 'mark' the
-    worker checks."""
+async def test_timeout_future_is_terminal_not_pending():
+    """Both caller and worker deadlines must leave a terminal future.
+
+    Either deadline can win: submit cancels; the bounded worker returns an
+    explicit timeout receipt. Neither leaves a pending future for a late result.
+    """
     async def dispatch(decision, task):
         await asyncio.sleep(5)
         return "x"
@@ -180,5 +182,31 @@ async def test_timeout_future_is_cancelled_not_pending():
     assert r["status"] == "timed_out"
     fut = captured["fut"]
     assert fut.done(), "timed-out future must be marked done so the worker skips set_result"
-    assert fut.cancelled(), "the mark is an explicit cancel()"
+    assert fut.cancelled() or fut.result() == {
+        'status': 'timed_out', 'outcome': 'unknown_if_started', 'retry_safe': False}
     await q.stop()
+
+
+@pytest.mark.asyncio
+async def test_worker_deadline_cancels_active_dispatch_before_caller_deadline():
+    stopped = asyncio.Event()
+    async def dispatch(decision, task):
+        try:
+            await asyncio.sleep(10)
+        finally:
+            stopped.set()
+    q = RouteQueue(GatewayConfig(route_workers=1, queue_timeout_s=2),
+                   gateway=FakeGateway(), dispatch=dispatch)
+    original = q._broker.put_nowait
+    def earlier(item):
+        if 'fut' in item:
+            item['deadline'] = asyncio.get_running_loop().time() + .02
+        original(item)
+    q._broker.put_nowait = earlier
+    await q.start()
+    try:
+        result = await q.submit({'id': 1, 'prompt': 'x'})
+        assert result == {'status': 'timed_out', 'outcome': 'unknown_if_started', 'retry_safe': False}
+        assert stopped.is_set()
+    finally:
+        await q.stop()
