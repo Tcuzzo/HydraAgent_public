@@ -79,7 +79,26 @@ class ChatResponse:
 class LlmError(Exception):
     """Any failure of the LLM client — connection refused, timeout,
     unknown model, malformed response. The message is operator-facing
-    plain English (§4 voice contract)."""
+    plain English (§4 voice contract). Structured fields survive routing failures.
+    """
+
+    def __init__(self, message: str, *, kind: str = "unknown", status_code: int | None = None,
+                 error_code: str | None = None, retry_after: float | None = None,
+                 refresh_needed: bool = False, details: dict | None = None):
+        super().__init__(message)
+        self.kind = kind
+        self.status_code = status_code
+        self.error_code = error_code
+        self.retry_after = retry_after
+        self.refresh_needed = refresh_needed
+        self.details = details or {}
+
+    def to_dict(self) -> dict:
+        from hydra.provider_health import safe_message
+        return {"kind": self.kind, "message": safe_message(str(self)),
+                "status_code": self.status_code, "error_code": safe_message(self.error_code) if self.error_code else None,
+                "retry_after": self.retry_after, "refresh_needed": self.refresh_needed,
+                **self.details}
 
 
 class LlmClient(Protocol):
@@ -98,7 +117,7 @@ class LlmClient(Protocol):
     ) -> ChatResponse:
         ...
 
-    def list_models(self, *, timeout: float = 10.0) -> list[str]:
+    def list_models(self, *, timeout: float = 10.0, force_refresh: bool = False) -> list[str]:
         ...
 
 
@@ -262,7 +281,7 @@ class OllamaClient:
             tool_calls=tool_calls,
         )
 
-    def list_models(self, *, timeout: float = 10.0) -> list[str]:
+    def list_models(self, *, timeout: float = 10.0, force_refresh: bool = False) -> list[str]:
         """List available models from the provider.
 
         For local Ollama: hits GET {endpoint}/api/tags (the Ollama-specific
@@ -316,7 +335,7 @@ class OllamaClient:
         now = time.monotonic()
         cache_key = (self.api_base, hashlib.sha256((self.api_key or "").encode()).hexdigest())
         cached = _cloud_model_cache.get(cache_key)
-        if cached is not None:
+        if cached is not None and not force_refresh:
             expires_at, cached_names = cached
             if now < expires_at:
                 return list(cached_names)
@@ -404,21 +423,19 @@ class OllamaClient:
         except urllib.error.HTTPError as e:
             body = ""
             try:
-                body = e.read().decode("utf-8", errors="replace")
+                body = e.read(16384).decode("utf-8", errors="replace")
             except Exception:  # noqa: BLE001
                 pass
-            raise LlmError(
-                f"HTTP {e.code} from {req.full_url}: "
-                f"{body[:300] or e.reason}"
-            ) from e
+            from hydra.provider_health import http_failure
+            raise http_failure(e.code, body or str(e.reason), e.headers.get("Retry-After") if e.headers else None) from e
         except urllib.error.URLError as e:
             reason = getattr(e, "reason", e)
             raise LlmError(
-                f"could not reach {req.full_url}: {reason}"
+                f"could not reach provider: {reason}", kind="timeout" if isinstance(reason, (socket.timeout, TimeoutError)) else "connection"
             ) from e
         except socket.timeout as e:
             raise LlmError(
-                f"timed out talking to {req.full_url} after {timeout}s"
+                f"timed out talking to provider after {timeout}s", kind="timeout"
             ) from e
         try:
             payload = json.loads(raw)

@@ -115,6 +115,10 @@ def embed_nomic(text: str, *, base_url: str = "http://localhost:11434") -> list[
 
     Raises on any transport/model error so the caller can fall back.
     """
+    from hydra.embeddings import config, embed
+    embedding_config = config()
+    if embedding_config is not None:
+        return embed(text, embedding_config)
     payload = json.dumps({"model": "nomic-embed-text", "prompt": text}).encode("utf-8")
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/api/embeddings",
@@ -289,7 +293,8 @@ def _default_store_path() -> Path:
     """
     from hydra.unified_memory import DEFAULT_DB_PATH
 
-    return DEFAULT_DB_PATH
+    from hydra.embeddings import memory_path
+    return memory_path(DEFAULT_DB_PATH)
 
 
 def build_semantic_memory_context(

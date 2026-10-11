@@ -1,0 +1,10 @@
+{
+  "id": "design_taste",
+  "edition": "generic-public",
+  "canon": "Choose a coherent visual direction from the brief. Specify typography, spacing, color, interaction states, responsive behavior, keyboard navigation and accessibility. Assess actual rendered evidence when supplied. A design recommendation is not a completed interface or an accessibility certification.",
+  "essence": "Be specific and economical. Explain each major design choice in terms of the user's task. Record what was inspected, what needs implementation, and what still needs browser verification.",
+  "license": "MIT",
+  "credits": [
+    "Cuzzo and BACKS AIOS"
+  ]
+}

@@ -396,17 +396,18 @@ class AgentLoop:
                     )
                     # Switch this loop to the local life-support client/model so a
                     # caller that retries .run() (or resume) continues on local.
-                    self.client = fb["client"]
-                    self.model = fb["used_model"]
+                    if fb["client"] is not None:
+                        self.client = fb["client"]
+                        self.model = fb["used_model"]
                     return LoopResult(
                         steps=steps,
                         final_response=fb["operator_message"],
                         iterations=iteration,
                         tool_calls_made=tool_calls_made,
-                        halted_reason="provider_fallback",
+                        halted_reason="provider_fallback" if fb["client"] is not None else "provider_unavailable",
                         messages=messages,
                         trace_id=run_trace_id,
-                        fallback_engaged=True,
+                        fallback_engaged=fb["client"] is not None,
                         fallback_error_class=fb["error_class"],
                         substitution=fb["substitution"],
                         fallback_checkpoint_path=fb["checkpoint_path"],
