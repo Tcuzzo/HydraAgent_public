@@ -10,7 +10,7 @@ Three public callables:
 
   consolidate(mem, *, threshold?, policy?)
       Sleeptime deduplication job.  Scans all non-superseded rows and marks
-      near-duplicates (cosine >= threshold, same scope) as superseded by the
+      exact duplicates (same text, kind and scope) as superseded by the
       fresher / higher-importance row.  NEVER deletes.  Idempotent (a second
       call on the same store does nothing new).
 
@@ -248,20 +248,18 @@ def consolidate(
     threshold: float = CONSOLIDATE_THRESHOLD,
     policy: Any | None = None,
 ) -> int:
-    """Sleeptime deduplication job: mark near-duplicate rows as superseded.
+    """Sleeptime deduplication: supersede exact scoped/kind duplicates only.
 
-    For each pair of non-superseded rows in the same scope, if their cosine
-    similarity is >= ``threshold``, the OLDER (lower id) or lower-importance
-    row is marked as superseded by the NEWER / higher-importance row via
-    ``superseded_by``.  NEVER deletes.  Idempotent.
+    Exact duplicate text in the same scope and kind retains the newer or
+    higher-importance row. Similarity never discards contradictory facts.
+    This linear grouping preserves originals and records supersession history.
 
     Parameters
     ----------
     mem:
         An open :class:`hydra.unified_memory.UnifiedMemory` instance.
     threshold:
-        Cosine similarity floor for declaring two rows near-duplicates.
-        Default 0.90.
+        Retained for API compatibility; similarity no longer authorizes archival.
     policy:
         Optional policy override (unused today but accepted for future knobs).
 
@@ -270,12 +268,10 @@ def consolidate(
     int
         Number of rows newly marked superseded (0 means nothing to do).
     """
-    from hydra.semantic_recall import _cosine_similarity
-
     db = mem._db
     # Fetch all active (not-superseded, not-invalid, not-expired) rows + their vectors.
     rows = db.execute(
-        "SELECT e.id, e.scope, e.importance, e.created_at "
+        "SELECT e.id, e.scope, e.importance, e.created_at, e.kind, e.body "
         "FROM entries e "
         "WHERE e.superseded_by IS NULL "
         "  AND e.invalid_at IS NULL "
@@ -286,71 +282,29 @@ def consolidate(
     if not rows:
         return 0
 
-    # Load vectors for each active row.
-    def _load_vec(rid: int) -> list[float] | None:
-        row = db.execute(
-            "SELECT emb FROM entries_vec WHERE rowid = ?", (rid,)
-        ).fetchone()
-        if row is None:
-            return None
-        raw = row["emb"]
-        return list(struct.unpack(f"{len(raw) // 4}f", raw))
-
-    row_vecs: list[tuple[int, str, float, str | None, list[float] | None]] = []
-    for r in rows:
-        vec = _load_vec(int(r["id"]))
-        row_vecs.append((int(r["id"]), r["scope"], float(r["importance"] or 0.5), r["created_at"], vec))
-
-    newly_superseded = 0
-    superseded_ids: set[int] = set()
-
-    for i in range(len(row_vecs)):
-        id_i, scope_i, imp_i, cat_i, vec_i = row_vecs[i]
-        if id_i in superseded_ids or vec_i is None:
-            continue
-        for j in range(i + 1, len(row_vecs)):
-            id_j, scope_j, imp_j, cat_j, vec_j = row_vecs[j]
-            if id_j in superseded_ids or vec_j is None:
+    # Similar embeddings are candidates for review, never evidence that two
+    # instructions agree. Restrict supersession to exact scoped/kind text.
+    # Linear grouping also avoids the old all-pairs vector scan during idle ticks.
+    groups = {}
+    for row in rows:
+        groups.setdefault((row['scope'], row['kind'], row['body'].strip()), []).append(row)
+    changed = 0
+    with db:
+        for group in groups.values():
+            if len(group) < 2:
                 continue
-            # Only compare rows in the same scope.
-            if scope_i != scope_j:
-                continue
-            sim = _cosine_similarity(vec_i, vec_j)
-            if sim < threshold:
-                continue
-            # Near-duplicate found.  The OLDER (lower id) row is the stale one;
-            # if importances differ, the lower-importance one is stale regardless
-            # of age.  The higher-id (newer) or higher-importance row wins.
-            stale_id: int
-            winner_id: int
-            if imp_j > imp_i + 1e-6:
-                stale_id, winner_id = id_i, id_j
-            elif imp_i > imp_j + 1e-6:
-                stale_id, winner_id = id_j, id_i
-            else:
-                # Equal importance: older (lower id) is stale.
-                stale_id, winner_id = id_i, id_j
+            winner = max(group, key=lambda row: (float(row['importance'] or 0.5), int(row['id'])))
+            for stale in group:
+                if stale['id'] == winner['id']:
+                    continue
+                updated = db.execute('UPDATE entries SET superseded_by=? WHERE id=? AND superseded_by IS NULL',
+                                     (winner['id'], stale['id'])).rowcount
+                if updated:
+                    db.execute('INSERT INTO entries_history(memory_id,event,old,new,ts) VALUES (?,?,?,?,?)',
+                               (stale['id'], 'SUPERSEDE_EXACT', None, str(winner['id']), datetime.now(timezone.utc).isoformat()))
+                    changed += 1
+    return changed
 
-            superseded_ids.add(stale_id)
-            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            db.execute(
-                "UPDATE entries SET superseded_by = ? WHERE id = ? AND superseded_by IS NULL",
-                (winner_id, stale_id),
-            )
-            db.execute(
-                "INSERT INTO entries_history(memory_id, event, old, new, ts) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (stale_id, "SUPERSEDE", None, str(winner_id), now),
-            )
-            newly_superseded += 1
-            # Once id_i is superseded, stop comparing it.
-            if stale_id == id_i:
-                break
-
-    if newly_superseded:
-        db.commit()
-
-    return newly_superseded
 
 
 # ── seed_core_block ────────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ from pathlib import Path
 PROFILE_ROOT = Path(__file__).parent / 'runtime_data' / 'specialists'
 ROLES = ('vision', 'design_taste', 'software_engineer', 'code_reviewer', 'test_engineer', 'kaizen', 'lean_six_sigma')
 WRITERS = frozenset({'software_engineer', 'test_engineer'})
-READ_TOOLS = frozenset({'fs_read', 'list_directory', 'glob', 'grep', 'skill_list', 'skill_search', 'skill_show', 'skill_route', 'system_stats'})
+READ_TOOLS = frozenset({'needle_select', 'laya_decide', 'source_lookup', 'source_read', 'fs_read', 'list_directory', 'glob', 'grep', 'skill_list', 'skill_search', 'skill_show', 'skill_route', 'system_stats'})
 
 
 def canonical_path(path: Path) -> Path:

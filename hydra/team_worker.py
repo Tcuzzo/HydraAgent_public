@@ -31,7 +31,7 @@ def _images(paths: list[str], root: Path) -> list[dict]:
 def execute(request: dict, run_dir: Path) -> dict:
     from hydra.cli.tool_binding import bind_tools
     from hydra.loop import AgentLoop
-    from hydra.providers import make_client
+    from hydra.providers import make_runtime_client
     task = request['task']
     role = task['specialist']
     root = canonical_path(Path(request['root']))
@@ -48,12 +48,18 @@ def execute(request: dict, run_dir: Path) -> dict:
     if len(prompt) > 80000:
         raise ValueError('dependency context exceeds 80000 characters; split the plan')
     system = system_prompt(role, private_root=request.get('private_root'))
-    client, cfg = make_client(request['provider'], env_dir=request.get('env_dir'))
+    client, cfg = make_runtime_client(request['provider'], model=request['model'], family=request.get('family', ''),
+                                     env_dir=request.get('env_dir'), health_path=request.get('health_path'),
+                                     fallbacks=request.get('fallbacks', []))
     policy = request['approval_policy'] if role in WRITERS else 'deny'
     tools = bind_tools(root, approval_policy=policy, read_only_mcp=role not in WRITERS)
     if role not in WRITERS:
         tools = [t for t in tools if t.name in READ_TOOLS or t.name in {'mcp_servers', 'mcp_tools', 'mcp_call'}]
     native = cfg.name == 'codex'
+    client.cd = str(root)
+    client.sandbox = 'workspace-write' if role in WRITERS and policy == 'allow' else 'read-only'
+    if any((row['provider'] == 'codex') != native for row in request.get('fallbacks', [])):
+        raise ValueError('team fallbacks must keep the same native or Hydra tool runtime')
     if native:
         client.cd = str(root)
         client.sandbox = 'workspace-write' if role in WRITERS and policy == 'allow' else 'read-only'
@@ -83,7 +89,8 @@ def execute(request: dict, run_dir: Path) -> dict:
     ok = result.halted_reason == 'natural' and bool(result.final_response.strip()) and not any(e['error'] for e in evidence)
     return {'id': task['id'], 'specialist': role, 'ok': ok, 'verified': False,
             'status': 'completed' if ok else 'incomplete', 'halted_reason': result.halted_reason,
-            'provider': request['provider'], 'model': request['model'], 'family': request['family'],
+            **(client.actual_route or {'provider': request['provider'], 'model': request['model'], 'family': request['family']}),
+            'requested_route': client.requested_route, 'routing_attempts': client.attempts,
             'tool_runtime': 'codex-native-sandbox' if native else 'hydra',
             'response': result.final_response[:24000], 'response_truncated': len(result.final_response) > 24000,
             'evidence': evidence, 'duration_seconds': round(time.monotonic() - started, 3),
@@ -101,8 +108,11 @@ def main() -> int:
     try:
         result = execute(request, args.request.parent)
     except Exception as exc:
+        from hydra.llm import LlmError
+        from hydra.provider_health import safe_message
         result = {'id': task_id, 'ok': False, 'verified': False, 'status': 'error',
-                  'error': type(exc).__name__, 'message': 'Worker failed; verify provider, inputs and local configuration.'}
+                  'error': type(exc).__name__, 'message': safe_message(str(exc)),
+                  'failure': exc.to_dict() if isinstance(exc, LlmError) else {'kind': 'runtime', 'message': safe_message(str(exc))}}
     from hydra.atomic_write import atomic_write_bytes
     atomic_write_bytes(args.request.parent / f'{task_id}.result.json', json.dumps(result, ensure_ascii=False).encode('utf-8'))
     print(json.dumps({'id': task_id, 'ok': result['ok'], 'status': result['status']}))

@@ -20,8 +20,8 @@ Design choices (scoped to one local runtime — see slice doctrine):
 2. **nomic asymmetric prefixes** — store with ``search_document: ``, query
    with ``search_query: `` (model-card fix the bare embedder omits).
 3. **Add-only, invalidate-don't-delete** — never overwrite (policy: no hard
-   deletes); exact-dup NOOP via ``content_hash`` UNIQUE plus a
-   cosine ``>= 0.95`` top-1 NOOP.
+   deletes); exact-dup NOOP via ``content_hash`` UNIQUE. Similar vectors do
+   not discard distinct or contradictory facts.
 4. **Hybrid retrieval + RRF(k=60)** — fuse vec0 KNN rank and FTS5 BM25 rank;
    catches literal IDs/error codes vectors miss; stdlib-only, no numpy.
 5. **Scoped rows** — every row carries ``scope`` ('hydra' | 'shared' | ...);
@@ -343,18 +343,25 @@ class UnifiedMemory:
         path: str | Path | None = None,
         embedder: _Embedder = embed_nomic,
     ) -> None:
-        self.path = Path(path).expanduser() if path else DEFAULT_DB_PATH
+        from hydra.embeddings import memory_path
+        self.path = Path(path).expanduser() if path else memory_path(DEFAULT_DB_PATH)
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             raise BackendUnavailable(f"cannot create memory directory {self.path.parent}: {exc}") from exc
         self._embedder = embedder
+        from hydra.embeddings import config, identity
+        embedding_config = config() if embedder is embed_nomic else None
+        self._embedding_identity = identity(embedding_config) if embedding_config is not None else None
+        if embedding_config is not None:
+            from hydra.embeddings import embed
+            self._embedder = lambda text: embed(text, embedding_config)
         # Derive the vector dimension from the embedder so a test-injected fake
         # (e.g. 14-dim bag-of-words) and the production 768-d nomic embedder
         # both work correctly. We probe with a minimal string before opening the
         # DB so any embedder failure raises BackendUnavailable before schema DDL.
         try:
-            _probe = embedder("probe")
+            _probe = self._embedder("probe")
         except Exception as exc:
             raise BackendUnavailable(f"embedder probe failed: {exc}") from exc
         if not isinstance(_probe, list) or not _probe:
@@ -399,6 +406,16 @@ class UnifiedMemory:
                 pass
         try:
             con.executescript(_SCHEMA)
+            con.execute('CREATE TABLE IF NOT EXISTS embedding_identity (id TEXT PRIMARY KEY)')
+            recorded = con.execute('SELECT id FROM embedding_identity').fetchone()
+            if self._embedding_identity:
+                if recorded and recorded[0] != self._embedding_identity:
+                    raise sqlite3.OperationalError('embedding model identity changed; select a separate database and reindex')
+                if not recorded and con.execute('SELECT COUNT(*) FROM entries').fetchone()[0]:
+                    raise sqlite3.OperationalError('existing vector identity unknown; use a separate database and reindex')
+                con.execute('INSERT OR IGNORE INTO embedding_identity VALUES (?)', (self._embedding_identity,))
+            elif recorded and self._embedder is embed_nomic:
+                raise sqlite3.OperationalError('configured vector database cannot use legacy embeddings; restore embedding config')
             self._ensure_vec_table(con)
             self._migrate_schema_v2(con)
             con.commit()
@@ -484,8 +501,8 @@ class UnifiedMemory:
         Embeds ``search_document: `` + ``text`` once, inserts the row + 768-d
         vector + FTS row, and logs an ADD event. Add-only: an exact duplicate
         (same ``scope``/``kind``/``text`` -> same ``content_hash``) is a NOOP
-        returning the existing id; a near-duplicate (cosine >= 0.95 to the
-        top-1 nearest in the same scope) is also a NOOP.
+        returning the existing id. Similar vectors alone never discard facts:
+        a negated instruction can have almost the same vector as its opposite.
 
         Raises :class:`BackendUnavailable` if the embedder is down (caller
         degrades). The store is never left half-written: the vector is computed
@@ -504,13 +521,6 @@ class UnifiedMemory:
 
         # Embed BEFORE writing so a failure leaves the store untouched.
         vec = self._embed(_DOC_PREFIX + body)
-
-        # Near-dup guard: NOOP if the nearest same-scope vector is >= threshold.
-        near = self._nearest_in_scope(vec, scope)
-        if near is not None:
-            near_id, sim = near
-            if sim >= DEDUP_COSINE_THRESHOLD:
-                return near_id
 
         now = _now_iso()
         tags_json = json.dumps(sorted({str(t) for t in tags})) if tags else "[]"

@@ -152,6 +152,8 @@ def _laya(request: dict) -> dict:
 def main() -> int:
     try:
         request = json.load(sys.stdin)
+        from hydra.local_resources import cpu_budget
+        resource_receipt = cpu_budget()
         # Third-party progress output must not corrupt the JSON protocol.
         with contextlib.redirect_stdout(sys.stderr):
             backend = request["backend"]
@@ -159,8 +161,15 @@ def main() -> int:
                 result = _needle(request)
             elif backend == "laya":
                 result = _laya(request)
+            elif backend == "embedding":
+                from hydra.embeddings import embed
+                texts = request['texts']
+                if not isinstance(texts, list) or not 1 <= len(texts) <= 64:
+                    raise ValueError('embedding worker requires 1..64 texts')
+                result = {'vectors': [embed(text, request['config']) for text in texts]}
             else:
                 raise ValueError(f"unknown local model backend: {backend}")
+        result['resource_budget'] = resource_receipt
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except ImportError as exc:
