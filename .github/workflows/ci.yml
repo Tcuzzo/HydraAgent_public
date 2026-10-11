@@ -70,6 +70,17 @@ jobs:
           python -m hydra --help
           python -m hydra tools
           python -c "import hydra.cli.cmd_ask, hydra.cli.cmd_chat, hydra.loop, hydra.proc"
+      - name: Install and verify Linux sandbox
+        if: runner.os == 'Linux'
+        # Fail visibly if the runner cannot isolate processes. Do not change
+        # OS security settings or fall back to unconstrained execution.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          bwrap --unshare-net --ro-bind /usr /usr --ro-bind /bin /bin \
+            --ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64 \
+            --proc /proc --dev /dev --die-with-parent --new-session /usr/bin/true
+          bwrap --version
       - name: tests
         run: |
           pip install -e ".[test,mcp]" -c constraints.txt
