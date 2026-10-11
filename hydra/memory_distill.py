@@ -6,7 +6,7 @@ Three public callables:
       Parse durable atomic facts from one chat turn using the injected
       extractor.  Returns [] when distill.enabled=False in the policy (fail-
       safe: the enabled flag is ALWAYS checked first).  The default extractor
-      calls the cloud client via ``providers.make_client('ollama-cloud')``.
+      uses the configured auditor provider and model through the normal factory.
 
   consolidate(mem, *, threshold?, policy?)
       Sleeptime deduplication job.  Scans all non-superseded rows and marks
@@ -26,11 +26,11 @@ and hydra/memory_policy.py:
   - No new deps beyond the existing repo stack.
   - mem0ai / sentence-transformers were NOT installed (PEP-668 env; native
     implementation preferred — minimal dependencies).
-  - Extraction uses the cloud OllamaClient the rest of the repo uses,
+  - Extraction uses the configured auditor transport,
     with a structured JSON prompt.  The extractor is an injection seam for
     tests (stub replaces the live client call).
-  - consolidate uses the same _cosine_similarity from semantic_recall.py and
-    the same struct.unpack vector load already used by UnifiedMemory.
+  - Consolidation groups exact text, kind and scope; it does not infer that
+    similar embeddings mean two instructions are equivalent.
   - All policy checks go through hydra.memory_policy.load_policy()  — same
     fail-safe loader used by UnifiedMemory.search.
 """
@@ -39,7 +39,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import struct
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -52,7 +51,7 @@ _ExtractorFn = Callable[[str], list[str]]
 def _operator_name() -> str:
     return os.environ.get("HYDRA_OPERATOR_NAME", "the operator")
 
-# Consolidation cosine threshold: rows with cosine >= this are near-duplicates.
+# Legacy argument retained for callers; similarity does not authorize archival.
 CONSOLIDATE_THRESHOLD = 0.90
 
 # ── Durable policy rules for the CORE block ──────────────────────────────────
@@ -133,7 +132,7 @@ _EXTRACT_SYSTEM = (
 
 
 def _make_cloud_extractor() -> _ExtractorFn:
-    """Build the live cloud extractor using the repo's providers.make_client.
+    """Build the configured auditor extractor using providers.make_client.
 
     Called lazily (only when needed) so import-time does not require a cloud
     key — tests inject a stub and never trigger this path.
@@ -142,9 +141,9 @@ def _make_cloud_extractor() -> _ExtractorFn:
         from hydra.providers import make_client
         from hydra.model_routing import load_routing
 
-        client, cfg = make_client("ollama-cloud")
         routing = load_routing()
-        _, model = routing.role_pair("auditor")  # cloud auditor role — same brain
+        provider, model = routing.role_pair("auditor")
+        client, cfg = make_client(provider)
     except Exception as exc:
         _LOG.warning("memory_distill: could not build cloud extractor (%s); facts skipped", exc)
 
@@ -199,7 +198,7 @@ def extract_facts(
         The raw conversation turn text (user + assistant concatenated is fine).
     extractor:
         A callable ``(turn_text: str) -> list[str]``.  Defaults to the live
-        cloud extractor (``providers.make_client('ollama-cloud')``).  Tests inject a
+        configured auditor extractor. Tests inject a
         deterministic stub.
     policy:
         A :class:`hydra.memory_policy.MemoryPolicy`.  Defaults to
