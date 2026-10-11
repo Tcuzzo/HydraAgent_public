@@ -237,25 +237,23 @@ flowchart TD
 
 `classify_task` reads the prompt's complexity and picks a role (fast / reasoning /
 judge). `_create_client` builds the client for that role's model; if the primary
-provider is unavailable it walks a fallback ladder — other cloud providers, then a
-free cloud model, then local Ollama — and **swaps both the client and the model
-name** so the downgraded client is asked for a model it actually serves. The
-substituted model is recorded in `last_substitution` and reported in the routing
-decision. Provider model catalogs are queried live (`GET /v1/models`, 60s cached)
-and **fail open** — a model absent from the catalog is inconclusive, never a
-rejection, so valid newer models are not gated off a stale list.
+provider is unavailable, it tries only the role's explicitly configured
+`fallbacks`, within one request deadline. Each attempted route carries its own
+provider, model, endpoint, and account. Successful substitution updates both the
+client and model and is recorded in `last_substitution` and the client's actual
+route. Exhaustion raises a
+literal failure; credentials do not implicitly authorize another paid provider.
+An incomplete provider catalog does not by itself prove model retirement. See
+the [runtime configuration and status guide](LOCAL-AGNOSTIC-RUNTIME.md).
 
 ```mermaid
 flowchart TD
     Classify[classify_task: complexity -> role] --> Create[_create_client: primary model]
     Create -- available --> Use[Use primary client + model]
-    Create -- unavailable --> Cloud[Other cloud providers]
-    Cloud -- one available --> Sub[Substitute client + model name]
-    Cloud -- all unavailable --> Free[Free cloud model]
-    Free -- available --> Sub
-    Free -- unavailable --> Local[Local Ollama - last resort]
-    Local --> Sub
-    Sub --> Record[last_substitution + routing decision report the model used]
+    Create -- unavailable --> Configured[Configured fallback routes only]
+    Configured -- succeeds --> Sub[Substitute client + model name]
+    Configured -- exhausted --> Failure[Literal failure with route status]
+    Sub --> Record[last_substitution and actual route record the model used]
     Use --> Loop[Agent Loop]
     Record --> Loop
 ```
