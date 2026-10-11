@@ -6,9 +6,12 @@ import json
 from pathlib import Path
 import sys
 from hydra.policy import ApprovalDenied
+from hydra.llm import LlmError
 
 
 def register_personal_commands(sub):
+    connections = sub.add_parser('connections', help='show official account links and five local OSS retrieval recipes')
+    connections.set_defaults(cmd='connections')
     team = sub.add_parser('team', help='plan and execute bounded specialist teams')
     team.set_defaults(cmd='team')
     modes = team.add_subparsers(dest='action', required=True)
@@ -52,13 +55,64 @@ def register_personal_commands(sub):
 
     zapier = sub.add_parser('zapier', help='prepare an official Zapier SDK/CLI/MCP harness')
     zapier.set_defaults(cmd='zapier')
-    zapier.add_argument('action', choices=['setup'])
+    zapier.add_argument('action', choices=['setup', 'status', 'tools', 'call'])
     zapier.add_argument('--directory', type=Path, required=True)
+    zapier.add_argument('--tool', help='SDK tool name for call')
+    zapier.add_argument('--arguments', default='{}', help='SDK tool arguments as a JSON object; keep secrets out of argv')
+    zapier.add_argument('--approval-policy', choices=['allow', 'ask', 'deny'], default='ask')
+
+    index = sub.add_parser('index', help='incremental source lookup with verified content keys')
+    index.set_defaults(cmd='index')
+    index.add_argument('action', choices=['refresh', 'search', 'read', 'embed', 'semantic-search'])
+    index.add_argument('query', nargs='?', help='search text or a source key')
+    index.add_argument('--root', type=Path, default=Path.cwd())
+    index.add_argument('--cache', type=Path)
+    index.add_argument('--verify', action='store_true', help='rehash every indexed file during refresh')
+    index.add_argument('--batch', type=int, default=16, help='maximum source-map embeddings in one finite tick')
+
+    health = sub.add_parser('model-health', help='inspect literal provider states and retry times')
+    health.set_defaults(cmd='model-health')
+    health.add_argument('--path', type=Path)
+    health.add_argument('--provider', help='inspect the configured provider model catalog')
+    health.add_argument('--refresh', action='store_true', help='refresh the catalog from its provider')
+    health.add_argument('--clear', help='explicitly clear one persisted route/account identity')
+    health.add_argument('--env-dir', type=Path)
+
+    residency = sub.add_parser('model-residency', help='explicitly load or unload one local Ollama model')
+    residency.set_defaults(cmd='model-residency')
+    residency.add_argument('action', choices=['load', 'unload'])
+    residency.add_argument('model')
+    residency.add_argument('--env-dir', type=Path)
+
+    memory = sub.add_parser('memory-audit', help='inventory duplicates/age and optionally save a recoverable snapshot')
+    memory.set_defaults(cmd='memory-audit')
+    memory.add_argument('--root', type=Path, required=True)
+    memory.add_argument('--stale-days', type=int, default=30)
+    memory.add_argument('--archive', type=Path, help='new snapshot directory outside the active tree; originals stay intact')
+
+    maintenance = sub.add_parser('maintenance', help='one finite local maintenance tick; suitable for cron or Task Scheduler')
+    maintenance.set_defaults(cmd='maintenance')
+    maintenance.add_argument('action', choices=['enqueue', 'tick', 'status'])
+    maintenance.add_argument('--queue', type=Path, default=Path.home() / '.hydraAgent' / 'maintenance.sqlite')
+    maintenance.add_argument('--operation', choices=['index', 'memory_audit'])
+    maintenance.add_argument('--root', type=Path)
+    maintenance.add_argument('--key', help='unique scheduled-slot key; repeating it does not duplicate a job')
+
+    tribunal = sub.add_parser('tribunal', help='run configured blind cross-family review with canon and essence')
+    tribunal.set_defaults(cmd='tribunal')
+    tribunal.add_argument('plan', type=Path)
+    tribunal.add_argument('--root', type=Path, default=Path.cwd())
+    tribunal.add_argument('--output-root', type=Path, default=Path.home() / '.hydraAgent' / 'tribunal-runs')
+    tribunal.add_argument('--private-profiles', type=Path)
+    tribunal.add_argument('--env-dir', type=Path)
 
 
 def cmd_personal(args) -> int:
     try:
-        if args.cmd == 'team':
+        if args.cmd == 'connections':
+            from hydra.connections import catalog
+            result = catalog()
+        elif args.cmd == 'team':
             from hydra.specialists import catalog, read_json, system_prompt
             from hydra.teams import make_plan, run_team
             if args.action == 'list':
@@ -91,11 +145,62 @@ def cmd_personal(args) -> int:
             if not isinstance(terms, list) or not all(isinstance(t, str) for t in terms):
                 raise ValueError('private terms file must contain a JSON string list')
             result = export_profiles(args.source, args.output, args.roles, private_terms=tuple(terms))
+        elif args.cmd == 'index':
+            from hydra.source_index import SourceIndex
+            index = SourceIndex(args.root, cache=args.cache)
+            if args.action in {'embed', 'semantic-search'}:
+                from hydra.source_semantic import fill, search
+                result = fill(index, batch=args.batch) if args.action == 'embed' else search(index, args.query)
+            else:
+                result = index.refresh(verify=args.verify) if args.action == 'refresh' else (
+                    index.search(args.query) if args.action == 'search' else index.read(args.query))
+        elif args.cmd == 'model-health':
+            from hydra.provider_health import HealthStore
+            if args.clear and (args.provider or args.refresh):
+                raise ValueError('--clear cannot be combined with catalog inspection')
+            if args.refresh and not args.provider:
+                raise ValueError('--refresh requires --provider')
+            if args.clear:
+                HealthStore(args.path).clear(args.clear)
+                result = HealthStore(args.path).snapshot()
+            elif args.provider:
+                from hydra.provider_health import catalog_report
+                result = catalog_report(args.provider, env_dir=args.env_dir, health_path=args.path, refresh=args.refresh)
+            else:
+                result = HealthStore(args.path).snapshot()
+        elif args.cmd == 'model-residency':
+            from hydra.model_residency import residency
+            result = residency(args.action, args.model, env_dir=args.env_dir)
+        elif args.cmd == 'memory-audit':
+            from hydra.memory_audit import audit
+            result = audit(args.root, stale_days=args.stale_days, archive=args.archive)
+        elif args.cmd == 'maintenance':
+            from hydra.maintenance_queue import MaintenanceQueue
+            queue = MaintenanceQueue(args.queue)
+            if args.action == 'enqueue':
+                if not args.root:
+                    raise ValueError('maintenance enqueue requires --root, --operation and --key')
+                result = queue.enqueue(args.operation, args.root, args.key)
+            else:
+                result = queue.tick() if args.action == 'tick' else queue.snapshot()
+        elif args.cmd == 'tribunal':
+            from hydra.tribunal import run_tribunal
+            from hydra.specialists import read_json
+            result = run_tribunal(read_json(args.plan, 131072), root=args.root, output_root=args.output_root,
+                                  private_root=args.private_profiles, env_dir=args.env_dir)
         else:
-            from hydra.zapier_harness import setup
-            result = setup(args.directory)
+            from hydra.zapier_harness import setup, status, sdk_call
+            if args.action == 'setup':
+                result = setup(args.directory)
+            elif args.action == 'status':
+                result = status(args.directory)
+            else:
+                if args.action == 'call' and not args.tool:
+                    raise ValueError('zapier call requires --tool')
+                result = sdk_call(args.directory, tool=args.tool if args.action == 'call' else None,
+                                  arguments=json.loads(args.arguments), approval_policy=args.approval_policy)
         print(json.dumps(result, indent=2, ensure_ascii=False))
-        return 1 if result.get('isError') or result.get('verdict') == 'RED' else 0
-    except (ValueError, OSError, RuntimeError, ImportError, ApprovalDenied) as exc:
+        return 1 if result.get('isError') or result.get('verdict') in {'RED', 'fail', 'inconclusive'} or result.get('status') in {'degraded', 'not_installed', 'failed', 'error', 'unavailable', 'lease_lost'} else 0
+    except (ValueError, OSError, RuntimeError, ImportError, ApprovalDenied, LlmError) as exc:
         print(f'{args.cmd}: {type(exc).__name__}: {exc}', file=sys.stderr)
         return 2

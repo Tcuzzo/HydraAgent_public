@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -20,7 +20,7 @@ from typing import Any
 import yaml
 
 from hydra.llm import LlmError, OllamaClient, ChatMessage
-from hydra.providers import ProviderError, make_client, list_providers
+from hydra.providers import ProviderConfig, ProviderError, make_client, list_providers
 from hydra.model_routing import load_routing
 
 
@@ -97,6 +97,8 @@ class ModelConfig:
     supports_tools: bool = True
     supports_vision: bool = False
     supports_json_mode: bool = True
+    family: str = ''
+    fallbacks: list[dict] = field(default_factory=list)
 
 
 @dataclass 
@@ -199,6 +201,8 @@ class ModelRouter:
                 model=model,
                 base_url=role_config.get("base_url"),
                 api_key_env=role_config.get("api_key_env"),
+                family=role_config.get("family", ""),
+                fallbacks=role_config.get("fallbacks", []),
             )
 
         # Add verifier model (auditor role or default — default from the YAML).
@@ -464,147 +468,58 @@ Output JSON exactly:
         return (tokens / 1_000_000) * model.cost_per_1m_tokens
     
     def _create_client(self, model_config: ModelConfig) -> Any:
-        """Create an LLM client for a model config, cloud-first.
+        """Use the requested route and only its explicitly configured fallbacks.
 
-        Returns whatever ``make_client`` builds for the resolved provider: an
-        ``OllamaClient`` for HTTP providers, or a duck-typed ``CodexClient``
-        (local CLI) for the ``codex`` provider. The annotation is ``Any``
-        because both share only the ``.chat()``/``.list_models()`` surface the
-        caller depends on, not a common base class.
-
-        Ladder: the configured provider → other configured CLOUD providers →
-        local ollama (last resort). A downgrade to local is recorded in
-        ``self.last_substitution`` and logged at WARNING — it is never silent,
-        so the operator always knows when the agent is on local vs cloud.
+        Availability is established by a real chat, never by constructing a client.
+        No model is assumed free, unlimited, or available because of its name.
         """
-        log = logging.getLogger(__name__)
+        from hydra.provider_health import RoutedClient, attach_health
         requested = model_config.provider
-
-        def _mk(provider: str):
-            # Pass env_dir only when set, so callers/mocks with a strict
-            # make_client(provider) signature keep working.
-            if self.env_dir is None:
-                return make_client(provider)
-            return make_client(provider, env_dir=self.env_dir)
-
-        def _model(cfg: Any, default: str) -> str:
-            value = getattr(cfg, "model", None)
-            return value if isinstance(value, str) and value else default
-
-        # 1. The configured provider. For mundane/read tasks this is already a
-        #    local model (free, reliable) — we return it as-is, no cloud forced.
-        first_err: Exception | None = None
-        try:
-            client, cfg = _mk(requested)
-            if isinstance(client, OllamaClient):
+        def factory(provider):
+            try:
+                client, cfg = make_client(provider) if self.env_dir is None else make_client(provider, env_dir=self.env_dir)
+            except (ProviderError, LlmError):
+                if provider != requested or not model_config.base_url:
+                    raise
+                key = os.environ.get(model_config.api_key_env) if model_config.api_key_env else None
+                if model_config.api_key_env and not key:
+                    raise ProviderError(f"role requires missing API key variable {model_config.api_key_env}")
+                cfg = ProviderConfig(name=provider, endpoint=model_config.base_url, model=model_config.model, api_key=key)
+                client = attach_health(OllamaClient(endpoint=cfg.endpoint, api_key=key), cfg)
+            if not isinstance(getattr(cfg, 'name', None), str):
+                cfg = ProviderConfig(name=provider, endpoint='', model=model_config.model, api_key=None)
+            if provider == requested and isinstance(client, OllamaClient):
                 if model_config.base_url:
-                    client.endpoint = model_config.base_url.rstrip("/")
+                    client.endpoint = model_config.base_url.rstrip('/')
                 if model_config.api_key_env:
                     key = os.environ.get(model_config.api_key_env)
                     if not key:
                         raise ProviderError(f"role requires missing API key variable {model_config.api_key_env}")
                     client.api_key = key
-            self.last_substitution = {
-                "requested": requested, "used": model_config.model or _model(cfg, ""),
-                "used_provider": getattr(cfg, "name", requested),
-                "downgraded_to_local": False, "note": "",
-            }
-            return client
-        except Exception as exc:  # ProviderError or any construction error
-            first_err = exc
-
-        # A role can directly describe a compatible endpoint without an env file.
-        if model_config.base_url and requested not in list_providers():
-            api_key = os.environ.get(model_config.api_key_env) if model_config.api_key_env else None
-            if not model_config.api_key_env or api_key:
-                client = OllamaClient(endpoint=model_config.base_url, api_key=api_key)
-                self.last_substitution = {
-                    "requested": requested, "used": model_config.model,
-                    "used_provider": requested, "downgraded_to_local": False,
-                    "note": "explicit role endpoint",
-                }
-                return client
-
-        # 2. Other CLOUD providers (by provider name) before touching local.
-        #    This loop handles provider-level fallbacks (e.g. a second cloud provider).
-        for candidate in self.CLOUD_FALLBACKS:
-            if candidate == requested or candidate == "ollama":
-                continue
-            try:
-                client, cfg = _mk(candidate)
-            except Exception:
-                continue
-            log.warning(
-                "provider %r unavailable (%s); using cloud provider %r instead",
-                requested, first_err, getattr(cfg, "name", candidate),
-            )
-            self.last_substitution = {
-                "requested": requested, "used": _model(cfg, model_config.model),
-                "used_provider": getattr(cfg, "name", candidate),
-                "downgraded_to_local": False,
-                "note": f"cloud substitution for {requested}",
-            }
-            return client
-
-        # 3. FREE cloud model tier — tried before any local downgrade.
-        #    These models live on the same ollama-cloud provider but carry no quota.
-        #    We swap the model name on the same provider so we stay cloud.
-        #    Each step logs WARNING — NEVER silent (no silent downgrade).
-        routing = load_routing()
-        free_models = list(routing.free_fallback_models)
-        # The primary model name — used to skip it if it appears in the free list.
-        primary_model = model_config.model
-        for free_model in free_models:
-            if free_model == primary_model:
-                continue
-            # Build a temporary ModelConfig pointing at the free model on the same
-            # ollama-cloud provider (base_url comes from the roster when available).
-            free_entry = None
-            for entry in routing.roster:
-                if entry.model == free_model and entry.provider == "ollama-cloud":
-                    free_entry = entry
-                    break
-            free_provider = "ollama-cloud"
-            try:
-                client, cfg = _mk(free_provider)
-            except Exception as free_err:
-                log.warning(
-                    "free cloud model %r on provider %r unavailable (%s); trying next",
-                    free_model, free_provider, free_err,
-                )
-                continue
-            log.warning(
-                "paid model %r unavailable (%s); downgrading to FREE cloud model %r on %r",
-                primary_model, first_err, free_model, free_provider,
-            )
-            self.last_substitution = {
-                "requested": requested,
-                "used": free_model,
-                "used_provider": free_provider,
-                "downgraded_to_local": False,
-                "note": f"free-cloud fallback: {primary_model} -> {free_model}",
-            }
-            return client
-
-        # 4. Local ollama — last resort, surfaced loudly (never silent).
-        log.warning(
-            "no cloud provider available for %r (%s); DOWNGRADING to local ollama",
-            requested, first_err,
-        )
+            return client, cfg
         try:
-            client, cfg = _mk("ollama")
-            used = _model(cfg, load_routing().role_pair("worker")[1])
-        except Exception:
-            client = OllamaClient(endpoint="http://localhost:11434")
-            used = load_routing().role_pair("worker")[1]
+            client, cfg = factory(requested)
+        except (ProviderError, LlmError):
+            if not model_config.fallbacks:
+                raise
+            client, cfg = None, ProviderConfig(name=requested, endpoint='', model=model_config.model, api_key=None)
         self.last_substitution = {
-            "requested": requested, "used": used,
-            "used_provider": "ollama",
-            "downgraded_to_local": True,
-            "note": f"all cloud providers unavailable ({first_err}); local fallback",
+            'requested': requested, 'used': model_config.model, 'used_provider': requested,
+            'family': model_config.family, 'downgraded_to_local': False, 'note': 'configured; no call completed yet',
         }
-        return client
-    
+        def completed(route):
+            changed = route['provider'] != requested or route['model'] != model_config.model
+            self.last_substitution = {
+                'requested': requested, 'used': route['model'], 'used_provider': route['provider'],
+                'family': route['family'], 'downgraded_to_local': route['provider'] == 'ollama' and requested != 'ollama',
+                'note': 'explicit configured fallback' if changed else '',
+            }
+            if changed:
+                logging.getLogger(__name__).warning('Configured fallback used %s/%s instead of %s/%s',
+                    route['provider'], route['model'], requested, model_config.model)
+        return RoutedClient(client, cfg, model=model_config.model, family=model_config.family,
+                            fallbacks=model_config.fallbacks, factory=factory, on_route=completed)
+
     def get_client_for_task(self, task_description: str) -> tuple[OllamaClient, RoutingDecision]:
         """Get appropriate client for a task."""
         decision = self.classify_task(task_description)

@@ -77,6 +77,8 @@ class RouteQueue:
 
     async def start(self) -> None:
         """Spawn worker coroutines."""
+        if any(not worker.done() for worker in self._workers):
+            return
         self._stop.clear()
         self._workers = [
             asyncio.create_task(self._worker(), name=f"route-worker-{i}")
@@ -116,7 +118,8 @@ class RouteQueue:
         # a DeprecationWarning when there is no current event loop set).
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         try:
-            self._broker.put_nowait({"task": task, "fut": fut})
+            self._broker.put_nowait({"task": task, "fut": fut,
+                                    "deadline": asyncio.get_running_loop().time() + self._cfg.queue_timeout_s})
         except asyncio.QueueFull:
             return {"status": "rejected", "reason": "queue_full"}
 
@@ -131,7 +134,10 @@ class RouteQueue:
             # wait_for cancellation above; that protection ends once wait_for
             # raises, so this explicit cancel is the mark.
             fut.cancel()
-            return {"status": "timed_out"}
+            return {"status": "timed_out", "outcome": "unknown_if_started", "retry_safe": False}
+        except asyncio.CancelledError:
+            fut.cancel()
+            raise
 
     # ------------------------------------------------------------------
     # Internal worker
@@ -145,11 +151,20 @@ class RouteQueue:
                     return
                 task: dict = item["task"]
                 fut: asyncio.Future = item["fut"]
+                if fut.done():
+                    continue
                 try:
                     decision = self._gw.route(task)
                     sem = self._sems.get(decision.tier, self._sems["tier3"])
                     async with sem:
-                        result = await self._dispatch(decision, task)
+                        if fut.done():
+                            continue
+                        remaining = item.get('deadline', float('inf')) - asyncio.get_running_loop().time()
+                        if remaining <= 0:
+                            if not fut.done():
+                                fut.set_result({'status': 'timed_out', 'outcome': 'not_started'})
+                            continue
+                        result = await asyncio.wait_for(self._dispatch(decision, task), timeout=remaining)
                     if not fut.done():
                         fut.set_result(
                             {
@@ -159,6 +174,9 @@ class RouteQueue:
                                 "result": result,
                             }
                         )
+                except asyncio.TimeoutError:
+                    if not fut.done():
+                        fut.set_result({'status': 'timed_out', 'outcome': 'unknown_if_started', 'retry_safe': False})
                 except Exception as exc:  # noqa: BLE001
                     log.exception("Worker error processing task %s", task.get("id"))
                     if not fut.done():

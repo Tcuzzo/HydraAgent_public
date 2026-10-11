@@ -274,6 +274,13 @@ def main(argv: list[str] | None = None) -> int:
         "mcp": cmd_personal,
         "public-profiles": cmd_personal,
         "zapier": cmd_personal,
+        "index": cmd_personal,
+        "model-health": cmd_personal,
+        "model-residency": cmd_personal,
+        "memory-audit": cmd_personal,
+        "maintenance": cmd_personal,
+        "connections": cmd_personal,
+        "tribunal": cmd_personal,
     }[args.cmd](args)
 
 

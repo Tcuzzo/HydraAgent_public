@@ -36,6 +36,7 @@ training = ["cactus-needle[train]>=3.2.0,<4", "laya>=0.4.2,<0.5"]
 memory = [
   "sqlite-vec>=0.1.9",
 ]
+igpu = ["sentence-transformers[openvino]>=3.4,<6"]
 # Optional GPU telemetry backend.
 #   pynvml: GPU telemetry in hydra/host_telemetry.py (optional — skipped when absent).
 gateway = [

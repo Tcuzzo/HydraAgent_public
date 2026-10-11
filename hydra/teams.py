@@ -23,7 +23,7 @@ def make_plan(goal: str, provider: str, model: str) -> dict:
 def validate_plan(plan: dict) -> dict:
     if not isinstance(plan, dict) or not isinstance(plan.get('goal'), str) or not plan['goal'].strip() or len(plan['goal']) > 16000:
         raise ValueError('team goal must be nonempty text of at most 16000 characters')
-    if set(plan) - {'schema', 'goal', 'provider', 'model', 'family', 'max_concurrency', 'max_iterations', 'timeout_seconds', 'tasks', 'require_independent_review'}:
+    if set(plan) - {'schema', 'goal', 'provider', 'model', 'family', 'fallbacks', 'max_concurrency', 'max_iterations', 'timeout_seconds', 'tasks', 'require_independent_review'}:
         raise ValueError('unknown team plan fields')
     if plan.get('schema', 'hydra.team.v1') != 'hydra.team.v1' or type(plan.get('require_independent_review', False)) is not bool:
         raise ValueError('invalid team schema or review flag')
@@ -37,7 +37,7 @@ def validate_plan(plan: dict) -> dict:
         raise ValueError('task IDs must be unique safe identifiers')
     by_id = dict(zip(ids, tasks))
     for task in tasks:
-        if set(task) - {'id', 'specialist', 'depends_on', 'prompt', 'provider', 'model', 'family', 'images'}:
+        if set(task) - {'id', 'specialist', 'depends_on', 'prompt', 'provider', 'model', 'family', 'fallbacks', 'images'}:
             raise ValueError('unknown task fields')
         if task.get('specialist') not in ROLES:
             raise ValueError('unknown specialist')
@@ -79,6 +79,9 @@ def validate_plan(plan: dict) -> dict:
             value = task.get(key, plan.get(key, ''))
             if not isinstance(value, str) or len(value) > 256:
                 raise ValueError(f'{key} must be bounded text')
+        fallbacks = task.get('fallbacks', plan.get('fallbacks', []))
+        if not isinstance(fallbacks, list) or len(fallbacks) > 7 or any(not isinstance(row, dict) or set(row) - {'provider', 'model', 'family'} or any(not isinstance(row.get(k), str) or not row[k].strip() or len(row[k]) > 256 for k in ('provider', 'model', 'family')) for row in fallbacks):
+            raise ValueError('fallbacks require at most seven explicit provider/model/family routes')
         if 'images' in task and (not isinstance(task['images'], list) or len(task['images']) > 4 or not all(isinstance(p, str) for p in task['images'])):
             raise ValueError('images must be a list of at most four workspace paths')
     if plan.get('require_independent_review'):
@@ -91,9 +94,6 @@ def validate_plan(plan: dict) -> dict:
             for builder in builders:
                 if builder['id'] not in ancestors[reviewer['id']]:
                     raise ValueError('independent reviewer must depend on every builder')
-                bf = builder.get('family', plan.get('family'))
-                if not rf or not bf or rf.casefold() == bf.casefold():
-                    raise ValueError('independent review requires explicit distinct configured model families')
     return plan
 
 
@@ -118,6 +118,8 @@ def run_team(plan: dict, *, root: Path, output_root: Path, approval_policy: str 
         request = {'task': task, 'goal': plan['goal'], 'root': str(root),
                    'provider': task.get('provider', plan.get('provider')), 'model': task.get('model', plan.get('model')),
                    'family': task.get('family', plan.get('family', 'unspecified')),
+                   'fallbacks': task.get('fallbacks', plan.get('fallbacks', [])),
+                   'health_path': str(root / '.hydra' / 'model-health.json'),
                    'approval_policy': approval_policy, 'max_iterations': plan.get('max_iterations', 8),
                    'timeout_seconds': plan.get('timeout_seconds', 300),
                    'private_root': str(private_root) if private_root else None,
@@ -134,5 +136,31 @@ def run_team(plan: dict, *, root: Path, output_root: Path, approval_policy: str 
             outcomes.append(read_json(result_path, 131072))
     report.update(schema='hydra.team.v1', run_id=run_dir.name, run_directory=str(run_dir), outcomes=outcomes,
                   verified=False, verification_note='Completed execution is not a quality certification; inspect artifacts and recorded evidence.')
+    report['independence'] = team_independence(plan, outcomes)
     (run_dir / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     return report
+
+
+def team_independence(plan: dict, outcomes: list[dict]) -> dict:
+    if not plan.get('require_independent_review'):
+        return {'status': 'not_required', 'basis': 'operator-declared model family labels'}
+    rows = {row['id']: row for row in outcomes}
+    builders = [t for t in plan['tasks'] if t['specialist'] == 'software_engineer']
+    reviewers = [t for t in plan['tasks'] if t['specialist'] == 'code_reviewer']
+    reasons = []
+    for task in builders + reviewers:
+        result = rows.get(task['id'], {})
+        if not result.get('ok') or not result.get('family') or result.get('family') == 'unspecified':
+            reasons.append('Missing successful execution with an explicit family: ' + task['id'])
+    for builder in builders:
+        for reviewer in reviewers:
+            bf, rf = rows.get(builder['id'], {}).get('family', ''), rows.get(reviewer['id'], {}).get('family', '')
+            if bf.casefold() == rf.casefold():
+                reasons.append('Builder and reviewer used the same configured family')
+            build, review = rows.get(builder['id'], {}), rows.get(reviewer['id'], {})
+            if build.get('provider') and (build.get('provider'), build.get('model')) == (review.get('provider'), review.get('model')):
+                reasons.append('Builder and reviewer used the same provider/model identity')
+            if build.get('identity') and build['identity'] == review.get('identity'):
+                reasons.append('Builder and reviewer used the same endpoint/account/model identity')
+    return {'status': 'degraded' if reasons else 'independent', 'reasons': reasons,
+            'basis': 'operator-declared model family labels; distinct labels do not prove different model weights'}
