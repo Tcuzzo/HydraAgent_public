@@ -59,3 +59,18 @@ def test_refresh_limit_does_not_delete_existing_snapshot(tmp_path):
     with pytest.raises(ValueError, match='limit'):
         index.refresh(max_files=1)
     assert index.search('a', refresh=False)['matches']
+
+
+def test_rejected_content_key_invalidates_unchanged_metadata(tmp_path, monkeypatch):
+    code = tmp_path / 'a.py'
+    code.write_text('def old_symbol(): pass')
+    index = SourceIndex(tmp_path, cache=tmp_path / 'cache.db')
+    stamp = index._stamp(code)
+    monkeypatch.setattr(index, '_stamp', lambda path: stamp)
+    key = index.search('old_symbol')['matches'][0]['key']
+    code.write_text('def new_symbol(): pass')
+    with pytest.raises(ValueError, match='stale'):
+        index.read(key)
+    found = index.search('new_symbol')
+    assert found['matches'][0]['key'] != key
+    assert 'new_symbol' in index.read(found['matches'][0]['key'])['content']

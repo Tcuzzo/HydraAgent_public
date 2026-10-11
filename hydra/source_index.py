@@ -151,6 +151,11 @@ class SourceIndex:
         with path.open('rb') as stream:
             raw = stream.read(MAX_FILE_BYTES + 1)
         if len(raw) > MAX_FILE_BYTES or hashlib.sha256(raw).hexdigest() != digest:
+            # A restore can preserve metadata while changing bytes. Mark this
+            # exact cached version dirty so the next lookup repairs the map,
+            # instead of returning the rejected key forever.
+            with self._db() as db:
+                db.execute("UPDATE files SET stamp='' WHERE path=? AND digest=?", (relative, digest))
             raise ValueError('stale source key; refresh source lookup')
         return {'status': 'ready', 'path': relative, 'key': key, 'content': raw[:max_bytes].decode('utf-8', errors='replace'),
                 'bytes_read': min(len(raw), max_bytes), 'truncated': len(raw) > max_bytes, 'freshness': 'content_verified'}
