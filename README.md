@@ -10,6 +10,9 @@ Python 3.11+ · Linux, macOS, Windows · [MIT](LICENSE.md)
 
 [Get started](#get-started) · [Choose your models](#choose-your-models) · [Needle and Laya](#needle-and-laya) · [Training](docs/TRAINING.md) · [Command reference](docs/CLI-REFERENCE.md)
 
+**Local runtime guide:** [SDK account links, interchangeable models, CPU selectors,
+iGPU embeddings, source indexing and blind review](docs/LOCAL-AGNOSTIC-RUNTIME.md).
+
 ## What you can do
 
 - **Understand a codebase:** find the entry point, trace a feature, or explain a failure.
@@ -19,7 +22,9 @@ Python 3.11+ · Linux, macOS, Windows · [MIT](LICENSE.md)
 - **Choose where inference runs:** use local compute, cloud APIs, or both.
 - **Add capabilities:** load local skill playbooks, enable browser tools, or connect Telegram.
 - **Coordinate specialists:** run a bounded team for vision, design, engineering, testing, review, Kaizen and Lean Six Sigma.
-- **Connect your apps:** expose Hydra through MCP or attach configured MCP servers, including the official Zapier SDK harness.
+- **Connect your apps:** run the official Zapier SDK locally, with account links and explicit action receipts. Hosted Zapier MCP is not required.
+- **Find current source faster:** share an incremental symbol index and verify content keys before reading.
+- **Keep failures literal:** honor provider resets, pause exhausted accounts for eight hours, and use only configured fallbacks.
 
 Try a concrete request: “Find why the tests fail, make the smallest fix, and run the relevant tests.” Hydra's usefulness depends on the selected model and the tools available on your machine.
 

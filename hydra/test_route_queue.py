@@ -12,6 +12,26 @@ class FakeGateway:
 
 
 @pytest.mark.asyncio
+async def test_expired_queued_task_never_dispatches_and_start_is_idempotent():
+    calls = []
+    release = asyncio.Event()
+    async def dispatch(decision, task):
+        calls.append(task['id'])
+        await release.wait()
+    q = RouteQueue(GatewayConfig(route_workers=1, queue_timeout_s=0.03), gateway=FakeGateway(), dispatch=dispatch)
+    # Expire before workers start; a stale queued request must do no work.
+    assert (await q.submit({'id': 2}))['status'] == 'timed_out'
+    await q.start()
+    workers = list(q._workers)
+    await q.start()
+    assert q._workers == workers
+    await asyncio.sleep(0.02)
+    assert calls == []
+    release.set()
+    await q.stop()
+
+
+@pytest.mark.asyncio
 async def test_processes_and_returns_result():
     async def dispatch(decision, task):
         return f"done:{task['id']}"
