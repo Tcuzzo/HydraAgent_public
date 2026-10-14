@@ -28,7 +28,7 @@ wcwidth==0.9.1
 # `pip install -c constraints.txt pytest pytest-asyncio`). asyncio_mode="auto"
 # plus the shipped async tests require pytest-asyncio; pinned so CI is
 # reproducible and never RED on a missing plugin.
-iniconfig==2.3.0
+iniconfig==2.3.1
 pluggy==1.6.0
 pytest==9.1.1
 pytest-asyncio==1.4.0
