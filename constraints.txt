@@ -18,7 +18,7 @@ PyYAML==6.0.3
 qrcode==8.2
 referencing==0.37.0
 rich==15.0.0
-rpds-py==2026.6.3
+rpds-py==2026.9.1
 textual==8.2.8
 typing_extensions==4.16.0
 uc-micro-py==2.0.0
