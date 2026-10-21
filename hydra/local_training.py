@@ -167,6 +167,8 @@ def prepare_training(backend, train_file, eval_file, out, *, epochs=1, timeout=1
             "provenance_files": provenance_files, "split_validation": "exact_inputs_and_file_groups" if grouped else "exact_inputs",
             "model": model or ("needle3" if backend == "needle" else "jaredpalmer/kev-0.8b@v1.0"),
             "promote": False, "remote_training_calls": 0,
+            "warnings": (["Local Needle tuning drops the untrained confidence head; candidate confidence is null, not a calibrated success probability."]
+                         if backend == "needle" else []),
             "limitations": ["Evaluation applies only to these labeled tasks", "Calibration is not fitted on the evaluation split",
                             "Use a separate untouched test set after selecting among multiple candidates"]}
 

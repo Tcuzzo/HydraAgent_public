@@ -118,7 +118,10 @@ The Needle recipe uses official Needle 3 on CPU: one example per batch, learning
 rate `1e-4`, rank 8, alpha 16, seed 42, and a 512-token training ceiling. It refuses
 an example that would lose its target through the SDK's truncation. Its evaluation
 split is never passed to the optimizer. Local training does not fit Needle's
-confidence head, so the exported candidate reports `confidence: null`. Other
+confidence head, so the exported candidate reports `confidence: null`. The run
+receipt records this warning and `needle_select` exposes `confidence_available`
+alongside the raw value; missing confidence is never replaced with a success
+score. Other
 architectures, longer sequences, or accelerator training recipes can use the
 upstream SDK directly.
 
