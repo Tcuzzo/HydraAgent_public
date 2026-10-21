@@ -55,6 +55,7 @@ model/route without calling the model.
 | `setup` | Guided provider setup (local Ollama, a cloud key, or Sign in with ChatGPT). |
 | `init [--check]` | Initialize installed Needle and Kev with real local inference; `--check` only inspects dependencies. Use the complete installer in QUICKSTART first. |
 | `decide --backend kev --state <json> --questions <json>` | Obtain a typed local choice, score or probability. A prediction does not execute an action or grant permission. |
+| `train --backend <needle\|kev> --train <jsonl> --eval <jsonl> --out <new-dir>` | Train locally, evaluate the starting model and candidate on held-out inputs, and save provenance. `--plan-only` validates without training. See [training](TRAINING.md). |
 | `providers` | List configured providers. |
 | `models --provider <name>` | List a provider's models. |
 | `roles` | Show planner/doer/auditor model routing. |
