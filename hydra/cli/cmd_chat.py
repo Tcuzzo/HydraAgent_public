@@ -744,6 +744,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 notify_telegram=True,  # Enabled — callback infrastructure verified working
             )
             tui.root = root
+            tui.memory_workspace_root = memory_workspace_root
             tui.tools = tools
             tui._chat_messages.append(
                 {
