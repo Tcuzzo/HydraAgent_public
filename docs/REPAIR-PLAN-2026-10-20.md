@@ -97,3 +97,123 @@ operator credentials, model selection or existing memory is replaced.
 These rules guide implementation and verification. The user's current request
 authorizes the repairs and shipping work; it does not require another approval
 round for ordinary reversible engineering steps.
+
+## Implementation record — 2026-10-21
+
+The release candidate was published for review in
+[PR #45](https://github.com/Tcuzzo/HydraAgent_public/pull/45). That PR records
+the current publication state, independent review and Linux, macOS and Windows
+CI results. This dated implementation record does not establish deployment on
+an operator's machine. Results identify the tested revision; results from an
+earlier snapshot do not approve later repairs.
+
+| Area | Implemented behavior |
+| --- | --- |
+| Complete installation | `scripts/install_local.py` creates an owned environment outside the checkout, installs CPU PyTorch, Needle 3.2.1, sqlite-vec and official Kev pinned to `1f04cfa28e6a708485b28a9585010b9e436b776e`, then initializes the installed package. Python 3.12 or 3.13 is required for this bundle. An existing unowned destination is refused. |
+| Local helper models | `hydra init` runs actual loading and inference probes; `hydra init --check` reports dependencies only. Needle proposals and Kev typed answers pass schema checks and remain subject to the action policy. Neither helper replaces the configured conversational model. |
+| Memory and knowledge | Ask, both chat surfaces and team workers share bounded recall. Current source membership and workspace identity constrain retrieval. Actual tool observations produce episodes, result hashes and artifact links; model narratives do not become verified facts. SQLite/FTS retrieval remains available when embeddings are unavailable. |
+| Bot team | Ten profiles include Hydra Bot, Grok Bot and Seam Bot alongside the original seven. Eight BACKS playbooks are packaged with their source revision and content hashes, canon and essence. The default sequence covers framing, investigation, repair, testing and review. Grok Bot is a configured role, not a bundled xAI model. |
+| Training | Source-linked exports separate training and evaluation groups. The local runner seals inputs, bounds the worker and logs, evaluates the original and candidate, and preserves failure receipts. It never automatically promotes a checkpoint. |
+
+See [Models](MODELS.md), [Memory and learning](MEMORY-LEARNING.md),
+[Training](TRAINING.md), and the [team guide](PERSONAL-ORCHESTRATION.md) for
+configuration and receipt formats.
+
+### Workflow defects exposed by independent review
+
+Each reproduced defect received a failing regression committed before its
+repair. The corrected paths are covered by `hydra/test_review_*.py`; those
+contracts remain unchanged during implementation.
+
+| Observed weakness | Repair and observable contract |
+| --- | --- |
+| A successful provider or root command could leave the live app using old runtime state or old truth context. Native execution could use a different directory or policy from the displayed scope. | Rebind the live client, loop, tools and native scope together; clear cached work loops and replace workspace context. Reject scope changes while a turn is active. Exclude linked wiki paths that escape the workspace. |
+| A second prompt could be paired with the first response; provider fallback could lose already executed tools. | Admit only one active turn, retain its accepted prompt, and carry partial transcripts, observations and remaining iteration budget into fallback. |
+| File-specific search could report no match for valid generated training labels. Status commands could fail instead of reporting the selected runtime. | Match literal files correctly within the workspace boundary; report runtime, root and policy with verification explicitly unperformed. Preserve exact packaged library bytes on Windows checkouts. |
+| Legacy work could exceed the requested iteration cap, and a slow HTTP response could outlive its nominal timeout. | Apply the requested cap across retries and enforce an outer deadline on the HTTP worker, including slow streaming. |
+| An interrupted file writer could leave an overwritten file without its prior contents. | Checkpoint exact preimages before `fs_write` and `fs_edit` mutate files. A real timed-out team worker can leave a recoverable checkpoint even without a completed worker report. |
+| A failed process could show a success icon; requested traces and session-save errors could disappear. | Preserve explicit tool failure status, write actual per-turn trace IDs/counts/steps/halt reasons on both chat surfaces, and show session persistence errors while retaining the visible answer. Discarded speculative drafts cannot replace the selected work receipt. |
+| Closing the UI could allow a pending model proposal to write afterward. | Propagate cancellation into the loop and check it before further tool dispatch. Preserve completed observations. Actual native subprocess tests confirm that cancellation and timeout terminate owned descendants before delayed writes. Explicit Python launchers also support interpreter paths containing spaces. Windows behavior remains subject to the CI result. |
+| A successful repair could remain blocked by its original failing check. | Keep the original failed observation and link it to a later successful invocation of the same tool with the same canonical arguments. Unresolved failures and unmet artifact acceptance conditions still block the team; an unrelated successful command cannot erase a failure. |
+
+### Evidence obtained so far
+
+| Exercise | Observed result and limit |
+| --- | --- |
+| Original public regression baseline | 807 passed, 1 failed, 6 skipped and 7 deselected. The failure was a DNS-resolution diagnostic reported as a private-address rejection; that diagnostic was repaired. |
+| Earlier integrated snapshot | Revision `59fee0ce4e455ed785ffe223df853d59acdc0610` completed 898 tests with 10 skips. This predates the independent-review repairs and is not the final candidate's result. |
+| Corrected runtime regression suite | Revision `67991150014e9294186a26ff33c9d1bcf86d0baa` completed 940 tests with 9 skips in 74.61 seconds on Linux/Python 3.12. The skips require the missing local configuration, usable nested Bubblewrap confinement, or a live embedding service. The GitHub matrix separately exercises supported operating systems and positive Linux confinement. |
+| Complete installer and installed wheel | A fresh environment loaded the installed package outside the checkout. `hydra init` reported both helpers ready after real inference, the exact official Kev revision, and sqlite-vec 0.1.9. |
+| Actual helper inference | Needle produced a grounded file-read proposal. Kev loaded the official CPU checkpoint and produced typed choice and noul answers. These prove loading and protocol operation, not general task quality. |
+| Actual Needle training | Four synthetic training rows, four optimizer steps and two distinct evaluation queries. Training loss fell from 0.8461 to 0.6282. Original and candidate both matched 2/2 evaluation answers: accuracy delta 0, `improvement_observed: false`, `promoted: false`. The exported native archive loaded successfully. |
+| Filesystem and workflow exercises | Real SQLite transactions, filesystem mutations, shell exits, process deadlines, installed workers and Textual handlers were exercised. Tests that script model responses prove the surrounding runtime behavior; they are not evidence of a live chat model's reasoning quality. |
+
+The sandbox retains `wheel-initialization.json`, the regression logs, and
+`tiny-needle-run2/report.json` with its sealed inputs and training log. These are
+development evidence, not assets installed into the runtime package. PR #45
+tracks the corrected candidate's CI results, fresh review verdicts and
+installed-runtime verification alongside this dated evidence.
+
+## Verification and recovery on the target machine
+
+After installing the complete bundle, run these commands from outside its source
+checkout, in the project to be inspected:
+
+```bash
+hydra init --check
+hydra init
+hydra team list
+hydra team show seam_bot
+hydra local-memory --workspace-root . --query "failing tests" --graph
+```
+
+Configure the conversational provider through `hydra setup`, then run a bounded
+inspection before authorizing a writer:
+
+```bash
+hydra ask "Read this project's entry point and explain what it does" --root . --approval-policy deny --max-iterations 4 --trace-out inspection.json
+```
+
+For source-level verification in a separate development environment:
+
+```bash
+python -m pip install -e ".[test,mcp]"
+python -m pytest -q
+```
+
+Inspect skipped tests and their requirements. Confined worker verification needs
+a working Linux Bubblewrap environment; unavailable confinement must report a
+failure without executing the requested verification command. Live model and
+embedding checks require the corresponding service or installed weights.
+
+Hydra's shared file writers save preimages for recovery:
+
+```bash
+hydra undo --root . --list
+hydra undo --root . -n 1
+```
+
+Review the checkpoint stack before restoring. This recovers checkpointed Hydra
+file edits, including exact original bytes. It does not undo arbitrary shell
+commands, native-provider file changes, database writes or external actions.
+Training leaves the selected checkpoint unchanged, so an unsuccessful candidate
+requires no automatic model rollback.
+
+## Remaining scope and explicit limits
+
+No production host or live conversational-provider credentials were supplied for
+this repair. The installed local helpers and tiny Needle training run were
+exercised; deployment with the operator's chosen chat model remains a target
+machine check. Kev's training adapter and plan were checked, but a full Kev
+weight-training run was not performed. No live Ollama embedding-relevance
+benchmark was completed; the exercised fallback and persistence contracts do
+not certify retrieval quality.
+
+BACKS permits an independent reviewer in a fresh session even when its model
+family matches the authoring model, provided author context is excluded and
+that isolation is recorded. Hydra's existing independent-review runtime still
+uses stricter declared provider/model/family separation. This is a documented
+policy mismatch, not an implementation of BACKS session-isolation enforcement.
+Required independence remains fail-closed rather than silently bypassing that
+runtime gate. The independent review of this repair records fresh review
+sessions separately from those shipped runtime checks.
