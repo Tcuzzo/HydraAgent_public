@@ -50,6 +50,8 @@ from textual.widgets import Footer, Input, RichLog, Static, TextArea
 
 from hydra.intake import COLLAB, CONVO, STEERING, classify
 from hydra.loop import AgentLoop, LoopStep, LoopResult, Tool
+from hydra.turn_profiles import load_turn_profile
+from hydra.turn_memory import finish_turn, learn_turn, recall_turn
 from hydra.operator_auth import OperatorAuth, OperatorAuthError, render_qr_ascii
 from hydra.work_executor import (
     detect_runaway,
@@ -458,6 +460,10 @@ class HydraApp(App[int]):
         system_prompt: str,
         tools: list[Tool],
         workspace_root: Path | str | None = None,
+        memory_root: Path | str | None = None,
+        memory_workspace_root: Path | str | None = None,
+        recall_builder: Callable[..., object] | None = None,
+        local_memory_chars: int = 12000,
         on_persist: Callable[[str, str], None] | None = None,
         on_command: Callable[[str], bool] | None = None,
         max_iterations: int = 200,  # UNLOCKED: iterate like Claude Code/Codex (operator: no iteration gates)
@@ -472,6 +478,17 @@ class HydraApp(App[int]):
         self.cfg = cfg
         self.tools = tools
         self.workspace_root = Path(workspace_root).expanduser().resolve() if workspace_root else Path.cwd()
+        self.memory_root = Path(memory_root).expanduser().resolve() if memory_root else None
+        self.memory_workspace_root = (
+            Path(memory_workspace_root).expanduser().resolve()
+            if memory_workspace_root else self.workspace_root
+        )
+        self.recall_builder = recall_builder
+        self.local_memory_chars = local_memory_chars
+        self._memory_warnings: list[str] = []
+        self._last_memory_recall: dict = {}
+        self._last_memory_receipt: dict = {}
+        self._last_turn_result: LoopResult | None = None
         self._on_persist = on_persist
         self._on_command = on_command
         self._max_iterations = max_iterations
@@ -715,6 +732,8 @@ class HydraApp(App[int]):
             result: LoopResult = await loop.run_in_executor(
                 None, self._run_agent_loop_sync, user_text, intake_kind
             )
+            for warning in self._memory_warnings:
+                self._post_log(Text(warning, style="yellow").markup)
             self._handle_turn_done(result.final_response or "")
         except Exception as exc:
             self._handle_turn_error(str(exc))
@@ -771,8 +790,8 @@ class HydraApp(App[int]):
         _route_for_kind returns the chat loop so the turn still runs (guarded
         against confabulation by work_executor.guard_work_turn).
 
-        The work loop receives the same tools list as the chat loop — the model
-        decides whether to call them; we never restrict the executor's toolkit.
+        Passive memory is available to both profiles. Tool availability and
+        generation budgets follow the selected declarative turn profile.
         """
         agent_loop, active_model = self._route_for_kind(intake_kind)
         # Update _active_model so the stat bar shows the ACTUAL executor for
@@ -785,17 +804,29 @@ class HydraApp(App[int]):
             self._active_provider = _pair[0] if _pair else self._provider_name
         else:
             self._active_provider = self._provider_name
-        initial = list(self._chat_messages)
+        profile = load_turn_profile(intake_kind)
+        previous = list(self._chat_messages)
+        initial = list(previous)
+        context, self._last_memory_recall, self._memory_warnings = recall_turn(
+            user_text, profile=profile, builder=self.recall_builder,
+            memory_root=self.memory_root, workspace_root=self.memory_workspace_root,
+            max_chars=self.local_memory_chars,
+        )
+        if context:
+            initial.append({"role": "system", "content": context})
+        turn_tools = self.tools if profile.tools_enabled else []
+        iterations = min(self._max_iterations, profile.max_iterations)
         result = agent_loop.run(
             user_text,
-            tools=self.tools,
-            max_iterations=self._max_iterations,
-            max_tokens=2048,
-            temperature=0.0 if intake_kind != CONVO else 0.5,
+            tools=turn_tools,
+            max_iterations=iterations,
+            max_tokens=profile.max_tokens,
+            temperature=profile.temperature,
             timeout=self._timeout,
             initial_messages=initial,
             on_step=self._on_loop_step,
         )
+        results = [result]
 
         # NO-CONFABULATION GUARD (ported from elite.py:917-957). This was MISSING
         # on the live TUI path — a work turn could narrate "I connected to the server
@@ -804,12 +835,12 @@ class HydraApp(App[int]):
         # no tool call, force ONE re-prompt to actually call the tool or admit it
         # wasn't done. Convo turns pass straight through (guard exempts non-work).
         final = result.final_response or ""
-        runaway = detect_runaway(final, max_tokens=2048)
+        runaway = detect_runaway(final, max_tokens=profile.max_tokens)
         if runaway is not None:
             final = runaway.capped_text
 
         def _rerun_forcing_tools(force: bool) -> tuple[str, int]:
-            forced = list(initial)
+            forced = list(result.messages)
             forced.append({
                 "role": "system",
                 "content": (
@@ -822,14 +853,15 @@ class HydraApp(App[int]):
             })
             r2 = agent_loop.run(
                 user_text,
-                tools=self.tools,
-                max_iterations=self._max_iterations,
-                max_tokens=2048,
-                temperature=0.0 if intake_kind != CONVO else 0.5,
+                tools=turn_tools,
+                max_iterations=iterations,
+                max_tokens=profile.max_tokens,
+                temperature=profile.temperature,
                 timeout=self._timeout,
                 initial_messages=forced,
                 on_step=self._on_loop_step,
             )
+            results.append(r2)
             return (r2.final_response or "", r2.tool_calls_made)
 
         outcome = guard_work_turn(
@@ -838,7 +870,16 @@ class HydraApp(App[int]):
             tool_calls_made=result.tool_calls_made,
             rerun=_rerun_forcing_tools,
         )
-        result.final_response = outcome.text
+        result = finish_turn(results, previous, outcome.text)
+        self._last_turn_result = result
+        self._chat_messages = list(result.messages)
+        self._last_memory_receipt, warnings = learn_turn(
+            user_text, result,
+            enabled=self.recall_builder is not None and profile.memory.enabled and profile.tools_enabled,
+            workspace_root=self.workspace_root, memory_root=self.memory_root,
+            provider=self._active_provider, model=active_model,
+        )
+        self._memory_warnings.extend(warnings)
         return result
 
     # ── Loop step callback (runs in worker thread) ───────────────────────
@@ -904,8 +945,6 @@ class HydraApp(App[int]):
             )
         if final:
             self._post_chat_line("hydra", final)
-            self._chat_messages.append({"role": "user", "content": self._last_user_text()})
-            self._chat_messages.append({"role": "assistant", "content": final})
             if self._on_persist is not None:
                 try:
                     self._on_persist(self._last_user_text(), final)

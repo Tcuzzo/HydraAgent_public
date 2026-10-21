@@ -283,7 +283,7 @@ def _judge_ask_response(
 
 
 def _build_chat_context_message(
-    args: argparse.Namespace, memory_root: Path
+    args: argparse.Namespace, memory_root: Path, *, workspace_root: Path | None = None
 ) -> dict | None:
     """Build the optional §10.59 context system message for `hydra chat`.
 
@@ -291,14 +291,14 @@ def _build_chat_context_message(
     context-engine refusal is surfaced on stderr and the function returns None
     rather than crashing the chat session.
     """
-    if not getattr(args, "with_context", False):
+    if not getattr(args, "with_context", False) or getattr(args, "no_local_memory", False):
         return None
     try:
         composed = compose_operator_prompt(
             "",
-            repo_root=REPO_ROOT,
+            repo_root=workspace_root or REPO_ROOT,
             memory_root=memory_root,
-            evidence_root=REPO_ROOT / "evidence",
+            evidence_root=(workspace_root or REPO_ROOT) / "evidence",
             budget_bytes=getattr(args, "context_budget_bytes", 4096),
         )
     except PromptBuilderError as e:
@@ -311,11 +311,12 @@ def _build_chat_context_message(
     return {"role": "system", "content": composed["prompt"]}
 
 
-def _truth_context_message(query: str, memory_root: Path, *, budget_chars: int) -> dict | None:
+def _truth_context_message(query: str, memory_root: Path, *, budget_chars: int,
+                           workspace_root: Path | None = None) -> dict | None:
     try:
         context = assemble_truth_context(
             query or "hydra mission memory",
-            repo_root=REPO_ROOT,
+            repo_root=workspace_root or REPO_ROOT,
             memory_root=memory_root,
             budget_chars=budget_chars,
         )
@@ -659,9 +660,9 @@ def cmd_chat(args: argparse.Namespace) -> int:
         try:
             from hydra.unified_memory import UnifiedMemory
             from hydra.memory_distill import seed_core_block
-            from hydra.semantic_recall import _default_store_path
+            from hydra.semantic_recall import _store_path_for_root
 
-            _store = UnifiedMemory(path=_default_store_path())
+            _store = UnifiedMemory(path=_store_path_for_root(memory_root))
             try:
                 n_seeded = seed_core_block(_store)
                 if n_seeded:
@@ -687,14 +688,15 @@ def cmd_chat(args: argparse.Namespace) -> int:
         else:
             print(probe.report.strip())
     print(f"root={root}")
-    context_message = _build_chat_context_message(args, memory_root)
+    context_message = _build_chat_context_message(args, memory_root, workspace_root=root)
     if context_message is not None:
         chat_messages.append(context_message)
-    if getattr(args, "truth_context", False):
+    if getattr(args, "truth_context", False) and not args.no_local_memory:
         truth_message = _truth_context_message(
             "hydra chat mission memory",
             memory_root,
             budget_chars=getattr(args, "context_budget_bytes", 4096),
+            workspace_root=memory_workspace_root,
         )
         if truth_message is not None:
             chat_messages.append(truth_message)
