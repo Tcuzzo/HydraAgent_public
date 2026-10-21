@@ -32,10 +32,14 @@ silently dropped.
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import subprocess
 import tempfile
+import time
 import uuid
 from pathlib import Path
+from threading import Event
 from typing import Callable, Iterable
 
 from hydra.llm import ChatMessage, ChatResponse, LlmError
@@ -113,20 +117,83 @@ def codex_command(
     return argv
 
 
-def _default_runner(argv, *, input=None, capture_output=True, text=True, timeout=None):
-    """Production runner: the real `subprocess.run` with the verified shape.
+def _native_launcher_argv(argv: list[str]) -> list[str]:
+    """Honor an explicit Python launcher on systems without shebang execution.
+
+    The shebang must be one complete, existing absolute interpreter path. No
+    shell or command-string splitting is involved, including when paths contain
+    spaces. Other executable formats retain their normal OS handling.
+    """
+    executable = Path(argv[0])
+    if not executable.is_absolute() and not os.path.dirname(argv[0]):
+        return argv
+    try:
+        if not executable.is_file():
+            return argv
+        with executable.open("rb") as source:
+            header = source.readline(4097)
+        if len(header) > 4096 or not header.startswith(b"#!"):
+            return argv
+        interpreter = Path(header[2:].decode("utf-8").strip())
+        if (not interpreter.is_absolute() or not interpreter.is_file()
+                or re.fullmatch(r"pythonw?(?:\d+(?:\.\d+)*)?(?:\.exe)?",
+                                interpreter.name, re.IGNORECASE) is None):
+            return argv
+        return [str(interpreter), *argv]
+    except (OSError, UnicodeError, ValueError):
+        return argv
+
+
+def _default_runner(argv, *, input=None, capture_output=True, text=True, timeout=None,
+                    cancel_event: Event | None = None):
+    """Run a native provider in an owned group with cancellation and a deadline.
 
     Injected so unit tests can pass a fake and never touch the CLI/account.
     """
-    import subprocess
+    from hydra.proc import kill_owned_group, popen_portable
 
-    return subprocess.run(
-        argv,
-        input=input,
-        capture_output=capture_output,
+    if cancel_event is not None and cancel_event.is_set():
+        raise LlmError("codex exec cancelled before launch")
+    deadline = time.monotonic() + timeout if timeout is not None else None
+    process = popen_portable(
+        _native_launcher_argv(argv),
+        stdin=subprocess.PIPE if input is not None else None,
+        stdout=subprocess.PIPE if capture_output else None,
+        stderr=subprocess.PIPE if capture_output else None,
         text=text,
-        timeout=timeout,
     )
+    pending_input = input
+    try:
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise LlmError("codex exec cancelled")
+            remaining = deadline - time.monotonic() if deadline is not None else None
+            if remaining is not None and remaining <= 0:
+                raise subprocess.TimeoutExpired(argv, timeout)
+            try:
+                stdout, stderr = process.communicate(
+                    input=pending_input,
+                    timeout=min(0.1, remaining) if remaining is not None else 0.1,
+                )
+                return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired:
+                # communicate() retains buffered output and any unwritten stdin;
+                # subsequent polls must not submit the same input a second time.
+                pending_input = None
+    finally:
+        # The group is owned by popen_portable. POSIX group ownership survives
+        # the leader; Windows uses the existing bounded taskkill /T tree cleanup.
+        kill_owned_group(process)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
 
 
 class CodexClient:
@@ -154,6 +221,11 @@ class CodexClient:
         self.model = model or _DEFAULT_MODEL
         self._runner = runner or _default_runner
         self.sandbox = sandbox  # e.g. "read-only" to enforce read-only CLI sandbox
+        self.cancel_event: Event | None = None
+
+    def set_cancellation_event(self, event: Event | None) -> None:
+        """Attach the active turn's cancellation token to owned native work."""
+        self.cancel_event = event
 
     # --- public surface (mirrors OllamaClient) ---------------------------
 
@@ -202,13 +274,12 @@ class CodexClient:
             argv[2:2] = ["--sandbox", self.sandbox]
 
         try:
-            proc = self._runner(
-                argv,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
+            runner_options = dict(input=prompt, capture_output=True, text=True, timeout=timeout)
+            # Preserve the existing injected-runner contract. Real native work
+            # alone owns processes and accepts the turn cancellation token.
+            if self._runner is _default_runner:
+                runner_options["cancel_event"] = self.cancel_event
+            proc = self._runner(argv, **runner_options)
         except Exception as exc:  # TimeoutExpired, OSError, ValueError, etc.
             if type(exc).__name__ == "TimeoutExpired":
                 raise LlmError(f"codex exec timed out after {timeout}s") from exc

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -101,7 +102,7 @@ class LoopResult:
     final_response: str
     iterations: int
     tool_calls_made: int
-    halted_reason: str  # "natural" | "max_iterations"
+    halted_reason: str  # "natural" | "max_iterations" | "cancelled" | provider failure
     messages: list[dict] = field(repr=False)
     
     # Worker evidence validation: track real tool activity vs heartbeat-only
@@ -200,6 +201,7 @@ class AgentLoop:
         timeout: float = 120.0,
         initial_messages: list[dict] | None = None,
         on_step: Callable[[LoopStep], None] | None = None,
+        cancel_event: threading.Event | None = None,
         autonomous: bool = False,
         mission_id: str | None = None,
         repo_root: "str | Path | None" = None,
@@ -253,12 +255,23 @@ class AgentLoop:
         last_iteration = 0
         phantom_tool_recovery = False
 
+        def cancellation_requested() -> bool:
+            return cancel_event is not None and cancel_event.is_set()
+
+        # Native clients own their tool subprocesses, so the same cancellation
+        # signal must cross the transport boundary as well as this dispatcher.
+        from hydra.codex_client import CodexClient
+        if isinstance(self.client, CodexClient):
+            self.client.set_cancellation_event(cancel_event)
+
         def record_step(step: LoopStep) -> None:
             steps.append(step)
             if on_step is not None:
                 on_step(step)
 
         for iteration in range(1, max_iterations + 1):
+            if cancellation_requested():
+                break
             last_iteration = iteration
             
             # AUTO-SYNTHESIS TRIGGER: when genuinely near the cap (2 before the
@@ -310,6 +323,8 @@ class AgentLoop:
                     tools=tool_schemas,
                 )
             except LlmError as exc:
+                if cancellation_requested():
+                    break
                 # Phantom / tool-call-emission failure recovery.
                 #
                 # Cloud providers return HTTP 400 with an error class
@@ -424,6 +439,8 @@ class AgentLoop:
                         operator_message=fb["operator_message"],
                     )
 
+            if cancellation_requested():
+                break
             tool_calls = list(resp.tool_calls)
             if not tool_calls and tools and not phantom_tool_recovery:
                 bridged = extract_bridged_tool_call(resp.content)
@@ -469,6 +486,8 @@ class AgentLoop:
 
             # Dispatch each tool call from this assistant turn.
             for tc in tool_calls:
+                if cancellation_requested():
+                    break
                 tool_calls_made += 1
                 tool = tool_by_name.get(tc.name)
                 if tool is None:
@@ -559,6 +578,9 @@ class AgentLoop:
                     }
                 )
 
+        if cancellation_requested():
+            halted_reason = "cancelled"
+
         if halted_reason == "max_iterations":
             # final_response = last assistant content we saw, if any.
             for s in reversed(steps):
@@ -638,6 +660,13 @@ class AgentLoop:
                     )
                 )
         
+        if cancellation_requested():
+            halted_reason = "cancelled"
+            final_response = "Stopped. Remaining tool proposals were cancelled."
+            messages.append({"role": "assistant", "content": final_response})
+            record_step(LoopStep(step=last_iteration, kind="system", role="system",
+                                 content="Operator cancelled this turn.", trace_id=run_trace_id))
+
         # Worker evidence validation: distinguish real tool activity from heartbeat-only
         has_real_tool_activity = any(
             s.kind == "tool_result" and not s.tool_error
@@ -652,7 +681,7 @@ class AgentLoop:
             fake_final_scrubbed = scrubbed != final_response
             final_response = scrubbed
 
-        if phantom_tool_recovery and halted_reason not in ("natural", "phantom_tool_recovery"):
+        if phantom_tool_recovery and halted_reason not in ("natural", "phantom_tool_recovery", "cancelled"):
             halted_reason = "phantom_tool_recovery"
 
         return LoopResult(
