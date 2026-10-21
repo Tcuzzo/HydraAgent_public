@@ -116,6 +116,7 @@ from hydra.cli.cmd_workbench import (  # noqa: E402
 from hydra.cli.cmd_undo import cmd_undo, register_undo_command  # noqa: E402
 from hydra.cli.tool_binding import bind_tools as _bind_tools  # noqa: E402
 from hydra.cli.cmd_personal import register_personal_commands, cmd_personal  # noqa: E402
+from hydra.local_intelligence import register_intelligence_commands, cmd_intelligence  # noqa: E402
 
 
 # ── self-audit command ────────────────────────────────────────────────────────
@@ -208,6 +209,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # SLICE 2 CUT: register_lol_run_command and register_worker_commands removed (lol/worker sauce stripped).
     register_undo_command(sub)
     register_personal_commands(sub)
+    register_intelligence_commands(sub)
 
     # self-audit: hydra self-audit
     _sa = sub.add_parser("self-audit", help="Run HYDRA's self-audit (classify->route->execute invariants)")
@@ -281,6 +283,8 @@ def main(argv: list[str] | None = None) -> int:
         "maintenance": cmd_personal,
         "connections": cmd_personal,
         "tribunal": cmd_personal,
+        "init": cmd_intelligence,
+        "decide": cmd_intelligence,
     }[args.cmd](args)
 
 

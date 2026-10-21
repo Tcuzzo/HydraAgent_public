@@ -26,6 +26,14 @@ mcp = ["mcp>=2.3.0,<3"]
 # Local prediction SDKs; weights are selected/downloaded separately.
 needle = ["cactus-needle>=3.2.0,<4"]
 laya = ["laya>=0.4.2,<0.5"]
+# Jared Palmer's model SDK; PyPI's unrelated `kev` ORM is never used.
+# The complete local installation uses Python 3.12 or 3.13.
+kev = ["kev @ git+https://github.com/jaredpalmer/kev.git@1f04cfa28e6a708485b28a9585010b9e436b776e ; python_version >= '3.12' and python_version < '3.14'"]
+intelligence = [
+  "cactus-needle==3.2.1",
+  "kev @ git+https://github.com/jaredpalmer/kev.git@1f04cfa28e6a708485b28a9585010b9e436b776e ; python_version >= '3.12' and python_version < '3.14'",
+  "sqlite-vec>=0.1.9,<0.2",
+]
 # Training stays local. Native Windows JAX uses CPU; CUDA JAX needs Linux/WSL.
 training = ["cactus-needle[train]>=3.2.0,<4", "laya>=0.4.2,<0.5"]
 # Persistent vector memory (hydra/unified_memory.py). The `sqlite-vec` wheel
