@@ -60,7 +60,8 @@ def _profile(name: str) -> dict:
     return data
 
 
-def _library(names: list[str]) -> list[dict]:
+def load_library(names: list[str]) -> list[dict]:
+    """Read bounded bundled playbooks and verify their declared content hashes."""
     validate_library_names(names)
     manifest = read_json(LIBRARY_ROOT / 'manifest.json')
     if manifest.get('schema') != 'hydra.bot_library.v1' or not isinstance(manifest.get('entries'), list):
@@ -85,7 +86,7 @@ def _library(names: list[str]) -> list[dict]:
 def library_manifest(name: str) -> list[dict]:
     """Report the actual hash-checked packaged sources used by a bot."""
     return [{key: row[key] for key in ('skill', 'source', 'sha256')}
-            for row in _library(_profile(name).get('library', []))]
+            for row in load_library(_profile(name).get('library', []))]
 
 
 def catalog() -> list[dict]:
@@ -102,7 +103,7 @@ def system_prompt(name: str, *, private_root: str | Path | None = None) -> str:
         'Execution completion is not independent verification. Keep private context and credentials out of public artifacts.',
         '## Canon\n' + data['canon'], '## Essence\n' + data['essence'],
     ]
-    library = _library(data.get('library', []))
+    library = load_library(data.get('library', []))
     if library:
         parts.append('## Knowledge library\nThe following are hash-checked bundled BACKS playbooks. '
                      'Apply their methods through the tools available in this runtime. Upstream relative paths '
