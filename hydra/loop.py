@@ -119,6 +119,7 @@ class LoopResult:
     substitution: dict | None = None
     fallback_checkpoint_path: str | None = None
     operator_message: str | None = None
+    provider_error: dict | None = None
 
     # Phantom tool call recovery: set True when the provider returned HTTP 400
     # "tool call validation failed" for a tool that wasn't in the request (e.g.
@@ -402,6 +403,7 @@ class AgentLoop:
                             messages=[dict(message) for message in messages],
                             has_real_tool_activity=any(step.kind == "tool_result" for step in steps),
                             trace_id=run_trace_id,
+                            provider_error=exc.to_dict(),
                         )
                         raise
                     from hydra.emergency_fallback import engage_life_support_fallback

@@ -195,15 +195,29 @@ def _lesson_records(memory_root: Path, repo_root: Path) -> list[dict[str, Any]]:
     ]
 
 
+def _workspace_source(path: Path, repo_root: Path) -> bool:
+    """Require an in-scope path with no linked component below the workspace."""
+    try:
+        relative = path.relative_to(repo_root)
+        if not path.resolve().is_relative_to(repo_root.resolve()):
+            return False
+        current = repo_root
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink() or (hasattr(current, "is_junction") and current.is_junction()):
+                return False
+        return True
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def _wiki_records(repo_root: Path) -> list[dict[str, Any]]:
     root = repo_root / WIKI_ROOT
-    if (not root.is_dir() or not root.resolve().is_relative_to(repo_root.resolve()) or
-        any(path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction())
-            for path in (root, root.parent))):
+    if not _workspace_source(root, repo_root) or not root.is_dir():
         return []
     records = []
     for path in sorted(root.rglob("*.md")):
-        if path.name == "index.md" or path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+        if path.name == "index.md" or not _workspace_source(path, repo_root):
             continue
         text = _read_text(path)
         title = _first_heading(text) or path.stem
@@ -213,10 +227,12 @@ def _wiki_records(repo_root: Path) -> list[dict[str, Any]]:
 
 def _mission_evidence_records(repo_root: Path) -> list[dict[str, Any]]:
     root = repo_root / "evidence" / "missions"
-    if not root.is_dir():
+    if not _workspace_source(root, repo_root) or not root.is_dir():
         return []
     records = []
     for path in sorted(root.glob("*/mission_loop.json")):
+        if not _workspace_source(path, repo_root):
+            continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -230,10 +246,12 @@ def _mission_evidence_records(repo_root: Path) -> list[dict[str, Any]]:
 
 def _source_receipt_records(repo_root: Path) -> list[dict[str, Any]]:
     root = repo_root / "evidence" / "source-reengineering"
-    if not root.is_dir():
+    if not _workspace_source(root, repo_root) or not root.is_dir():
         return []
     records = []
     for path in sorted(root.glob("*/receipts.jsonl")):
+        if not _workspace_source(path, repo_root):
+            continue
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             if not line.strip():
                 continue
