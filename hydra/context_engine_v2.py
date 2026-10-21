@@ -202,10 +202,12 @@ class ContextAssembler:
 
         # --- Durable memory (lessons) ----------------------------------------
         try:
-            memory_context = build_local_memory_context(
+            memory_result = build_local_memory_context(
                 root=self.memory_root,
                 max_chars=10000,
+                workspace_root=self.repo_root,
             )
+            memory_context = memory_result.context
             if memory_context.strip():
                 # Score based on term overlap (simple token match, not substring)
                 query_terms = set(query.lower().split())
