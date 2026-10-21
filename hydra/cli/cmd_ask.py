@@ -16,6 +16,8 @@ from hydra.providers import DEFAULT_ENV_DIR, ProviderError
 from hydra.roles import RoleError, resolve_roles
 from hydra.skill_spine import build_agent_system_prompt, build_routed_skill_context
 from hydra.memory_kernel import assemble_truth_context
+from hydra.local_memory import DEFAULT_MEMORY_ROOT
+from hydra.semantic_recall import build_semantic_memory_context
 from hydra.prompt_builder import PromptBuilderError, compose_operator_prompt
 from hydra.rubric_judge import RubricJudgeError
 from hydra.cli.cmd_chat import (
@@ -113,8 +115,12 @@ def register_ask_command(
     )
     p_ask.add_argument(
         "--memory-root",
-        default=str(Path.home() / ".hydra-memory"),
+        default=str(DEFAULT_MEMORY_ROOT),
         help="memory root for context bundle lookups",
+    )
+    p_ask.add_argument(
+        "--no-local-memory", action="store_true",
+        help="disable automatic relevant recall and execution learning for this run",
     )
     p_ask.add_argument(
         "--judge-rubric",
@@ -152,6 +158,9 @@ def register_ask_command(
 def cmd_ask(args: argparse.Namespace) -> int:
     if args.max_iterations < 1 or not math.isfinite(args.timeout) or args.timeout <= 0:
         print("ask error: --max-iterations must be at least 1 and --timeout must be finite and positive", file=sys.stderr)
+        return 2
+    if args.context_budget_bytes < 256:
+        print("ask error: --context-budget-bytes must be at least 256", file=sys.stderr)
         return 2
     root = _root_arg(args.root)
     if not root.is_dir():
@@ -202,26 +211,44 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
     system_prompt = build_agent_system_prompt(DEFAULT_SYSTEM_PROMPT)
     context_proof_lines: list[str] = []
+    memory_root = Path(args.memory_root).expanduser().resolve()
+    if not getattr(args, "no_local_memory", False):
+        try:
+            recall = build_semantic_memory_context(
+                args.prompt, root=memory_root, workspace_root=root,
+                max_chars=args.context_budget_bytes,
+            )
+            if recall.context:
+                bounded = recall.context.encode("utf-8")[:args.context_budget_bytes].decode("utf-8", errors="ignore")
+                system_prompt = system_prompt.rstrip() + "\n\n" + bounded
+            context_proof_lines.append(
+                f"memory={recall.status} backend={recall.data.get('backend', 'none')} "
+                f"chunks={recall.data.get('chunks_returned', 0)}"
+            )
+            if recall.data.get("fallback_reason"):
+                print(f"memory recall: {recall.data['fallback_reason']}", file=sys.stderr)
+        except (OSError, ValueError, RuntimeError) as e:
+            print(f"memory recall unavailable: {e}", file=sys.stderr)
     if getattr(args, "with_context", False):
         try:
             composed = compose_operator_prompt(
-                build_agent_system_prompt(DEFAULT_SYSTEM_PROMPT),
-                repo_root=REPO_ROOT,
+                "",
+                repo_root=root,
                 memory_root=args.memory_root,
-                evidence_root=REPO_ROOT / "evidence",
+                evidence_root=root / "evidence",
                 budget_bytes=args.context_budget_bytes,
                 query=args.prompt,
             )
         except PromptBuilderError as e:
             print(f"prompt builder error: {e}", file=sys.stderr)
             return 2
-        system_prompt = composed["prompt"]
-        context_proof_lines = composed["proof"]
+        system_prompt = system_prompt.rstrip() + "\n\n" + composed["prompt"]
+        context_proof_lines.extend(composed["proof"])
     if getattr(args, "truth_context", False):
         try:
             truth = assemble_truth_context(
                 args.prompt,
-                repo_root=REPO_ROOT,
+                repo_root=root,
                 memory_root=Path(args.memory_root),
                 budget_chars=args.context_budget_bytes,
             )
@@ -236,8 +263,8 @@ def cmd_ask(args: argparse.Namespace) -> int:
         system_prompt = system_prompt.rstrip() + "\n\n" + routed_skill_context
 
     loop = AgentLoop(client, model=model, system_prompt=system_prompt)
-    memory_root = Path(args.memory_root).expanduser().resolve()
-    tools = _bind_tools(root, approval_policy=args.approval_policy, memory_root=memory_root)
+    tools = _bind_tools(root, approval_policy=args.approval_policy, memory_root=memory_root,
+                        memory_workspace_root=root)
     print(
         f"Hydra: provider={cfg.name} model={model} root={root}\n"
         f"  tools: {', '.join(t.name for t in tools)}\n"
@@ -282,6 +309,17 @@ def cmd_ask(args: argparse.Namespace) -> int:
             loop = AgentLoop(client, model=model, system_prompt=system_prompt)
             attempted_local_fallback = True
             continue
+
+    if not getattr(args, "no_local_memory", False):
+        try:
+            from hydra.execution_learning import record_execution_lesson
+            learned = record_execution_lesson(
+                repo_root=root, memory_root=memory_root, goal=args.prompt,
+                result=result, provider=cfg.name, model=model,
+            )
+            print(f"  execution memory: {learned.get('status', 'recorded')}", file=sys.stderr)
+        except (OSError, ValueError, RuntimeError) as e:
+            print(f"execution memory could not be saved: {e}", file=sys.stderr)
 
     print(result.final_response)
     print(
