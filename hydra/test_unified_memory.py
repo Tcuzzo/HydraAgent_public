@@ -652,8 +652,9 @@ def _seed_full_corpus(tmp_path, monkeypatch):
     monkeypatch.setattr(semantic_recall, "DEFAULT_WORKSPACE_ROOT", repo_root)
 
     # The .claude project memory corpus the live recall walks for this repo.
-    slug = str(repo_root.resolve()).replace("/", "-")
+    slug = repo_root.resolve().as_posix().replace(":", "-").replace("/", "-")
     claude_mem = home / ".claude" / "projects" / slug / "memory"
+    assert claude_mem.is_relative_to(home), "fixture must remain in the declared operator home"
     claude_mem.mkdir(parents=True)
     (claude_mem / "MEMORY.md").write_text(
         "# Memory Index\n\n- quiet hours: 1am to 6am, hold pings until 6am.\n",
