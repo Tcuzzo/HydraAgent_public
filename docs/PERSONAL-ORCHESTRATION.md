@@ -1,22 +1,30 @@
-# Personal orchestration preview
+# Personal orchestration
 
-Hydra coordinates bounded specialist tasks, connects explicitly configured MCP tools, and records what ran. The runtime is model configurable; effectiveness depends on the chosen model's tool use, reasoning and vision capabilities. It does not automatically select or benchmark the "strongest" model.
+Hydra coordinates a bounded team of specialists, supplies their public knowledge libraries, and records what actually ran. A plan becomes a validated dependency graph; each task runs in a separate worker process with a selected model and tool policy. The worker checks its observations and declared artifacts before the dispatcher releases dependent tasks. Execution evidence is also available to later work through shared, workspace-scoped memory.
+
+The main chat model supplies reasoning and tool calls. Needle proposes structured tool choices, and Kev answers typed questions about supplied state. Their proposals do not execute themselves. Bot names, prompts and memory improve task organization and access to evidence; their effectiveness still depends on the configured model and must be evaluated on representative tasks.
 
 ## Install
 
-From a clone in a virtual environment:
+From a source checkout, install the complete local bundle using Python 3.12 or 3.13:
 
 ```bash
-python -m pip install -e ".[mcp]"
+python3.12 scripts/install_local.py
+source "$HOME/.hydraAgent/local-runtime/venv/bin/activate"
 hydra team list
 ```
 
-MCP uses the official Python SDK, version 2.3 or later within major version 2. Team planning and public profiles work without the MCP extra. Local inference requires a separately installed model server and suitable hardware. Cloud inference may incur provider charges.
+The installer creates an owned environment, installs CPU PyTorch and the `intelligence` extra, then runs real Needle and official Kev initialization. `--skip-download` installs dependencies without claiming inference readiness. The [quickstart](../QUICKSTART.md) covers Windows, alternate installation locations and chat-provider setup. A separate chat provider remains necessary; the example commands below assume Ollama is running and `qwen3:8b` has been installed and configured.
+
+For MCP, run `python -m pip install ".[mcp]"` from the source checkout in the activated environment. MCP uses the official Python SDK, version 2.3 or later within major version 2. Team planning and public profiles work without the MCP extra. Cloud inference and connected services may incur provider charges.
 
 ## Specialists and task graphs
 
 | Profile | Work | Workspace access through Hydra tools |
 |---|---|---|
+| `hydra_bot` | Compile the goal into scope, a bounded brief and observable acceptance criteria | Read |
+| `grok_bot` | Inspect actual source, trace the cause and hand over evidence | Read; bounded HTTP GET for explicit source retrieval |
+| `seam_bot` | Repair the shared cause, inspect sibling consumers and report edit/check receipts | Write, subject to policy |
 | `vision` | Outcome, audience, acceptance criteria and supplied image evidence | Read |
 | `design_taste` | Visual direction, hierarchy, accessibility and review criteria | Read |
 | `software_engineer` | Implementation and relevant checks | Write, subject to policy |
@@ -26,41 +34,98 @@ MCP uses the official Python SDK, version 2.3 or later within major version 2. T
 | `lean_six_sigma` | DMAIC: define, measure, analyze, improve, control | Read |
 
 ```bash
-hydra team show kaizen
-hydra team plan "Repair the checkout flow and inspect the result" --provider ollama --model YOUR_MODEL --output team.json
+hydra team show seam_bot
+hydra team plan "Repair the checkout flow and inspect the result" --provider ollama --model qwen3:8b --output team.json
 hydra team run team.json --root . --approval-policy allow
 ```
 
-The generated plan uses seven ordered tasks with Kaizen and Lean Six Sigma sharing the final read-only phase. Reduce the plan to the roles needed for a small task. Set per-task `provider`, `model`, `family` and `prompt` to specialize routing. Provider settings use the existing `hydra setup` configuration; there is no hidden paid fallback.
+The generated plan orders **Hydra Bot → Grok Bot → Seam Bot → test engineer → code reviewer**. The original seven roles remain available for custom plans. Grok Bot is a code-understanding role running on your configured provider; the name does not install or select xAI Grok. Inspect the plan before executing it: `allow` authorizes the writer roles to make changes and run commands.
+
+Each public profile has its own canon, essence and selected library. The package includes actual BACKS playbook text, including invariant-floor, intent-compiler, root-cause-first, seam-engineering and sniper-testing, with source revisions and SHA-256 hashes. These files are checked before being loaded into the worker prompt. `hydra team list`, `hydra team show ROLE` and worker receipts expose the selected library metadata. The playbooks guide reasoning; runtime tools, workspace limits and the current user instruction determine what a worker can do.
+
+Set per-task `provider`, `model`, `family` and `prompt` to specialize routing. Provider settings use `hydra setup`. Only explicitly configured fallbacks are eligible. The generated plan uses one model for convenience and does not require independent model families. Enable `require_independent_review` when you have configured a distinct reviewer.
+
+### A plan with concrete file acceptance
+
+Save the following as `artifact-team.json`. It asks for a tiny, deliberately exact output so the runtime can check real bytes. The SHA-256 value is for the six bytes `ready\n`. Start with no `status.txt`, or with different content: `must_change` intentionally rejects an unchanged file. Both example models must be installed; choose equivalent configured routes if these do not fit your hardware.
 
 ```json
 {
   "schema": "hydra.team.v1",
-  "goal": "Implement the requested change, then inspect it",
+  "goal": "Create status.txt containing exactly ready followed by one newline, then inspect the file.",
   "provider": "ollama",
-  "model": "YOUR_BUILDER_MODEL",
-  "family": "YOUR_BUILDER_FAMILY",
+  "model": "qwen3:8b",
+  "family": "qwen",
   "max_concurrency": 2,
   "max_iterations": 8,
   "timeout_seconds": 300,
   "require_independent_review": true,
   "tasks": [
-    {"id": "build", "specialist": "software_engineer"},
-    {"id": "review", "specialist": "code_reviewer", "depends_on": ["build"],
-     "provider": "YOUR_REVIEW_PROVIDER", "model": "YOUR_REVIEW_MODEL", "family": "YOUR_REVIEW_FAMILY"}
+    {
+      "id": "build",
+      "specialist": "seam_bot",
+      "prompt": "Write status.txt with the exact requested content. Report the file operation.",
+      "acceptance": {
+        "artifacts": [{
+          "path": "status.txt",
+          "sha256": "ed1a545bb85e55816bbf9566b028b2a0bc456b88f49f6f266c0401048824194b",
+          "must_change": true
+        }]
+      }
+    },
+    {
+      "id": "review",
+      "specialist": "code_reviewer",
+      "depends_on": ["build"],
+      "provider": "ollama",
+      "model": "llama3.1:8b",
+      "family": "llama",
+      "prompt": "Read status.txt, check the exact content and report any discrepancy.",
+      "acceptance": {
+        "artifacts": [{
+          "path": "status.txt",
+          "sha256": "ed1a545bb85e55816bbf9566b028b2a0bc456b88f49f6f266c0401048824194b"
+        }]
+      }
+    }
   ]
 }
 ```
 
-Family names are operator declarations, not attested model identities. Independent review requires distinct declarations and a reviewer dependent on every builder. It cannot certify independence from an arbitrary endpoint's model label.
+Run it from the workspace:
+
+```bash
+hydra team run artifact-team.json --root . --approval-policy allow
+```
+
+An artifact condition can require existence, an exact `sha256`, and/or `must_change` relative to the worker's initial snapshot. Paths must be relative to the workspace; linked paths and traversal are rejected. A task may declare up to 16 artifacts, each at most 16 MiB. Choose conditions that establish the result you actually need: existence alone gives little assurance. Missing, mismatched or unchanged required artifacts fail the task even when the model says it succeeded.
+
+Work and review roles also require an actual successful task observation, or satisfied artifact conditions. Selector proposals, skill listing and memory bookkeeping do not count as task observations. A prose-only answer without runtime evidence cannot complete these roles. Successful file reads and command exits establish those operations; they do not establish that the goal is fully solved.
+
+### Independent review and scheduling
+
+With `require_independent_review: true`, a reviewer must depend on every writer, including Seam Bot and the test engineer. Its effective route must differ from every writer's provider/model identity and endpoint/account/model identity, and its declared family must differ. The check uses the route actually selected, so a fallback can invalidate independence. Missing, failed or colliding review produces a RED report and a nonzero CLI exit.
+
+Family names are operator declarations, not attested model identities. Changing a label cannot prove different model weights. The sample uses different installed models and families; independently inspect the review findings and file evidence as well.
 
 All graphs are validated before dispatch. Up to 64 tasks, 16 concurrent readers, 100 iterations per task and 3,600 seconds per task are supported; use smaller limits for normal work. Every writer must be ordered relative to every other task. Failed prerequisites block dependents. Explicit tool errors or nonzero command exits make the task incomplete even if the model returns a fluent answer. Expected failing tests therefore need their own consciously designed workflow; they are not silently treated as success.
 
-Each worker gets its public canon and essence, optional private overlay, assigned work and bounded prerequisite observations. Reports record tool outcome flags and hashes, model selection and completion status under `~/.hydraAgent/team-runs/` by default. `--output-root` selects another local directory. Reports and model responses can contain private task information; do not publish them as public profiles. `verified` remains false: inspect the artifacts and relevant checks before accepting the result.
+### Receipts, memory and native clients
+
+Each worker receives its public canon, essence and library, optional private overlay, assigned work and bounded prerequisite observations. Reports record model selection, tool outcome flags and hashes, artifact conditions, library provenance and memory receipts under `~/.hydraAgent/team-runs/` by default. `--output-root` selects another local directory. Reports and model responses can contain private task information; do not publish them as public profiles. `verified` remains false: a GREEN execution report is not a software-quality certification.
+
+`ask`, `chat` and teams share `HYDRA_MEMORY_ROOT`, defaulting to `~/.hydra-memory`. `team run --memory-root /path/to/store` selects another store. Workers recall relevant historical evidence for their actual workspace, then record observed successful and failed tool results with bounded redacted arguments and hashes. Final model narration does not become a learned fact. Records retain `quality_verified: false`; memory warnings are reported separately from task outcomes.
+
+```bash
+hydra local-memory --workspace-root . --query "status.txt"
+hydra local-memory --workspace-root . --query "status.txt" --graph
+```
+
+The evidence graph links recorded tasks to tools and referenced artifacts. Retrieval can use those links to include related episodes; it does not infer that a past action caused an improvement. Semantic retrieval falls back visibly to bounded lexical search when unavailable. Recheck current source before relying on history. Neural weight training is a separate [dataset, fine-tuning and evaluation workflow](TRAINING.md).
 
 For vision, add `"images": ["screenshots/page.png"]` to a task. PNG/JPEG files must be within the workspace, at most four images and 5 MiB per image. Use a multimodal OpenAI-compatible HTTP model. This passes real image inputs; it does not take screenshots or grant a text-only model vision.
 
-Codex CLI uses its own native tools and filesystem sandbox, so it is reported separately from Hydra tool dispatch. Hydra's MCP capability filtering applies to Hydra-dispatched tools, not arbitrary native client integrations. Image attachments in this worker require the HTTP path. Do not treat a native client's filesystem sandbox as a guarantee about external service side effects.
+Codex CLI uses its own native tools and filesystem sandbox, so it is reported separately from Hydra tool dispatch. Hydra does not receive the native client's tool-event receipts. Native work and review roles therefore need explicit `acceptance.artifacts`; use hashes or required changes to make that evidence meaningful. A native client's zero exit and final answer alone cannot satisfy the observation gate. Hydra's MCP capability filtering applies to Hydra-dispatched tools, not arbitrary native client integrations. Image attachments in this worker require the HTTP path. A native filesystem sandbox also does not establish limits on external service side effects.
 
 Process cleanup covers ordinary descendants, nested tool processes and inherited output pipes. It is not an OS sandbox against deliberate daemonization or malicious process escape; run untrusted code in an external container or VM. Retained stdout/stderr is bounded to 64 KiB per stream, and success-pattern matching uses that retained prefix.
 
@@ -142,13 +207,15 @@ Only `canon` and `essence` are accepted. Missing role files retain their public 
 Public profiles are separately authored generic text in `hydra/runtime_data/specialists/`. Original private canon is not included. Prepare a deliberate public edition, review ownership and license requirements, then export selected roles:
 
 ```bash
-hydra public-profiles --source hydra/runtime_data/specialists --output ./public-profiles --roles vision design_taste software_engineer code_reviewer test_engineer kaizen lean_six_sigma
+hydra public-profiles --source hydra/runtime_data/specialists --output ./public-profiles --roles hydra_bot grok_bot seam_bot test_engineer code_reviewer
 ```
 
-The destination must be new. Inputs must declare `edition: generic-public` with an ID, canon, essence, license and credits. Decoded text is scanned for common credentials, email addresses, IP addresses, private home paths and optional operator literals from `--private-terms-file` (a local JSON string list). Linked paths are rejected. A deterministic hash manifest contains public filenames only. Findings report categories, not matched secrets.
+Run this from the source checkout. Any of the ten public role IDs can be selected. The destination must be new. Inputs must declare `edition: generic-public` with an ID, canon, essence, license and credits; an optional `library` list holds playbook IDs. Profile export preserves those references and does not copy private knowledge or a memory store. Runtime library loading checks that the referenced content is bundled and matches its hash. Decoded text is scanned for common credentials, email addresses, IP addresses, private home paths and optional operator literals from `--private-terms-file` (a local JSON string list). Linked paths are rejected. A deterministic hash manifest contains public filenames only. Findings report categories, not matched secrets.
 
 This is a publication guard, **not an automatic IP/PII anonymizer**. It cannot infer every person's name, business secret or proprietary technique. It blocks detected material rather than silently deleting context. Public release still requires semantic review; private data must never be made public by changing an edition label. Human and upstream skill authors retain attribution; Codex and Claude/Anthropic are tools, not project coauthors.
 
 ## Readiness
 
-Covered by real subprocess, filesystem, scripted-model transport and MCP round-trip tests: discovery, file scope, schema errors, startup deadlines, bounded output capture, nested-process timeout cleanup, specialist handoffs, failed prerequisite blocking and publication guards. Scripted model transport proves runtime behavior, not model intelligence. Live app actions, representative task benchmarks, long-running recovery, native-client integration isolation and production multi-user operation require further validation before calling Hydra a polished unattended personal agent.
+The repository includes focused tests using real CLI processes, workers and filesystems with scripted external model transports. They exercise text-only completion rejection, artifact hashes and required changes, required-review failure, writer ordering, native-client artifact requirements and library provenance. Other runtime tests cover MCP round trips, file scope, startup deadlines, bounded output capture, nested-process timeout cleanup, specialist handoffs, failed prerequisites and publication guards. These tests establish particular runtime behaviors; scripted model answers do not measure intelligence.
+
+`hydra init` provides a separate measured check that Needle and Kev load and complete bounded local probes. It does not benchmark coding quality or validate every provider. Representative tasks, review quality, live app actions, long-running recovery and production multi-user operation still require evaluation in the intended environment. The host command path also needs external confinement when running untrusted code. See the [quickstart](../QUICKSTART.md) and [training guide](TRAINING.md) for installation and evaluation boundaries.
