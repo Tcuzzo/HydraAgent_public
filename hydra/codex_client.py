@@ -35,6 +35,7 @@ import os
 import shutil
 import tempfile
 import uuid
+from pathlib import Path
 from typing import Callable, Iterable
 
 from hydra.llm import ChatMessage, ChatResponse, LlmError
@@ -62,6 +63,14 @@ _INSTALL_HINT = (
     "(e.g. `npm install -g @openai/codex`), run `codex login` to sign in with "
     "ChatGPT, or set HYDRA_CODEX_BIN to the codex binary path"
 )
+
+
+def configure_native_scope(client, *, root: str | Path, approval_policy: str) -> None:
+    """Bind native tools to the same selected scope and write policy as Hydra."""
+    if isinstance(client, CodexClient):
+        client.cd = str(Path(root).expanduser().resolve())
+        # Native exec cannot call Hydra's interactive approval callback.
+        client.sandbox = "workspace-write" if approval_policy == "allow" else "read-only"
 
 
 def resolve_codex_bin() -> str:

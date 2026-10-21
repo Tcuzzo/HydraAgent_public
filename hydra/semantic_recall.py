@@ -176,15 +176,20 @@ def _collect_chunks(
     seen: set[Path] = set()
     collected: list[tuple[str, str]] = []
     paths = _candidate_paths(resolved, claude_candidates)
+    allowed = [resolved, *[p.parent for p in claude_candidates]]
     if workspace is not None:
         wiki = workspace / ".hydraAgent" / "wiki"
-        paths.extend(sorted(wiki.rglob("*.md"))[:128] if wiki.is_dir() else [])
+        # The selected workspace is the authority boundary. Resolving a linked
+        # wiki as a new allowed base would authorize an unrelated project.
+        linked = any(part.is_symlink() or
+                     (hasattr(part, "is_junction") and part.is_junction())
+                     for part in (wiki, wiki.parent))
+        if not linked and wiki.resolve().is_relative_to(workspace.resolve()) and wiki.is_dir():
+            allowed.append(wiki)
+            paths.extend(sorted(wiki.rglob("*.md"))[:128])
     for path in paths:
         if path.is_symlink():
             continue
-        allowed = [resolved, *[p.parent for p in claude_candidates]]
-        if workspace is not None:
-            allowed.append(workspace / ".hydraAgent" / "wiki")
         path = path.resolve()
         if not any(path.is_relative_to(base.resolve()) for base in allowed):
             continue

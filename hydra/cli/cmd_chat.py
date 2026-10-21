@@ -541,7 +541,10 @@ def _handle_chat_operator_intent(stripped_prompt: str, runtime: dict[str, str], 
         "what needs repair",
         "what is the repo status",
     }:
-        print(render_self_check_text(build_self_check(REPO_ROOT)), end="")
+        print(f"Hydra runtime: provider={runtime.get('provider', 'unresolved')} "
+              f"model={runtime.get('model', 'unresolved')}")
+        print(f"root={root}\napproval_policy={approval_policy}")
+        print("verification=not_run — status reports configuration; run an audit or tests for evidence.")
         return True
     return False
 
@@ -689,8 +692,10 @@ def cmd_chat(args: argparse.Namespace) -> int:
             print(probe.report.strip())
     print(f"root={root}")
     context_message = _build_chat_context_message(args, memory_root, workspace_root=root)
+    workspace_context_messages = []
     if context_message is not None:
         chat_messages.append(context_message)
+        workspace_context_messages.append(context_message)
     if getattr(args, "truth_context", False) and not args.no_local_memory:
         truth_message = _truth_context_message(
             "hydra chat mission memory",
@@ -700,6 +705,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
         )
         if truth_message is not None:
             chat_messages.append(truth_message)
+            workspace_context_messages.append(truth_message)
     trace_out_path: Path | None = None
     if getattr(args, "trace_out", None):
         trace_out_path = Path(args.trace_out).expanduser().resolve()
@@ -746,6 +752,20 @@ def cmd_chat(args: argparse.Namespace) -> int:
             tui.root = root
             tui.memory_workspace_root = memory_workspace_root
             tui.tools = tools
+            # Optional startup context is scoped just as per-turn recall is.
+            # Remove its exact messages and rebuild from the accepted root.
+            tui._chat_messages = [message for message in tui._chat_messages
+                                  if message not in workspace_context_messages]
+            workspace_context_messages.clear()
+            refreshed = _build_chat_context_message(args, memory_root, workspace_root=root)
+            if refreshed is not None:
+                workspace_context_messages.append(refreshed)
+            if getattr(args, "truth_context", False) and not args.no_local_memory:
+                refreshed = _truth_context_message("hydra chat mission memory", memory_root,
+                    budget_chars=getattr(args, "context_budget_bytes", 4096), workspace_root=root)
+                if refreshed is not None:
+                    workspace_context_messages.append(refreshed)
+            tui._chat_messages.extend(workspace_context_messages)
             tui._chat_messages.append(
                 {
                     "role": "system",
