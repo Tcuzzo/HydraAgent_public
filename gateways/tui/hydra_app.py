@@ -502,6 +502,7 @@ class HydraApp(App[int]):
         # Inject workspace + toolkit context into the system prompt so the
         # agent always knows where it is and what it can do. Without this
         # the model asks 'what's the repo root?' every turn.
+        self._base_system_prompt = system_prompt
         self.system_prompt = _augment_system_prompt(
             system_prompt,
             workspace_root=self.workspace_root,
@@ -571,6 +572,22 @@ class HydraApp(App[int]):
         else:
             self._work_provider = None
             self._work_model = None
+
+    def rebind_workspace(self, root: Path, memory_workspace_root: Path | None = None) -> None:
+        """Apply an accepted /root change without moving the global memory store."""
+        old_prompt = self.system_prompt
+        self.workspace_root = Path(root).expanduser().resolve()
+        self.memory_workspace_root = Path(memory_workspace_root or root).expanduser().resolve()
+        self.system_prompt = _augment_system_prompt(
+            self._base_system_prompt, workspace_root=self.workspace_root,
+            tool_names=[tool.name for tool in self.tools],
+        )
+        for message in self._chat_messages:
+            if message.get("role") == "system" and message.get("content") == old_prompt:
+                message["content"] = self.system_prompt
+        self._agent_loop.system_prompt = self.system_prompt
+        for loop in self._work_loops.values():
+            loop.system_prompt = self.system_prompt
 
     # ── Layout ───────────────────────────────────────────────────────────
 
