@@ -872,6 +872,9 @@ class HydraApp(App[int]):
             final = runaway.capped_text
 
         def _rerun_forcing_tools(force: bool) -> tuple[str, int]:
+            remaining = iterations - sum(run.iterations for run in results)
+            if remaining <= 0:
+                return "No action was completed; the configured iteration budget is exhausted.", 0
             forced = list(result.messages)
             forced.append({
                 "role": "system",
@@ -886,7 +889,7 @@ class HydraApp(App[int]):
             r2 = agent_loop.run(
                 user_text,
                 tools=turn_tools,
-                max_iterations=iterations,
+                max_iterations=remaining,
                 max_tokens=profile.max_tokens,
                 temperature=profile.temperature,
                 timeout=self._timeout,
