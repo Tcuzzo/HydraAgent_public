@@ -268,21 +268,22 @@ def _dump_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def build_corpus(public_repo: Path, private_repo: Path, out: Path, *, eval_fraction: float = 0.2) -> dict[str, Any]:
+def build_corpus(public_repo: Path, private_repo: Path | None, out: Path, *, eval_fraction: float = 0.2) -> dict[str, Any]:
     if not 0 < eval_fraction < 1:
         raise CorpusError("eval_fraction must be between zero and one")
     # Some Windows restricted filesystems preserve '..' for nonexistent leaves
     # in resolve(); normalize the resolved string before component comparisons.
-    public_repo, private_repo, out = (Path(os.path.normpath(Path(path).expanduser().resolve()))
-                                      for path in (public_repo, private_repo, out))
+    public_repo, out = (Path(os.path.normpath(Path(path).expanduser().resolve())) for path in (public_repo, out))
+    private_repo = Path(os.path.normpath(Path(private_repo).expanduser().resolve())) if private_repo is not None else None
     if public_repo == private_repo:
         raise CorpusError("public and private sources must be distinct")
-    if any(out.is_relative_to(source) or source.is_relative_to(out) for source in (public_repo, private_repo)):
+    sources = [(public_repo, "public")] + ([(private_repo, "private")] if private_repo is not None else [])
+    if any(out.is_relative_to(source) or source.is_relative_to(out) for source, _ in sources):
         raise CorpusError("output must be separate from both source repositories")
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         raise CorpusError("output directory must be new or empty")
     inventories, files = [], []
-    for root, label in ((public_repo, "public"), (private_repo, "private")):
+    for root, label in sources:
         metadata, selected, _ = _load_source(root, label)
         if not selected:
             raise CorpusError(f"no eligible, source-grounded files in {label} repository")
@@ -308,7 +309,7 @@ def build_corpus(public_repo: Path, private_repo: Path, out: Path, *, eval_fract
     for source in files:  # public-first ensures identical public/private bytes use public prose
         aliases[source.content_hash].append(source)
         representatives.setdefault(source.content_hash, source)
-    datasets = {(model, split): [] for model in ("needle", "laya") for split in ("train", "eval")}
+    datasets = {(model, split): [] for model in ("needle", "laya", "kev") for split in ("train", "eval")}
     provenance = []
 
     def add(model, split, row, source, task):
@@ -346,6 +347,11 @@ def build_corpus(public_repo: Path, private_repo: Path, out: Path, *, eval_fract
             "questions": {"area": {"type": "choice", "instructions": "Choose the subsystem responsible for this source file.", "criteria": AREAS}},
             "expected": {"area": source.area},
         }, source, "subsystem_navigation")
+        add("kev", split, {
+            "state": state,
+            "questions": {"area": {"type": "choice", "instructions": "Choose the subsystem responsible for this source file.",
+                                   "criteria": AREAS, "label": source.area}},
+        }, source, "subsystem_navigation")
 
     out.mkdir(parents=True, exist_ok=True)
     file_hashes = {}
@@ -379,7 +385,7 @@ def build_corpus(public_repo: Path, private_repo: Path, out: Path, *, eval_fract
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--public-repo", type=Path, required=True)
-    parser.add_argument("--private-repo", type=Path, required=True)
+    parser.add_argument("--private-repo", type=Path, help="Optional private source; omit for a public-only corpus")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--eval-fraction", type=float, default=0.2)
     args = parser.parse_args(argv)
