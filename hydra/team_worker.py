@@ -163,7 +163,8 @@ def execute(request: dict, run_dir: Path) -> dict:
             'memory_warnings': memory_warnings + learning_warnings,
             'evidence': evidence, 'unresolved_tool_errors': unresolved_errors,
             'duration_seconds': round(time.monotonic() - started, 3),
-            'iterations': result.iterations, 'tool_calls': result.tool_calls_made}
+            'iterations': result.iterations, 'provider_calls': result.provider_calls,
+            'tool_calls': result.tool_calls_made}
 
 
 def main() -> int:

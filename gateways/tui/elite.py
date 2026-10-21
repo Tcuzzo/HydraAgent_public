@@ -1294,6 +1294,7 @@ class EliteTUI:
                 "model": model or self.model,
                 "trace_id": result.trace_id,
                 "iterations": result.iterations,
+                "provider_calls": result.provider_calls,
                 "tool_calls_made": result.tool_calls_made,
                 "halted_reason": result.halted_reason,
                 "final_response": result.final_response,

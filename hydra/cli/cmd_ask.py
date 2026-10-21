@@ -351,6 +351,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
     print(result.final_response)
     print(
         f"\n(iterations={result.iterations} "
+        f"provider_calls={getattr(result, 'provider_calls', 0)} "
         f"tool_calls={result.tool_calls_made} "
         f"halted={result.halted_reason})",
         file=sys.stderr,

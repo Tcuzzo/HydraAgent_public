@@ -223,6 +223,7 @@ def _build_ask_trace(
         "system_prompt_bytes": len(system_prompt.encode("utf-8", errors="replace")),
         "context_proof": list(context_proof),
         "iterations": getattr(result, "iterations", 0),
+        "provider_calls": getattr(result, "provider_calls", 0),
         "tool_calls_made": getattr(result, "tool_calls_made", 0),
         "halted_reason": getattr(result, "halted_reason", ""),
         "final_response": getattr(result, "final_response", ""),

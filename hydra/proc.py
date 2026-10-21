@@ -51,13 +51,17 @@ Public API
 from __future__ import annotations
 
 import os
+import math
 import shutil
 import signal
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+from threading import Event, Thread
 from typing import Any
 
 # ── Platform detection ────────────────────────────────────────────────────────
@@ -346,6 +350,148 @@ def _truncate(buf: bytes, limit: int) -> tuple[str, bool]:
 
 DEFAULT_TIMEOUT_S = 30.0
 DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024
+_ACTIVE_CANCELLATION: ContextVar[Event | None] = ContextVar("hydra_process_cancellation", default=None)
+
+
+@contextmanager
+def use_cancellation(event: Event | None):
+    """Propagate a turn owner's cancellation to synchronous process tools."""
+    token = _ACTIVE_CANCELLATION.set(event)
+    try:
+        yield
+    finally:
+        _ACTIVE_CANCELLATION.reset(token)
+
+
+class ProcessCancelled(subprocess.SubprocessError):
+    """The owner revoked a running command."""
+
+
+class OutputLimitExceeded(subprocess.SubprocessError):
+    """A command exceeded an explicitly fatal output budget."""
+
+
+def run_captured(
+    argv: list[str], *, cwd=None, env=None, input=None, capture_output=True,
+    text=True, timeout=None, cancel_event: Event | None = None,
+    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+    stdout_file=None, merge_output=False, fail_on_output_limit=False, popen_factory=None,
+) -> subprocess.CompletedProcess:
+    """Drain owned process pipes without retaining unbounded progress output.
+
+    Each stream keeps its prefix up to the declared byte ceiling and reports
+    truncation. A separate stdin writer keeps cancellation responsive even when
+    a native child stops reading a large prompt. No shell interprets argv.
+    """
+    if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                                or not math.isfinite(timeout) or timeout <= 0):
+        raise ValueError("timeout must be a finite positive number")
+    if isinstance(max_output_bytes, bool) or not isinstance(max_output_bytes, int) or max_output_bytes < 0:
+        raise ValueError("max_output_bytes must be a non-negative integer")
+    if cancel_event is None:
+        cancel_event = _ACTIVE_CANCELLATION.get()
+    if cancel_event is not None and cancel_event.is_set():
+        raise ProcessCancelled("process cancelled before launch")
+    payload = input.encode("utf-8") if isinstance(input, str) else input
+    deadline = time.monotonic() + timeout if timeout is not None else None
+    proc = (popen_factory or popen_portable)(argv, cwd=cwd, env=env,
+                          stdin=subprocess.PIPE if payload is not None else None,
+                          stdout=subprocess.PIPE if capture_output else None,
+                          stderr=subprocess.STDOUT if merge_output else subprocess.PIPE if capture_output else None)
+    buffers = [bytearray(), bytearray()]
+    totals = [0, 0]
+    threads = []
+    limit_reached = Event()
+    io_errors = []
+
+    def drain(stream, index):
+        try:
+            while chunk := stream.read(65536):
+                available = max_output_bytes - totals[index]
+                totals[index] += len(chunk)
+                if available > 0:
+                    if index == 0 and stdout_file is not None:
+                        stdout_file.write(chunk[:available])
+                    else:
+                        buffers[index].extend(chunk[:available])
+                if totals[index] > max_output_bytes and fail_on_output_limit:
+                    limit_reached.set()
+        except (OSError, ValueError) as exc:
+            io_errors.append(exc)
+
+    def send_input():
+        try:
+            proc.stdin.write(payload)
+            proc.stdin.flush()
+        except (BrokenPipeError, OSError, ValueError):
+            pass  # Child may exit or be cancelled without consuming the prompt.
+        finally:
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+
+    for index, stream in enumerate((proc.stdout, proc.stderr)):
+        if stream is not None:
+            threads.append(Thread(target=drain, args=(stream, index), daemon=True))
+    if payload is not None:
+        threads.append(Thread(target=send_input, daemon=True))
+    error = None
+    try:
+        for thread in threads:
+            thread.start()
+        while proc.poll() is None:
+            if io_errors:
+                error = io_errors[0]
+                break
+            if limit_reached.is_set():
+                error = OutputLimitExceeded(f"process output exceeds {max_output_bytes} bytes")
+                break
+            if cancel_event is not None and cancel_event.is_set():
+                error = ProcessCancelled("process cancelled")
+                break
+            remaining = deadline - time.monotonic() if deadline is not None else None
+            if remaining is not None and remaining <= 0:
+                error = subprocess.TimeoutExpired(argv, timeout)
+                break
+            try:
+                proc.wait(timeout=min(0.05, remaining) if remaining is not None else 0.05)
+            except subprocess.TimeoutExpired:
+                pass
+    finally:
+        kill_owned_group(proc)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        for thread in threads:
+            if thread.ident is not None:
+                thread.join(timeout=5)
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+    captured = [bytes(buf).decode("utf-8", errors="replace") if text else bytes(buf) for buf in buffers]
+    if stdout_file is not None:
+        stdout_file.flush()
+    if io_errors and error is None:
+        error = io_errors[0]
+    if limit_reached.is_set() and error is None:
+        error = OutputLimitExceeded(f"process output exceeds {max_output_bytes} bytes")
+    if error is not None:
+        if isinstance(error, subprocess.TimeoutExpired):
+            error.output, error.stderr = captured
+            error.stdout_truncated = totals[0] > max_output_bytes
+            error.stderr_truncated = totals[1] > max_output_bytes
+        raise error
+    result = subprocess.CompletedProcess(argv, proc.returncode,
+        captured[0] if capture_output else None, captured[1] if capture_output else None)
+    result.stdout_truncated = totals[0] > max_output_bytes
+    result.stderr_truncated = totals[1] > max_output_bytes
+    return result
 
 
 def run_shell(
@@ -389,28 +535,15 @@ def run_shell(
     cwd_str = str(Path(cwd).resolve()) if cwd is not None else str(Path.cwd())
     argv = _shell_argv(command, prefer_bash=prefer_bash)
 
-    # Build Popen kwargs — process isolation is OS-specific (see module docstring).
-    isolation = _popen_kwargs_isolation()
-
     start = time.monotonic()
     timed_out = False
-    proc = subprocess.Popen(
-        argv,
-        cwd=cwd_str,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        **isolation,
-    )
     try:
-        stdout_b, stderr_b = proc.communicate(timeout=timeout)
+        proc = run_captured(argv, cwd=cwd_str, env=env, timeout=timeout,
+                            max_output_bytes=max_output_bytes, text=False)
+        stdout_b, stderr_b = proc.stdout, proc.stderr
         exit_code = proc.returncode
-    except subprocess.TimeoutExpired:
-        kill_tree(proc)
-        try:
-            stdout_b, stderr_b = proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            stdout_b, stderr_b = b"", b""
+    except subprocess.TimeoutExpired as exc:
+        stdout_b, stderr_b = exc.output or b"", exc.stderr or b""
         exit_code = -1
         timed_out = True
 
