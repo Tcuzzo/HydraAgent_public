@@ -171,13 +171,15 @@ def _is_ip_allowed(host: str) -> tuple[bool, str | None]:
         addr_info = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except socket.gaierror as e:
         return False, f"DNS resolution failed: {e}"
+    if not addr_info:
+        return False, "DNS returned no addresses"
     
     for family, _, _, _, sockaddr in addr_info:
         ip_str = sockaddr[0]
         try:
             ip = ipaddress.ip_address(ip_str)
         except ValueError:
-            continue
+            return False, "DNS returned an invalid address"
         
         # Check for private/internal ranges
         if ip.is_loopback:
@@ -212,6 +214,8 @@ def fetch_session_url(
             raise EnvironmentError("invalid URL: missing host")
         allowed, reason = _is_ip_allowed(host)
         if not allowed:
+            if reason and reason.startswith("DNS"):
+                raise EnvironmentError(f"cannot resolve fetch target: {host} ({reason})")
             raise EnvironmentError(f"refusing to fetch private/internal address: {host} ({reason})")
 
     validate(url)
