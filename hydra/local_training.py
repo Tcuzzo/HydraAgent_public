@@ -15,13 +15,12 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import time
 
 from hydra.atomic_write import atomic_write_bytes
 from hydra.decision_contract import validate_questions
 from hydra.llm import LlmError
 from hydra.local_model_worker import model_cache_dir
-from hydra.proc import kill_tree, popen_portable
+from hydra.proc import popen_portable
 
 MAX_DATA_BYTES = 32 * 1024 * 1024
 MAX_LOG_BYTES = 32 * 1024 * 1024
@@ -295,6 +294,7 @@ def _worker(plan):
 
 
 def run_training(plan):
+    from hydra.proc import OutputLimitExceeded, run_captured
     out = Path(plan["out"])
     out.mkdir(parents=True, mode=0o700, exist_ok=False)
     for field, destination in (("train", "train.jsonl"), ("eval", "evaluation.jsonl")):
@@ -315,19 +315,17 @@ def run_training(plan):
            "HF_HUB_DISABLE_PROGRESS_BARS": "1", "USE_TF": "0", "JAX_PLATFORMS": "cpu"}
     env.setdefault("HYDRA_MODEL_CACHE", str(model_cache_dir()))
     env.setdefault("HF_HOME", str(model_cache_dir() / "huggingface"))
-    process = None
     try:
         with (out / "training.log").open("wb") as log:
-            process = popen_portable([sys.executable, "-m", "hydra.local_training", "--worker", str(out / "plan.json")],
-                stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
-                cwd=str(Path(__file__).resolve().parent.parent))
-            deadline = time.monotonic() + plan["timeout"]
-            while process.poll() is None:
-                if time.monotonic() >= deadline:
-                    raise TrainingError(f"training exceeded {plan['timeout']}s; partial checkpoint/logs preserved")
-                if (out / "training.log").stat().st_size > MAX_LOG_BYTES:
-                    raise TrainingError("training exceeded its 32 MiB log budget")
-                time.sleep(0.1)
+            try:
+                process = run_captured([sys.executable, "-m", "hydra.local_training", "--worker", str(out / "plan.json")],
+                    stdout_file=log, merge_output=True, fail_on_output_limit=True,
+                    max_output_bytes=MAX_LOG_BYTES, timeout=plan["timeout"], input=b"", env=env,
+                    popen_factory=popen_portable, cwd=str(Path(__file__).resolve().parent.parent))
+            except OutputLimitExceeded as exc:
+                raise TrainingError("training exceeded its 32 MiB log budget") from exc
+            except subprocess.TimeoutExpired as exc:
+                raise TrainingError(f"training exceeded {plan['timeout']}s; partial checkpoint/logs preserved") from exc
             if process.returncode:
                 raise TrainingError(f"training worker exited {process.returncode}; inspect {out / 'training.log'}")
         report = json.loads((out / "report.json").read_text())
@@ -335,9 +333,6 @@ def run_training(plan):
             raise TrainingError("training worker exited without a completed evaluation receipt")
         return report
     except BaseException as exc:
-        if process is not None and process.poll() is None:
-            kill_tree(process)
-            process.wait(timeout=10)
         _write(out / "report.json", {**plan, "status": "failed", "error": str(exc), "promoted": False})
         raise
 

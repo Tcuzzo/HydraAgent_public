@@ -36,8 +36,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import time
-import uuid
 from pathlib import Path
 from threading import Event
 from typing import Callable, Iterable
@@ -150,51 +148,13 @@ def _default_runner(argv, *, input=None, capture_output=True, text=True, timeout
 
     Injected so unit tests can pass a fake and never touch the CLI/account.
     """
-    from hydra.proc import kill_owned_group, popen_portable
-
-    if cancel_event is not None and cancel_event.is_set():
-        raise LlmError("codex exec cancelled before launch")
-    deadline = time.monotonic() + timeout if timeout is not None else None
-    process = popen_portable(
-        _native_launcher_argv(argv),
-        stdin=subprocess.PIPE if input is not None else None,
-        stdout=subprocess.PIPE if capture_output else None,
-        stderr=subprocess.PIPE if capture_output else None,
-        text=text,
-        encoding="utf-8" if text else None,
-    )
-    pending_input = input
+    from hydra.proc import ProcessCancelled, run_captured
     try:
-        while True:
-            if cancel_event is not None and cancel_event.is_set():
-                raise LlmError("codex exec cancelled")
-            remaining = deadline - time.monotonic() if deadline is not None else None
-            if remaining is not None and remaining <= 0:
-                raise subprocess.TimeoutExpired(argv, timeout)
-            try:
-                stdout, stderr = process.communicate(
-                    input=pending_input,
-                    timeout=min(0.1, remaining) if remaining is not None else 0.1,
-                )
-                return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
-            except subprocess.TimeoutExpired:
-                # communicate() retains buffered output and any unwritten stdin;
-                # subsequent polls must not submit the same input a second time.
-                pending_input = None
-    finally:
-        # The group is owned by popen_portable. POSIX group ownership survives
-        # the leader; Windows uses the existing bounded taskkill /T tree cleanup.
-        kill_owned_group(process)
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
-        for stream in (process.stdin, process.stdout, process.stderr):
-            if stream is not None:
-                try:
-                    stream.close()
-                except OSError:
-                    pass
+        return run_captured(_native_launcher_argv(argv), input=input,
+            capture_output=capture_output, text=text, timeout=timeout,
+            cancel_event=cancel_event, max_output_bytes=1024 * 1024)
+    except ProcessCancelled as exc:
+        raise LlmError(f"codex exec {exc}") from exc
 
 
 class CodexClient:
@@ -254,9 +214,8 @@ class CodexClient:
 
         # Temp file for the clean final message. Random name under the OS temp
         # dir so concurrent calls never collide; deleted after we read it.
-        out_file = os.path.join(
-            tempfile.gettempdir(), f"hydra-codex-{uuid.uuid4().hex}.txt"
-        )
+        with tempfile.NamedTemporaryFile(prefix="hydra-codex-", suffix=".txt", delete=False) as output:
+            out_file = output.name
 
         # Only pass `-m` when the model differs from the generic default label —
         # otherwise let the user's `codex login` config pick the model.
@@ -282,6 +241,7 @@ class CodexClient:
                 runner_options["cancel_event"] = self.cancel_event
             proc = self._runner(argv, **runner_options)
         except Exception as exc:  # TimeoutExpired, OSError, ValueError, etc.
+            Path(out_file).unlink(missing_ok=True)
             if type(exc).__name__ == "TimeoutExpired":
                 raise LlmError(f"codex exec timed out after {timeout}s") from exc
             raise LlmError(f"could not run codex exec: {exc}") from exc
@@ -302,7 +262,9 @@ class CodexClient:
                 finish_reason="stop",
                 prompt_tokens=0,
                 completion_tokens=0,
-                raw={"stdout": stdout, "stderr": stderr, "returncode": returncode},
+                raw={"stdout": stdout, "stderr": stderr, "returncode": returncode,
+                     "stdout_truncated": bool(getattr(proc, "stdout_truncated", False)),
+                     "stderr_truncated": bool(getattr(proc, "stderr_truncated", False))},
                 tool_calls=[],
             )
 
@@ -364,19 +326,22 @@ class CodexClient:
     def _read_last_message(self, out_file: str, stdout: str) -> str:
         """Read the `-o` last-message file, then delete it.
 
-        If the file yields nothing, fall back to stdout (best effort); the caller
-        treats an empty answer as an outage.
+        Progress stdout is never a final answer. The caller diagnoses a missing
+        or empty final file using the bounded process logs.
         """
         try:
             if os.path.isfile(out_file):
-                with open(out_file, "r", encoding="utf-8") as fh:
-                    data = fh.read()
-                try:
-                    os.remove(out_file)
-                except OSError:
-                    pass
+                with open(out_file, "rb") as fh:
+                    data = fh.read(1024 * 1024 + 1)
+                if len(data) > 1024 * 1024:
+                    raise LlmError("codex final message exceeds the 1 MiB limit")
+                data = data.decode("utf-8")
                 if data.strip():
                     return data
         except OSError:
             pass
-        return stdout
+        except UnicodeError as exc:
+            raise LlmError("codex final message is not valid UTF-8") from exc
+        finally:
+            Path(out_file).unlink(missing_ok=True)
+        return ""

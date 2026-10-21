@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 import urllib.request
 
 from hydra.http_policy import open_checked
-from hydra.proc import kill_owned_group, popen_portable
+from hydra.proc import run_captured
 
 
 SESSION_SCHEMA = "hydra.environment.session.v1"
@@ -41,6 +41,8 @@ def create_session(
     if not title.strip():
         raise EnvironmentError("title must be non-empty")
     root = Path(env_root).expanduser().resolve()
+    if root == source:
+        raise EnvironmentError("environment storage must be a separate directory from the source repo")
     session_id = _session_id(title)
     session_path = root / session_id
     suffix = 1
@@ -49,12 +51,22 @@ def create_session(
         session_path = root / f"{session_id}-{suffix}"
     workspace = session_path / "workspace"
     session_path.mkdir(parents=True)
-    shutil.copytree(
-        source,
-        workspace,
-        ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "node_modules"),
-        symlinks=False,
-    )
+    ignore_patterns = shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "node_modules")
+    def ignore_snapshot_entries(directory, names):
+        ignored = set(ignore_patterns(directory, names))
+        for name in names:
+            path = Path(directory) / name
+            # The default storage lives under source/evidence. Exclude the
+            # entire storage directory, including earlier session snapshots.
+            if (path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction())
+                    or path.resolve() == root):
+                ignored.add(name)
+        return ignored
+    try:
+        shutil.copytree(source, workspace, ignore=ignore_snapshot_entries, symlinks=False)
+    except BaseException:
+        shutil.rmtree(session_path)
+        raise
     session = {
         "schema": SESSION_SCHEMA,
         "session_id": session_path.name,
@@ -85,49 +97,28 @@ def run_session_command(
             or not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
         raise EnvironmentError("timeout_seconds must be a finite positive number")
     started = _now()
-    proc = popen_portable(
-        command,
-        cwd=workspace,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
     timed_out = False
+    stdout_truncated = stderr_truncated = False
     try:
-        try:
-            stdout, stderr = proc.communicate(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            # Stop the owned tree while its leader still exists, then recover
-            # output and persist the failed attempt through the normal path.
-            kill_owned_group(proc)
-            try:
-                stdout, stderr = proc.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                stdout, stderr = exc.stdout or b"", exc.stderr or b""
-                stdout = stdout.decode("utf-8", errors="replace") if isinstance(stdout, bytes) else stdout
-                stderr = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else stderr
-    finally:
-        kill_owned_group(proc)
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
-        for stream in (proc.stdout, proc.stderr):
-            if stream is not None:
-                stream.close()
+        proc = run_captured(command, cwd=workspace, timeout=timeout_seconds)
+        stdout, stderr, returncode = proc.stdout, proc.stderr, proc.returncode
+        stdout_truncated, stderr_truncated = proc.stdout_truncated, proc.stderr_truncated
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        stdout, stderr, returncode = exc.output or "", exc.stderr or "", -1
+        stdout_truncated = bool(getattr(exc, "stdout_truncated", False))
+        stderr_truncated = bool(getattr(exc, "stderr_truncated", False))
     packet = {
         "schema": COMMAND_SCHEMA,
         "session_id": session_id,
         "command": command,
-        "status": "timed_out" if timed_out else "ok" if proc.returncode == 0 else "failed",
-        "returncode": proc.returncode,
+        "status": "timed_out" if timed_out else "ok" if returncode == 0 else "failed",
+        "returncode": returncode,
         "stdout": stdout,
         "stderr": stderr,
         "timed_out": timed_out,
+        "stdout_truncated": stdout_truncated,
+        "stderr_truncated": stderr_truncated,
         "timeout_seconds": timeout_seconds,
         "started_at": started,
         "finished_at": _now(),

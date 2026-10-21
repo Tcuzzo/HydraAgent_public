@@ -174,7 +174,7 @@ without running the command when confinement is unavailable, including on native
 Windows and macOS. Ordinary local CLI tools remain available on all three systems;
 use a Linux environment for confined worker verification.
 
-`hydra ask` exits nonzero when it fails or exhausts its iteration budget, while printing the available partial result. `--max-iterations` limits model turns and `--timeout` limits each model call. Tool execution and approval waits have their own limits. Optional Telegram and browser setup lives in the [command reference](docs/CLI-REFERENCE.md).
+`hydra ask` exits nonzero when it fails or exhausts its iteration budget, while printing the available partial result. `--max-iterations` limits tool-loop iterations. A final no-tool synthesis request and recovery requests may add model calls; runtime results report these separately as `provider_calls`. `--timeout` limits each model call. Tool execution and approval waits have their own limits. Optional Telegram and browser setup lives in the [command reference](docs/CLI-REFERENCE.md).
 
 ## Find your next step
 
