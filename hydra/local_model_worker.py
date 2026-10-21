@@ -18,6 +18,12 @@ _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _MAX_DIAGNOSTIC_BYTES = 1024 * 1024
 
 
+def model_cache_dir() -> Path:
+    """One cache for initialization, prediction, and local training."""
+    configured = os.environ.get("HYDRA_MODEL_CACHE")
+    return (Path(configured).expanduser() if configured else Path.home() / ".hydraAgent" / "models").resolve()
+
+
 def _communicate_bounded(process, serialized, output, diagnostics, timeout):
     deadline = time.monotonic() + timeout
     pending = serialized
@@ -64,8 +70,8 @@ def predict_local(request: dict, *, timeout: float) -> dict:
         raise LlmError("local model request exceeded its byte budget")
     env = {**os.environ, "NEEDLE_TELEMETRY": "0", "DO_NOT_TRACK": "1",
            "HF_HUB_DISABLE_TELEMETRY": "1", "HF_HUB_DISABLE_PROGRESS_BARS": "1", "USE_TF": "0"}
-    if env.get("HYDRA_MODEL_CACHE"):
-        env.setdefault("HF_HOME", str(Path(env["HYDRA_MODEL_CACHE"]).expanduser().resolve() / "huggingface"))
+    env.setdefault("HYDRA_MODEL_CACHE", str(model_cache_dir()))
+    env.setdefault("HF_HOME", str(Path(env["HYDRA_MODEL_CACHE"]).expanduser().resolve() / "huggingface"))
     # Use the package root so callers can run outside a checkout without losing
     # the worker import. No shell, and private state is carried only on stdin.
     try:
