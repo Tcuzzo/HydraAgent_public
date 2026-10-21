@@ -11,7 +11,7 @@ import shutil
 import tempfile
 import unicodedata
 
-from hydra.specialists import ROLES, read_json, reject_links
+from hydra.specialists import ROLES, read_json, reject_links, validate_library_names
 
 
 class PublicProfileError(ValueError):
@@ -56,8 +56,12 @@ def export_profiles(source: str | Path, destination: str | Path, roles: list[str
             data = read_json(source / f'{role}.json')
         except (OSError, ValueError, UnicodeError):
             raise PublicProfileError(f'{role}: invalid source profile') from None
-        if set(data) - {'id', 'edition', 'canon', 'essence', 'license', 'credits'}:
+        if set(data) - {'id', 'edition', 'canon', 'essence', 'license', 'credits', 'library'}:
             raise PublicProfileError(f'{role}: unsupported public fields')
+        try:
+            validate_library_names(data.get('library', []))
+        except ValueError:
+            raise PublicProfileError(f'{role}: invalid bundled library IDs') from None
         if data.get('id') != role or any(not isinstance(data.get(key), str) or not data[key].strip() for key in ('canon', 'essence', 'license')):
             raise PublicProfileError(f'{role}: invalid public profile')
         if not isinstance(data.get('credits'), list) or not all(isinstance(c, str) for c in data['credits']):
