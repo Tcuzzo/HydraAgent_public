@@ -143,6 +143,13 @@ class ContextAssembler:
             (formatted_context_string, metadata_dict)
         """
         budget = self.budget if max_tokens is None else ContextBudget(max_context_tokens=max_tokens)
+        if (isinstance(budget.max_context_tokens, bool) or not isinstance(budget.max_context_tokens, int)
+                or budget.max_context_tokens < 0):
+            raise ValueError("max_context_tokens must be a non-negative integer")
+        if budget.max_context_tokens == 0:
+            return "", {"retrieved_count": 0, "working_memory_items": 0,
+                        "total_tokens": 0, "compression_applied": False, "truncated": False,
+                        "token_estimate_basis": "ceil(formatted_chars / 4)"}
         
         # Phase 1: Retrieve durable memory (lessons + wiki + clusters)
         retrieved = self._retrieve_relevant_context(query, task_type, budget.max_retrieval_results)
@@ -152,17 +159,28 @@ class ContextAssembler:
         
         # Phase 3: Compress if over budget
         total_tokens = self._estimate_tokens(retrieved, working_ctx)
-        if total_tokens > budget.compression_threshold:
+        compressed = total_tokens > min(budget.compression_threshold, budget.max_context_tokens)
+        if compressed:
             retrieved = self._compress_context(retrieved, working_ctx, budget.max_context_tokens)
         
         # Phase 4: Format for prompt injection
         formatted = self._format_context(retrieved, working_ctx)
+        # The estimate includes headings, provenance and working memory. The
+        # final character ceiling also holds for tiny budgets where these
+        # components alone exceed the retrieval-content allowance.
+        char_limit = budget.max_context_tokens * 4
+        truncated = len(formatted) > char_limit
+        if truncated:
+            marker = "\n[context truncated]"
+            formatted = (formatted[:max(0, char_limit - len(marker))] + marker)[:char_limit]
         
         metadata = {
             "retrieved_count": len(retrieved),
             "working_memory_items": len(working_ctx),
-            "total_tokens": self._estimate_tokens(retrieved, working_ctx),
-            "compression_applied": total_tokens > budget.compression_threshold,
+            "total_tokens": (len(formatted) + 3) // 4,
+            "compression_applied": compressed or truncated,
+            "truncated": truncated,
+            "token_estimate_basis": "ceil(formatted_chars / 4)",
         }
         
         return formatted, metadata

@@ -8,7 +8,7 @@ from typing import Any
 
 from hydra.lessons import LESSON_RELATIVE_PATH
 from hydra.wiki_memory import WIKI_ROOT
-from hydra.local_memory import DEFAULT_MEMORY_ROOT
+from hydra.local_memory import DEFAULT_MEMORY_ROOT, _source_in_root
 
 
 INDEX_SCHEMA = "hydra.memory_kernel.index.v1"
@@ -184,7 +184,7 @@ def assemble_memory_briefing(
 
 def _lesson_records(memory_root: Path, repo_root: Path) -> list[dict[str, Any]]:
     path = memory_root / LESSON_RELATIVE_PATH
-    if not path.is_file():
+    if not _source_in_root(path, memory_root) or not path.is_file():
         return []
     text = _read_text(path)
     entries = re.split(r"\n(?=## 20\d{2}-)", text)
@@ -195,29 +195,13 @@ def _lesson_records(memory_root: Path, repo_root: Path) -> list[dict[str, Any]]:
     ]
 
 
-def _workspace_source(path: Path, repo_root: Path) -> bool:
-    """Require an in-scope path with no linked component below the workspace."""
-    try:
-        relative = path.relative_to(repo_root)
-        if not path.resolve().is_relative_to(repo_root.resolve()):
-            return False
-        current = repo_root
-        for part in relative.parts:
-            current = current / part
-            if current.is_symlink() or (hasattr(current, "is_junction") and current.is_junction()):
-                return False
-        return True
-    except (OSError, ValueError, RuntimeError):
-        return False
-
-
 def _wiki_records(repo_root: Path) -> list[dict[str, Any]]:
     root = repo_root / WIKI_ROOT
-    if not _workspace_source(root, repo_root) or not root.is_dir():
+    if not _source_in_root(root, repo_root) or not root.is_dir():
         return []
     records = []
     for path in sorted(root.rglob("*.md")):
-        if path.name == "index.md" or not _workspace_source(path, repo_root):
+        if path.name == "index.md" or not _source_in_root(path, repo_root):
             continue
         text = _read_text(path)
         title = _first_heading(text) or path.stem
@@ -227,11 +211,11 @@ def _wiki_records(repo_root: Path) -> list[dict[str, Any]]:
 
 def _mission_evidence_records(repo_root: Path) -> list[dict[str, Any]]:
     root = repo_root / "evidence" / "missions"
-    if not _workspace_source(root, repo_root) or not root.is_dir():
+    if not _source_in_root(root, repo_root) or not root.is_dir():
         return []
     records = []
     for path in sorted(root.glob("*/mission_loop.json")):
-        if not _workspace_source(path, repo_root):
+        if not _source_in_root(path, repo_root):
             continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -246,11 +230,11 @@ def _mission_evidence_records(repo_root: Path) -> list[dict[str, Any]]:
 
 def _source_receipt_records(repo_root: Path) -> list[dict[str, Any]]:
     root = repo_root / "evidence" / "source-reengineering"
-    if not _workspace_source(root, repo_root) or not root.is_dir():
+    if not _source_in_root(root, repo_root) or not root.is_dir():
         return []
     records = []
     for path in sorted(root.glob("*/receipts.jsonl")):
-        if not _workspace_source(path, repo_root):
+        if not _source_in_root(path, repo_root):
             continue
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             if not line.strip():

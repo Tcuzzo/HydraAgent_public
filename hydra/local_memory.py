@@ -15,6 +15,7 @@ from typing import Any
 
 DEFAULT_MEMORY_ROOT = Path(os.environ.get("HYDRA_MEMORY_ROOT") or Path.home() / ".hydra-memory").expanduser().resolve()
 DEFAULT_MAX_CHARS = 12000
+MAX_SOURCE_CHARS = 131072
 
 MEMORY_CANDIDATES = (
     "workspace/MEMORY.md",
@@ -88,7 +89,7 @@ def _claude_project_memory_candidates(workspace_root: Path | None) -> list[Path]
         / "memory"
     )
     index_path = memory_dir / "MEMORY.md"
-    if not index_path.is_file():
+    if not _source_in_root(memory_dir, Path.home().resolve()) or not index_path.is_file():
         return []
     paths = [index_path]
     paths.extend(
@@ -99,6 +100,22 @@ def _claude_project_memory_candidates(workspace_root: Path | None) -> list[Path]
         )
     )
     return paths
+
+
+def _source_in_root(path: Path, root: Path) -> bool:
+    """Accept only sources with no linked component below the declared root."""
+    try:
+        relative = path.relative_to(root)
+        if root.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+            return False
+        current = root
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink() or (hasattr(current, "is_junction") and current.is_junction()):
+                return False
+        return True
+    except (OSError, ValueError, RuntimeError):
+        return False
 
 
 def _safe_relative(path: Path, root: Path) -> str:
@@ -132,7 +149,8 @@ def _redact_text(text: str) -> str:
 
 def _read_excerpt(path: Path, *, max_chars: int) -> tuple[str, str | None]:
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        with path.open("r", encoding="utf-8", errors="replace") as source:
+            text = source.read(MAX_SOURCE_CHARS)
     except OSError as e:
         return "", f"{path}: {type(e).__name__}: {e}"
     redacted = _redact_text(text)
@@ -165,7 +183,8 @@ def _append_budgeted(chunks: list[str], chunk: str, remaining: int) -> int:
     if remaining <= 0:
         return 0
     if len(chunk) > remaining:
-        chunks.append(chunk[:remaining].rstrip() + "\n[context budget exhausted]")
+        marker = "\n[context budget exhausted]"
+        chunks.append((chunk[:max(0, remaining - len(marker))].rstrip() + marker)[:remaining])
         return 0
     chunks.append(chunk)
     return remaining - len(chunk)
@@ -182,8 +201,8 @@ def build_local_memory_context(
     resolved = _resolve_root(root)
     workspace = _resolve_workspace_root(workspace_root)
     claude_candidates = _claude_project_memory_candidates(workspace)
-    if max_chars < 1000:
-        max_chars = 1000
+    if isinstance(max_chars, bool) or not isinstance(max_chars, int) or max_chars < 0:
+        raise ValueError("max_chars must be a non-negative integer")
     if not resolved.is_dir() and not claude_candidates:
         report = f"Hydra local memory: not found at {resolved}\n"
         return LocalMemoryResult(
@@ -211,9 +230,16 @@ def build_local_memory_context(
         "only as reference if directly relevant to the operator's latest message; "
         "verify live filesystem state before claiming current runtime status.\n"
     ]
+    chunks = [chunks[0][:max_chars]]
     remaining = max_chars - sum(len(c) for c in chunks)
+    allowed_roots = [resolved, *[p.parent for p in claude_candidates]]
 
     for path in candidate_paths:
+        if remaining <= 0:
+            break
+        if not any(_source_in_root(path, base) for base in allowed_roots):
+            indexed.append({"path": _safe_relative(path, resolved), "status": "SKIPPED_OUTSIDE_SCOPE"})
+            continue
         path = path.resolve()
         if path in seen or not path.is_file():
             continue

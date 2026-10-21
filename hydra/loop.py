@@ -68,6 +68,22 @@ class Tool:
     parameters: dict
     invoke: Callable[..., Any]
 
+    def __post_init__(self):
+        from jsonschema import Draft202012Validator
+        from referencing import Registry
+        if not isinstance(self.parameters, dict):
+            raise ValueError("tool parameters must be an object schema")
+        # Resolve local schema references only. Tool metadata cannot authorize
+        # network fetches during argument validation.
+        validator = Draft202012Validator({"type": "object", **self.parameters}, registry=Registry())
+        invoke = self.invoke
+        def checked(**arguments):
+            error = next(validator.iter_errors(arguments), None)
+            if error is not None:
+                raise ValueError(f"{self.name} argument {error.json_path} violates its {error.validator} constraint")
+            return invoke(**arguments)
+        self.invoke = checked
+
     def to_openai_schema(self) -> dict:
         return {
             "type": "function",
@@ -120,6 +136,7 @@ class LoopResult:
     fallback_checkpoint_path: str | None = None
     operator_message: str | None = None
     provider_error: dict | None = None
+    provider_calls: int = 0
 
     # Phantom tool call recovery: set True when the provider returned HTTP 400
     # "tool call validation failed" for a tool that wasn't in the request (e.g.
@@ -251,6 +268,7 @@ class AgentLoop:
 
         steps: list[LoopStep] = []
         tool_calls_made = 0
+        provider_calls = 0
         final_response = ""
         halted_reason = "max_iterations"
         last_iteration = 0
@@ -315,6 +333,7 @@ class AgentLoop:
                     record_step(LoopStep(step=iteration, kind="system", role="system", content=synthesis_prompt["content"]))
             
             try:
+                provider_calls += 1
                 resp = self.client.chat(
                     messages,
                     model=self.model,
@@ -360,6 +379,7 @@ class AgentLoop:
                         ),
                     })
                     try:
+                        provider_calls += 1
                         resp = self.client.chat(
                             recovery_messages,
                             model=self.model,
@@ -404,6 +424,7 @@ class AgentLoop:
                             has_real_tool_activity=any(step.kind == "tool_result" for step in steps),
                             trace_id=run_trace_id,
                             provider_error=exc.to_dict(),
+                            provider_calls=provider_calls,
                         )
                         raise
                     from hydra.emergency_fallback import engage_life_support_fallback
@@ -439,6 +460,7 @@ class AgentLoop:
                         substitution=fb["substitution"],
                         fallback_checkpoint_path=fb["checkpoint_path"],
                         operator_message=fb["operator_message"],
+                        provider_calls=provider_calls,
                     )
 
             if cancellation_requested():
@@ -520,7 +542,8 @@ class AgentLoop:
 
                 tool_started = time.time()
                 try:
-                    with use_trace_id(run_trace_id):
+                    from hydra.proc import use_cancellation
+                    with use_trace_id(run_trace_id), use_cancellation(cancel_event):
                         result = tool.invoke(**tc.arguments)
                     # Serialization is part of dispatch: nested unsupported
                     # values and circular containers must follow the same
@@ -617,6 +640,7 @@ class AgentLoop:
                     )
                 )
                 try:
+                    provider_calls += 1
                     synthesis_resp = self.client.chat(
                         messages,
                         model=self.model,
@@ -698,4 +722,5 @@ class AgentLoop:
             fake_final_scrubbed=fake_final_scrubbed,
             trace_id=run_trace_id,
             phantom_tool_recovery=phantom_tool_recovery,
+            provider_calls=provider_calls,
         )

@@ -82,6 +82,7 @@ def finish_turn(results: list[LoopResult], previous_messages: list[dict], final_
     result = replace(last, final_response=final_text,
                      steps=[step for run in results for step in run.steps],
                      iterations=sum(run.iterations for run in results),
+                     provider_calls=sum(run.provider_calls for run in results),
                      tool_calls_made=sum(run.tool_calls_made for run in results),
                      has_real_tool_activity=any(run.has_real_tool_activity for run in results))
     permanent_system = [m for m in previous_messages if m.get("role") == "system"]

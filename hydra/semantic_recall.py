@@ -28,6 +28,7 @@ from hydra.local_memory import (
     _resolve_workspace_root,
     _safe_relative,
     _skill_state_files,
+    _source_in_root,
 )
 
 # The repo root the LIVE callers (cmd_chat.py / operator) always pass as
@@ -188,11 +189,9 @@ def _collect_chunks(
             allowed.append(wiki)
             paths.extend(sorted(wiki.rglob("*.md"))[:128])
     for path in paths:
-        if path.is_symlink():
+        if not any(_source_in_root(path, base) for base in allowed):
             continue
         path = path.resolve()
-        if not any(path.is_relative_to(base.resolve()) for base in allowed):
-            continue
         if path in seen or not path.is_file():
             continue
         seen.add(path)

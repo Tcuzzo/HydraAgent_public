@@ -103,9 +103,13 @@ def run(
             f"refusing ambiguous edit. Pass count='all' or narrow the match."
         )
 
+    replacements = occurrences if replace_all else min(count, occurrences)
+    expected_bytes = bytes_before + replacements * (len(new_string.encode("utf-8")) - len(old_string.encode("utf-8")))
+    if expected_bytes > max_bytes:
+        raise SkillError(f"resulting file {expected_bytes} bytes exceeds max_bytes {max_bytes}")
+
     if replace_all:
         new_text = text.replace(old_string, new_string)
-        replacements = occurrences
     else:
         # str.replace(old, new, count) makes AT MOST `count` replacements, but
         # when the file has fewer occurrences than `count` it makes only the
@@ -114,7 +118,6 @@ def run(
         # the ACTUAL number made (min), not the requested count — so the user
         # and the trace see the truth instead of an over-report.
         new_text = text.replace(old_string, new_string, count)
-        replacements = min(count, occurrences)
 
     payload = new_text.encode("utf-8")
     if len(payload) > max_bytes:
