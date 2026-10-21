@@ -70,7 +70,8 @@ def main(argv=None) -> int:
         command = [str(python), "-m", "hydra", "init", "--state-dir", str(target / "state")]
         if args.skip_download:
             command.append("--check")
-        subprocess.run(command, check=True, timeout=1500)
+        # Exercise the installed wheel, even when launched from its checkout.
+        subprocess.run(command, check=True, timeout=1500, cwd=target)
         receipt["status"] = "dependencies_installed" if args.skip_download else "ready"
         receipt["completed_at"] = datetime.now(timezone.utc).isoformat()
         publish(marker, receipt)
