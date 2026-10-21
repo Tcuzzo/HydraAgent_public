@@ -122,8 +122,12 @@ configuration and receipt formats.
 ### Workflow defects exposed by independent review
 
 Each reproduced defect received a failing regression committed before its
-repair. The corrected paths are covered by `hydra/test_review_*.py`; those
-contracts remain unchanged during implementation.
+repair. The corrected paths are covered by `hydra/test_review_*.py`. One
+cross-platform fixture correction at `529edd1` changed the repair-cycle setup
+from text output to explicit LF bytes so Windows and POSIX test the same byte
+hash; its assertions were unchanged. The other committed review-test bytes
+remain unchanged during implementation. This exception is recorded in the
+review evidence rather than represented as an unbroken byte seal.
 
 | Observed weakness | Repair and observable contract |
 | --- | --- |
@@ -135,6 +139,13 @@ contracts remain unchanged during implementation.
 | A failed process could show a success icon; requested traces and session-save errors could disappear. | Preserve explicit tool failure status, write actual per-turn trace IDs/counts/steps/halt reasons on both chat surfaces, and show session persistence errors while retaining the visible answer. Discarded speculative drafts cannot replace the selected work receipt. |
 | Closing the UI could allow a pending model proposal to write afterward. | Propagate cancellation into the loop and check it before further tool dispatch. Preserve completed observations. Actual native subprocess tests confirm that cancellation and timeout terminate owned descendants before delayed writes. Explicit Python launchers also support interpreter paths containing spaces. Windows behavior remains subject to the CI result. |
 | A successful repair could remain blocked by its original failing check. | Keep the original failed observation and link it to a later successful invocation of the same tool with the same canonical arguments. Unresolved failures and unmet artifact acceptance conditions still block the team; an unrelated successful command cannot erase a failure. |
+| A provider error after a completed tool could erase its receipt, trace and learning record. An incomplete turn could replace a prior answer or discard accepted memory context. | Return the actual partial result with an explicit provider error. Both chat surfaces and team workers retain completed actions, preserve previous answers and merge accepted persistent context. Interrupted teams remain failed and block dependent work. |
+| A failed undo could consume its checkpoint, or a changed preimage could be restored without validation. | Check stored byte count and SHA-256 before restoration; remove a checkpoint only after the restore succeeds. Missing or corrupt evidence leaves current files and the recovery stack intact. |
+| Closing the UI during an active shell command could leave that command writing files afterward. | Carry the turn's cancellation event into synchronous process capture and terminate its owned process group. A real Textual stop test checks that the delayed filesystem mutation does not occur. |
+| A string such as `"false"` could be treated as permission to overwrite, and native progress text could be mistaken for a final answer. | Validate tool arguments against their JSON schemas before invocation. Require the native final-message file; progress logs alone cannot produce successful completion. |
+| Small requests could allocate oversized edits, read whole memory files, retain unlimited native output or accept a training log that grew beyond its limit just before exit. | Check edit expansion size before allocation; bound memory reads and complete formatted context; drain process pipes into fixed-size buffers; enforce the training log cap while draining and report failure. Clean owned native temporary files on success, failure and timeout. |
+| Default environment snapshots could copy their own destination recursively, while timeouts could lose the failed command's receipt. | Exclude environment storage and linked entries during copying, clean a failed owned snapshot, terminate timed-out commands and persist a structured timeout receipt. Memory readers apply the same source-path boundary across explicit and automatic retrieval. |
+| The reported iteration count could hide additional synthesis or recovery requests. Quoted Windows commands could fail before reaching the intended program. | Record every provider request separately from tool iterations. Preserve the Windows command body using `cmd.exe` quoting rules, with real execution tests for paths, arguments, conditional operators and redirection. |
 
 ### Evidence obtained so far
 
@@ -143,6 +154,7 @@ contracts remain unchanged during implementation.
 | Original public regression baseline | 807 passed, 1 failed, 6 skipped and 7 deselected. The failure was a DNS-resolution diagnostic reported as a private-address rejection; that diagnostic was repaired. |
 | Earlier integrated snapshot | Revision `59fee0ce4e455ed785ffe223df853d59acdc0610` completed 898 tests with 10 skips. This predates the independent-review repairs and is not the final candidate's result. |
 | Corrected runtime regression suite | Revision `67991150014e9294186a26ff33c9d1bcf86d0baa` completed 940 tests with 9 skips in 74.61 seconds on Linux/Python 3.12. The skips require the missing local configuration, usable nested Bubblewrap confinement, or a live embedding service. The GitHub matrix separately exercises supported operating systems and positive Linux confinement. |
+| Second review repairs | Revision `7852bdc` completed 981 tests with 10 skips in 90.04 seconds on Linux/Python 3.12. This includes an additional Windows-only command parsing test. The subsequent source-read and live answer-file limits passed 35 targeted resource, native-process, repair and undo contracts. The final frozen candidate has its own review and CI record in PR #45. |
 | Complete installer and installed wheel | A fresh environment loaded the installed package outside the checkout. `hydra init` reported both helpers ready after real inference, the exact official Kev revision, and sqlite-vec 0.1.9. |
 | Actual helper inference | Needle produced a grounded file-read proposal. Kev loaded the official CPU checkpoint and produced typed choice and noul answers. These prove loading and protocol operation, not general task quality. |
 | Actual Needle training | Four synthetic training rows, four optimizer steps and two distinct evaluation queries. Training loss fell from 0.8461 to 0.6282. Original and candidate both matched 2/2 evaluation answers: accuracy delta 0, `improvement_observed: false`, `promoted: false`. The exported native archive loaded successfully. |
@@ -198,6 +210,13 @@ file edits, including exact original bytes. It does not undo arbitrary shell
 commands, native-provider file changes, database writes or external actions.
 Training leaves the selected checkpoint unchanged, so an unsuccessful candidate
 requires no automatic model rollback.
+
+Edit source reads are limited by the checkpoint store's 50 MiB recovery ceiling;
+the separate `max_bytes` argument limits the resulting file. Native process
+logs are captured within byte ceilings. The native final-answer file is checked
+during execution and after exit, and an over-limit result stops the owned
+process and is removed. This periodic file check is not an operating-system
+disk quota: a burst can exceed the threshold before the next check.
 
 ## Remaining scope and explicit limits
 
