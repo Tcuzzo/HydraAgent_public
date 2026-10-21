@@ -63,6 +63,10 @@ def main(argv=None) -> int:
             subprocess.run(command, check=True, timeout=1800)
             receipt["completed_steps"].append(title)
             publish(marker, receipt)
+        inventory = subprocess.run([str(python), "-m", "pip", "list", "--format=json"],
+                                   check=True, capture_output=True, text=True, timeout=120)
+        receipt["distributions"] = json.loads(inventory.stdout)
+        publish(marker, receipt)
         command = [str(python), "-m", "hydra", "init", "--state-dir", str(target / "state")]
         if args.skip_download:
             command.append("--check")
