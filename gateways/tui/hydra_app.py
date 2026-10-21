@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -492,6 +493,7 @@ class HydraApp(App[int]):
         self._last_memory_receipt: dict = {}
         self._last_turn_result: LoopResult | None = None
         self._active_user_text: str | None = None
+        self._turn_cancel = threading.Event()
         self._on_persist = on_persist
         self._on_trace = on_trace
         self.approval_policy = approval_policy
@@ -717,6 +719,7 @@ class HydraApp(App[int]):
             return
         # Slash commands handled inline
         if text.lower() in {"/exit", "/quit", "stop"}:
+            self._turn_cancel.set()
             self.exit(0)
             return
         if text == "/help":
@@ -751,6 +754,7 @@ class HydraApp(App[int]):
             )
             return
         self._turn_in_flight = True
+        self._turn_cancel.clear()
         self._active_user_text = user_text
         self._stat_live = True
         self._update_stat_bar()
@@ -870,6 +874,7 @@ class HydraApp(App[int]):
             timeout=self._timeout,
             initial_messages=initial,
             on_step=self._on_loop_step,
+            cancel_event=self._turn_cancel,
         )
         results = [result]
 
@@ -908,17 +913,20 @@ class HydraApp(App[int]):
                 timeout=self._timeout,
                 initial_messages=forced,
                 on_step=self._on_loop_step,
+                cancel_event=self._turn_cancel,
             )
             results.append(r2)
             return (r2.final_response or "", r2.tool_calls_made)
 
-        outcome = guard_work_turn(
-            kind=intake_kind,
-            final_text=final,
-            tool_calls_made=result.tool_calls_made,
-            rerun=_rerun_forcing_tools,
-        )
-        result = finish_turn(results, previous, outcome.text)
+        if result.halted_reason != "cancelled":
+            outcome = guard_work_turn(
+                kind=intake_kind,
+                final_text=final,
+                tool_calls_made=result.tool_calls_made,
+                rerun=_rerun_forcing_tools,
+            )
+            final = outcome.text
+        result = finish_turn(results, previous, final)
         self._last_turn_result = result
         self._chat_messages = list(result.messages)
         self._last_memory_receipt, warnings = learn_turn(
@@ -940,6 +948,9 @@ class HydraApp(App[int]):
     def _on_loop_step(self, step: LoopStep) -> None:
         """AgentLoop step callback. Runs in worker thread — must marshal
         all UI writes to the main thread via call_from_thread."""
+        cancel_event = getattr(self, "_turn_cancel", None)
+        if cancel_event is not None and cancel_event.is_set():
+            return  # Keep the loop receipt without posting into a closing UI.
         if step.kind == "assistant":
             content = (step.content or "").strip()
             if content and not content.startswith('{"'):
@@ -1004,8 +1015,8 @@ class HydraApp(App[int]):
                 try:
                     if completed_user_text is not None:
                         self._on_persist(completed_user_text, final)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self._post_log(Text(f"Session history was not saved: {exc}", style="yellow").markup)
 
     def _handle_turn_error(self, detail: str) -> None:
         self._active_user_text = None
@@ -1214,7 +1225,16 @@ class HydraApp(App[int]):
             "[dim](picking up new code)[/dim]"
         )
         self._restart_requested = True
+        self._turn_cancel.set()
         self.exit(0)
+
+    def action_quit(self) -> None:
+        """Revoke pending execution before Ctrl+C closes the interface."""
+        self._turn_cancel.set()
+        self.exit(0)
+
+    def on_unmount(self) -> None:
+        self._turn_cancel.set()
 
     def maybe_reexec(self) -> None:
         """Re-exec the process if /restart was requested.

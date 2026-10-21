@@ -444,6 +444,8 @@ class EliteTUI:
         self._last_memory_recall: dict = {}
         self._last_memory_receipt: dict = {}
         self._last_turn_result: LoopResult | None = None
+        self._last_turn_provider: str | None = None
+        self._last_turn_model: str | None = None
         self.runtime = dict(runtime or {})
         self.trace_out_path = Path(trace_out_path).expanduser().resolve() if trace_out_path else None
         self._trace_turn_index = 0
@@ -561,13 +563,12 @@ class EliteTUI:
         def _persist(user: str, reply: str) -> None:
             if not self.session_id:
                 return
-            try:
-                add_message(self.session_id, "user", user)
-                if reply.strip():
-                    add_message(self.session_id, "assistant", reply)
-                compact_session(self.session_id)
-            except Exception:
-                pass
+            # The live app reports persistence failures while keeping the
+            # completed answer visible. Do not erase that signal at this seam.
+            add_message(self.session_id, "user", user)
+            if reply.strip():
+                add_message(self.session_id, "assistant", reply)
+            compact_session(self.session_id)
 
         def _route_command(text: str) -> bool:
             if self._command_handler is not None:
@@ -875,7 +876,13 @@ class EliteTUI:
 
     # ── Chat draft (side-effect-free) ─────────────────────────────────────────
 
-    def _chat_draft(self, user_input: str, initial_messages: list[dict]) -> str:
+    def _chat_draft(
+        self,
+        user_input: str,
+        initial_messages: list[dict],
+        *,
+        on_result: Callable[[LoopResult], None] | None = None,
+    ) -> str:
         """Run the convo loop and return the text reply. Side-effect-free (tools=[]).
 
         Injects the CONVO_NO_TOOLS_GUARD. Used as the speculative draft in
@@ -916,6 +923,8 @@ class EliteTUI:
             content = m.get("content")
             if isinstance(content, str):
                 self._cumulative_chars += len(content)
+        if on_result is not None:
+            on_result(result)
         return result.final_response or ""
 
     # ── Work turn runner (steering/collab) ────────────────────────────────────
@@ -1017,16 +1026,20 @@ class EliteTUI:
         )
         result = finish_turn(results, self._chat_messages, outcome.text)
         self._last_turn_result = result
+        self._last_turn_provider = next(
+            (pair[0] for pair, loop in self._work_loops.items() if loop is active_loop),
+            self.provider_name,
+        )
+        self._last_turn_model = active_model
         self._cumulative_iterations += result.iterations
         self._cumulative_tool_calls += result.tool_calls_made
         self._cumulative_chars += sum(len(m.get("content") or "") for m in result.messages
                                       if isinstance(m.get("content"), str))
-        pair = resolve_work_model(intake_kind) if active_model != self.model else None
         self._last_memory_receipt, warnings = learn_turn(
             user_input, result,
             enabled=self.recall_builder is not None and profile.memory.enabled and profile.tools_enabled,
             workspace_root=self.root, memory_root=self.memory_root,
-            provider=pair[0] if pair else self.provider_name, model=active_model,
+            provider=self._last_turn_provider, model=active_model,
         )
         self._memory_warnings.extend(warnings)
         for warning in warnings:
@@ -1052,6 +1065,8 @@ class EliteTUI:
         self._turn_had_tools = False
         self._tool_start_times = {}
         self._last_turn_result = None
+        self._last_turn_provider = None
+        self._last_turn_model = None
         self._screen_transcript.append(f"operator: {user_input}")
         self._turn_start_time = time.monotonic()
         self._current_status = "thinking"
@@ -1096,14 +1111,25 @@ class EliteTUI:
             def _intent_fn(msg: str):
                 return classify_intent(msg, client=_intent_client)
 
+            # The speculative worker may finish after the intent decision. Its
+            # result belongs to this invocation and becomes accepted evidence
+            # only when the selected route is chat.
+            draft_results: list[LoopResult] = []
+
             def _chat_draft_fn(msg: str) -> str:
-                return self._chat_draft(msg, initial_messages)
+                return self._chat_draft(msg, initial_messages, on_result=draft_results.append)
 
             route = route_turn(user_input, intent_fn=_intent_fn, chat_draft_fn=_chat_draft_fn)
 
             if route.intent == "chat":
                 # Chat path: the draft is already ready (zero added latency).
                 final = route.chat_draft or ""
+                if draft_results:
+                    self._last_turn_result = finish_turn(
+                        [draft_results[-1]], self._chat_messages, final
+                    )
+                    self._last_turn_provider = self.provider_name
+                    self._last_turn_model = self.model
             else:
                 # Model says task — discard the draft, run the full work executor.
                 # Use "steering" as the kind for operator-directed work turns.
@@ -1142,7 +1168,13 @@ class EliteTUI:
         if self._parallel_agents_this_turn:
             self._print_parallel_summary(None)
 
-        self._write_trace_turn_text(user_input, final)
+        if self._last_turn_result is not None:
+            self._write_trace_turn(
+                user_input, self._last_turn_result,
+                provider=self._last_turn_provider, model=self._last_turn_model,
+            )
+        else:
+            self._write_trace_turn_text(user_input, final)
         return final
 
     def _render_status(self):
@@ -1747,8 +1779,8 @@ class EliteTUI:
     def _write_trace_turn_text(self, user_input: str, final: str) -> None:
         """Write a simplified trace turn entry when we don't have a LoopResult.
 
-        Used by the refactored _stream_turn which routes via intent_router and
-        doesn't expose a single LoopResult object at the top level.
+        Missing evidence stays unknown; session totals cannot describe the
+        current turn. Normal chat and work paths use the detailed serializer.
         """
         if self.trace_out_path is None:
             return
@@ -1763,8 +1795,8 @@ class EliteTUI:
                 "provider": self.provider_name,
                 "model": self.model,
                 "trace_id": None,
-                "iterations": self._cumulative_iterations,
-                "tool_calls_made": self._cumulative_tool_calls,
+                "iterations": None,
+                "tool_calls_made": None,
                 "halted_reason": None,
                 "final_response": final,
                 "tool_steps": [],

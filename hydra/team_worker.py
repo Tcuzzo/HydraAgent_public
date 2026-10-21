@@ -110,6 +110,7 @@ def execute(request: dict, run_dir: Path) -> dict:
     if images:
         initial = [{'role': 'system', 'content': system}, {'role': 'user', 'content': [{'type': 'text', 'text': 'Visual evidence for the task follows.'}, *_images(images, root)]}]
     evidence = []
+    pending_errors: dict[str, list[int]] = {}
     def record(step):
         if step.kind == 'tool_result':
             from hydra.tool_outcome import failed
@@ -118,16 +119,34 @@ def execute(request: dict, run_dir: Path) -> dict:
             except (ValueError, TypeError):
                 payload = {}
             outcome = {key: payload[key] for key in ('ok', 'success', 'isError', 'exit_code', 'returncode', 'timed_out') if isinstance(payload, dict) and key in payload}
-            evidence.append({'tool': step.tool_name, 'error': bool(step.tool_error) or failed(payload),
+            # Match the actual invocation, not merely the tool name or a model's
+            # claim that a failure was fixed. Do not copy arguments into receipts.
+            operation = hashlib.sha256(json.dumps(
+                [step.tool_name, step.tool_arguments], sort_keys=True,
+                separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
+            index = len(evidence)
+            error = bool(step.tool_error) or failed(payload)
+            evidence.append({'tool': step.tool_name, 'tool_call_id': step.tool_call_id,
+                             'operation_sha256': operation, 'error': error,
                              'outcome': outcome, 'result_sha256': hashlib.sha256(step.content.encode()).hexdigest()})
+            if error:
+                pending_errors.setdefault(operation, []).append(index)
+            else:
+                # A passing retry resolves earlier failures of this exact
+                # operation. The failed rows stay intact; the link is a
+                # zero-based index into this same evidence list.
+                for failed_index in pending_errors.pop(operation, []):
+                    evidence[failed_index]['recovered_by'] = index
     started = time.monotonic()
     result = AgentLoop(client, model=request['model'], system_prompt=system).run(
         prompt, tools=tools, max_iterations=request['max_iterations'], max_tokens=2048,
         timeout=min(120, request['timeout_seconds']), initial_messages=initial, on_step=record,
         repo_root=root, requested_provider=request['provider'])
     acceptance = check_acceptance(role=role, root=root, contract=contract, before=before, evidence=evidence, native=native)
+    unresolved_errors = [index for index, row in enumerate(evidence)
+                         if row['error'] and 'recovered_by' not in row]
     ok = (result.halted_reason == 'natural' and bool(result.final_response.strip())
-          and not any(e['error'] for e in evidence) and acceptance['status'] == 'passed')
+          and not unresolved_errors and acceptance['status'] == 'passed')
     actual = client.actual_route or {'provider': request['provider'], 'model': request['model'], 'family': request['family']}
     learning, learning_warnings = _learn(root=root, memory_root=request.get('memory_root'), goal=request['goal'],
                                         result=result, provider=actual['provider'], model=actual['model'])
@@ -140,7 +159,8 @@ def execute(request: dict, run_dir: Path) -> dict:
             'acceptance': acceptance, 'library': library_manifest(role),
             'memory': {'recall': recall_receipt, 'learning': learning},
             'memory_warnings': memory_warnings + learning_warnings,
-            'evidence': evidence, 'duration_seconds': round(time.monotonic() - started, 3),
+            'evidence': evidence, 'unresolved_tool_errors': unresolved_errors,
+            'duration_seconds': round(time.monotonic() - started, 3),
             'iterations': result.iterations, 'tool_calls': result.tool_calls_made}
 
 
