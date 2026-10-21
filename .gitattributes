@@ -1,0 +1,2 @@
+# These upstream playbooks are verified against their exact published bytes.
+hydra/runtime_data/libraries/*.md text eol=lf

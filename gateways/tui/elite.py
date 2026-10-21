@@ -570,8 +570,8 @@ class EliteTUI:
         def _route_command(text: str) -> bool:
             if self._command_handler is not None:
                 try:
-                    if text.startswith("/root ") and app._turn_in_flight:
-                        app._post_log("[yellow]Wait for the active turn before changing workspace.[/yellow]")
+                    if (text.startswith("/root ") or text in {"/local", "/cloud"}) and app._turn_in_flight:
+                        app._post_log("[yellow]Wait for the active turn before changing workspace or provider.[/yellow]")
                         return True
                     # Textual owns the current transcript. The command handler
                     # may append scope/runtime instructions to that history.
@@ -580,6 +580,8 @@ class EliteTUI:
                     if handled:
                         app._chat_messages = list(self._chat_messages)
                         app.tools = self.tools
+                        if app.client is not self.client or app.model != self.model or app.cfg is not self.cfg:
+                            app.reconfigure_runtime(client=self.client, model=self.model, cfg=self.cfg)
                         if app.workspace_root != self.root:
                             app.rebind_workspace(self.root, self.memory_workspace_root)
                             self._chat_messages = list(app._chat_messages)

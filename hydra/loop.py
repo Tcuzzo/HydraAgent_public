@@ -378,6 +378,16 @@ class AgentLoop:
                     # autonomous missions; interactive chat re-raises so the
                     # operator still sees the failure (§13).
                     if not autonomous:
+                        # A caller may change providers after this exception.
+                        # Completed actions and their transcript must survive
+                        # that boundary so retries do not repeat them blindly.
+                        exc.partial_result = LoopResult(
+                            steps=list(steps), final_response="", iterations=iteration,
+                            tool_calls_made=tool_calls_made, halted_reason="provider_error",
+                            messages=[dict(message) for message in messages],
+                            has_real_tool_activity=any(step.kind == "tool_result" for step in steps),
+                            trace_id=run_trace_id,
+                        )
                         raise
                     from hydra.emergency_fallback import engage_life_support_fallback
 

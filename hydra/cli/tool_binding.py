@@ -176,6 +176,11 @@ def _grep_path_pattern_under(root: Path, path: str | Path, include: str | None) 
     base_text = base.as_posix()
     if any(mark in base_text for mark in ("*", "?", "[")):
         return base_text
+    target = (Path(root) / base).resolve()
+    if not target.is_relative_to(Path(root).resolve()):
+        raise SkillError(f"grep path {base} escapes root {root}")
+    if target.is_file() and (not include or base.match(include)):
+        return base_text
     if include:
         if base_text in {"", "."}:
             return f"**/{include}"
