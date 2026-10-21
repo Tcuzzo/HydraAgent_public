@@ -110,6 +110,8 @@ def initialize(*, state_dir: Path, check_only: bool = False, timeout: float = 60
 
 
 def register_intelligence_commands(sub) -> None:
+    from hydra.local_training import register_training_arguments
+    register_training_arguments(sub.add_parser("train", help="train a local Needle or Kev candidate with a separate evaluation split; never auto-promote"))
     init = sub.add_parser("init", help="initialize Needle and Kev locally and write a measured readiness report")
     init.add_argument("--check", action="store_true", help="inspect dependencies without downloading weights or claiming inference readiness")
     init.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR)
@@ -124,6 +126,13 @@ def register_intelligence_commands(sub) -> None:
 
 
 def cmd_intelligence(args: argparse.Namespace) -> int:
+    if args.cmd == "train":
+        from hydra.local_training import run_from_args
+        try:
+            return run_from_args(args)
+        except (OSError, ValueError, LlmError) as exc:
+            print(f"local training: {exc}", file=sys.stderr)
+            return 1
     if args.cmd == "decide":
         from hydra.decision_models import main
         argv = ["--backend", args.backend, "--state", str(args.state), "--questions", str(args.questions),
