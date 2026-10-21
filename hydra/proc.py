@@ -173,15 +173,27 @@ def _windows_shell(prefer_bash: bool) -> list[str]:
             # and remains correct here -- unlike the WSL launcher, it runs in the
             # caller's cwd.
             pass
-    return ["cmd.exe", "/c"]
+    system_root = os.environ.get("SystemRoot") or r"C:\Windows"
+    candidates = [os.environ.get("ComSpec"), str(Path(system_root) / "System32" / "cmd.exe")]
+    for value in candidates:
+        if value:
+            path = Path(value)
+            if path.is_absolute() and path.is_file():
+                return [str(path), "/d", "/s", "/c"]
+    raise ShellUnavailableError("cmd.exe was not found at ComSpec or SystemRoot\\System32")
 
 
-def _shell_argv(command: str, *, prefer_bash: bool = False) -> list[str]:
-    """Build [shell, flag, command] for the current OS."""
+def _shell_argv(command: str, *, prefer_bash: bool = False) -> str | list[str]:
+    """Build shell arguments using the selected shell's command-line rules."""
     if _IS_POSIX:
         prefix = _posix_shell(prefer_bash)
     else:
         prefix = _windows_shell(prefer_bash)
+        if prefix[-1] == "/c":
+            # Popen serializes a sequence using C runtime escaping, which is
+            # not cmd.exe's parser. /s removes only the added outer quotes;
+            # preserve every quote and shell operator in the command itself.
+            return f'"{prefix[0]}" /d /s /c "{command}"'
     return [*prefix, command]
 
 
@@ -200,7 +212,7 @@ def _popen_kwargs_isolation() -> dict[str, Any]:
 
 
 def popen_portable(
-    args: list[str],
+    args: str | list[str],
     *,
     cwd: str | Path | None = None,
     env: dict[str, str] | None = None,
@@ -372,7 +384,7 @@ class OutputLimitExceeded(subprocess.SubprocessError):
 
 
 def run_captured(
-    argv: list[str], *, cwd=None, env=None, input=None, capture_output=True,
+    argv: str | list[str], *, cwd=None, env=None, input=None, capture_output=True,
     text=True, timeout=None, cancel_event: Event | None = None,
     max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
     stdout_file=None, merge_output=False, fail_on_output_limit=False, popen_factory=None,
@@ -381,7 +393,8 @@ def run_captured(
 
     Each stream keeps its prefix up to the declared byte ceiling and reports
     truncation. A separate stdin writer keeps cancellation responsive even when
-    a native child stops reading a large prompt. No shell interprets argv.
+    a native child stops reading a large prompt. Popen uses shell=False;
+    callers can explicitly launch their selected shell through _shell_argv.
     """
     if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
                                 or not math.isfinite(timeout) or timeout <= 0):
