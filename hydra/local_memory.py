@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import os
 import re
 from typing import Any
 
 
-DEFAULT_MEMORY_ROOT = Path.home() / ".hydra-memory"
+DEFAULT_MEMORY_ROOT = Path(os.environ.get("HYDRA_MEMORY_ROOT") or Path.home() / ".hydra-memory").expanduser().resolve()
 DEFAULT_MAX_CHARS = 12000
 
 MEMORY_CANDIDATES = (

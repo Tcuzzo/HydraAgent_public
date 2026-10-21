@@ -48,6 +48,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import time
 
 from hydra.semantic_recall import resolve_corpus_chunks
 from hydra.unified_memory import BackendUnavailable, UnifiedMemory
@@ -112,9 +113,8 @@ def migrate_md_corpus_to_unified(
         The target store. Defaults to a freshly-opened
         :class:`UnifiedMemory` on the default db path with the default real
         ``embed_nomic`` embedder. Tests inject a tmp-path store with a fake
-        embedder. If a default store is opened here it is NOT closed (the
-        caller owns the default store's lifecycle on startup); an INJECTED
-        store is left open for the caller too.
+        embedder. An internally opened store is closed on return, including a partial
+        failure; an injected store remains open for its owner.
     root:
         Memory tree root. ``None`` -> ``~/.hydra-memory`` (the live default),
         resolved by the shared :func:`resolve_corpus_chunks`.
@@ -138,45 +138,50 @@ def migrate_md_corpus_to_unified(
     # live corpus (>=26 sources). No new globber/chunker/redaction here.
     resolved, _workspace, _claude, chunks = resolve_corpus_chunks(root, workspace_root)
 
-    store = mem if mem is not None else UnifiedMemory()
+    from hydra.semantic_recall import _store_path_for_root
+    store = mem if mem is not None else UnifiedMemory(path=_store_path_for_root(resolved))
 
-    report = MigrationReport()
-    sources: set[str] = set()
+    try:
+        report = MigrationReport()
+        sources: set[str] = set()
 
-    report.chunks_seen = len(chunks)
+        report.chunks_seen = len(chunks)
 
-    for relpath, chunk in chunks:
-        body = (chunk or "").strip()
-        if not body:
-            continue
-        # Snapshot known ids so we can tell a NEW row from a dedup-NOOP id.
-        # (add() returns an existing id for both exact-hash and near-dup NOOPs.)
-        existing_before = store._db.execute(
-            "SELECT 1 FROM entries WHERE content_hash = ?",
-            (_chash(body),),
-        ).fetchone()
-        try:
-            memory_id = store.add(
-                body,
-                scope=MIGRATION_SCOPE,
-                kind=MIGRATION_KIND,
-                source=relpath,
-            )
-        except BackendUnavailable as exc:
-            # ollama down mid-run: abort cleanly with a partial report. Already
-            # committed rows persist; the next idempotent run resumes.
-            report.aborted = True
-            report.error = str(exc)
-            break
+        for relpath, chunk in chunks:
+            body = (chunk or "").strip()
+            if not body:
+                continue
+            # Snapshot known ids so we can tell a NEW row from a dedup-NOOP id.
+            # (add() returns an existing id for both exact-hash and near-dup NOOPs.)
+            existing_before = store._db.execute(
+                "SELECT 1 FROM entries WHERE content_hash = ?",
+                (_chash(body),),
+            ).fetchone()
+            try:
+                memory_id = store.add(
+                    body,
+                    scope=MIGRATION_SCOPE,
+                    kind=MIGRATION_KIND,
+                    source=relpath,
+                )
+            except BackendUnavailable as exc:
+                # ollama down mid-run: abort cleanly with a partial report. Already
+                # committed rows persist; the next idempotent run resumes.
+                report.aborted = True
+                report.error = str(exc)
+                break
 
-        if existing_before is None and _is_new_row(store, memory_id, body):
-            report.added += 1
-            sources.add(relpath)
-        else:
-            report.noop += 1
+            if existing_before is None and _is_new_row(store, memory_id, body):
+                report.added += 1
+                sources.add(relpath)
+            else:
+                report.noop += 1
 
-    report.sources = sorted(sources)
-    return report
+        report.sources = sorted(sources)
+        return report
+    finally:
+        if mem is None:
+            store.close()
 
 
 def _chash(body: str) -> str:
@@ -201,3 +206,46 @@ def _is_new_row(store: UnifiedMemory, memory_id: int, body: str) -> bool:
     if row is None:
         return False
     return row["content_hash"] == _chash(body) and row["body"] == body
+
+
+def sync_corpus_chunks(store: UnifiedMemory, chunks: list[tuple[str, str]], *,
+                       max_new_embeddings: int = 32, time_budget: float = 10.0) -> dict:
+    """Incrementally cache current chunks and return their exact retrieval IDs.
+
+    Historical rows are kept for audit; only this current source manifest is
+    eligible for retrieval. Changed, deleted and other-workspace chunks cannot
+    survive merely because they remain in the cache. Embedding work is bounded
+    per turn. A partial sync yields lexical retrieval of the full source corpus
+    while the next turn resumes the idempotent indexing work.
+    """
+    started = time.monotonic()
+    ids = []
+    sources = {}
+    previous = {}
+    added = 0
+    reused = 0
+    incomplete = False
+    for source, raw in chunks:
+        body = raw.strip()
+        if not body:
+            continue
+        exists = store._db.execute("SELECT id FROM entries WHERE content_hash = ?", (_chash(body),)).fetchone()
+        if exists is not None:
+            memory_id = int(exists["id"])
+            reused += 1
+        else:
+            if added >= max_new_embeddings or time.monotonic() - started >= time_budget:
+                incomplete = True
+                continue
+            memory_id = store.add(body, scope=MIGRATION_SCOPE, kind=MIGRATION_KIND, source=source)
+            added += 1
+        ids.append(memory_id)
+        sources.setdefault(memory_id, source)
+        if source in previous and previous[source] != memory_id:
+            store.link(previous[source], memory_id, relation="same_source")
+        previous[source] = memory_id
+    summary = {"added": added, "reused": reused, "current_chunks": len(ids),
+               "source_chunks": len(chunks), "incomplete": incomplete}
+    return {"memory_ids": sorted(set(ids)), "sources": sources,
+            "incomplete": incomplete, "reason": "incremental embedding budget reached" if incomplete else "",
+            "summary": summary}
