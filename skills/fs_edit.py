@@ -24,6 +24,7 @@ Maturity: SCAFFOLDED. Promoted by §10.30.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from hydra.atomic_write import atomic_write_bytes
@@ -82,14 +83,19 @@ def run(
     if not target_resolved.is_file():
         raise SkillError(f"not a regular file: {target_resolved}")
 
-    # Read with newline="" so CR/LF is preserved untranslated — the byte count
-    # (bytes_before) and the old_string occurrence match reflect the REAL file
-    # bytes, not a universal-newline-mangled view. ``Path.read_text`` does not
-    # accept ``newline`` (it raises TypeError on Python 3.12), so read via
-    # ``open`` which does.
-    with open(target_resolved, "r", encoding="utf-8", newline="") as f:
-        text = f.read()
-    bytes_before = len(text.encode("utf-8"))
+    # The recovery ceiling also bounds source processing. Check size before
+    # allocation, then bound the read in case the source grows concurrently.
+    # Binary input preserves exact CR/LF bytes for matching and undo.
+    store = get_default_store(root_resolved)
+    with target_resolved.open("rb") as source:
+        source_size = os.fstat(source.fileno()).st_size
+        if source_size > store.max_bytes:
+            raise SkillError("existing file exceeds the recoverable checkpoint limit")
+        pre_image = source.read(source_size + 1)
+    if len(pre_image) != source_size:
+        raise SkillError("source changed while reading; retry the edit")
+    text = pre_image.decode("utf-8")
+    bytes_before = len(pre_image)
 
     occurrences = text.count(old_string)
     if occurrences == 0:
@@ -126,10 +132,6 @@ def run(
         )
 
     try:
-        store = get_default_store(root_resolved)
-        pre_image = text.encode("utf-8")
-        if len(pre_image) > store.max_bytes:
-            raise SkillError("existing file exceeds the recoverable checkpoint limit")
         store.record(target_path=target_resolved, op="modify", pre_image=pre_image)
         atomic_write_bytes(target_resolved, payload)
     except OSError as e:
