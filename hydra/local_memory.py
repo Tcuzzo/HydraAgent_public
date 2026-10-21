@@ -75,7 +75,9 @@ def _resolve_workspace_root(workspace_root: str | Path | None) -> Path | None:
 
 
 def _claude_project_slug(workspace_root: Path) -> str:
-    return str(workspace_root).replace("/", "-")
+    # A drive or UNC path must become one relative directory component. Leaving
+    # a Windows anchor intact discards the home/projects parent during joining.
+    return re.sub(r"[:\\/]", "-", str(workspace_root))
 
 
 def _claude_project_memory_candidates(workspace_root: Path | None) -> list[Path]:

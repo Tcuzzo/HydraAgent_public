@@ -257,7 +257,7 @@ def _run_in_bwrap(
 
 
 def _run_on_host(
-    cmd: Sequence[str],
+    cmd: str | Sequence[str],
     *,
     workspace: Path,
     timeout: float,
@@ -265,7 +265,7 @@ def _run_on_host(
 ) -> ExecResult:
     try:
         proc = subprocess.run(
-            list(cmd),
+            cmd if isinstance(cmd, str) else list(cmd),
             cwd=str(workspace),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
