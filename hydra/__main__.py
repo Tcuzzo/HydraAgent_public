@@ -285,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
         "tribunal": cmd_personal,
         "init": cmd_intelligence,
         "decide": cmd_intelligence,
+        "train": cmd_intelligence,
     }[args.cmd](args)
 
 
