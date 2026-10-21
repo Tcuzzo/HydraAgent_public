@@ -896,7 +896,7 @@ class EliteTUI:
         result = self._loop.run(
             user_input,
             tools=[],
-            max_iterations=profile.max_iterations,
+            max_iterations=min(self._max_iterations, profile.max_iterations),
             max_tokens=profile.max_tokens,
             temperature=profile.temperature,
             timeout=min(self._timeout, 30.0),
@@ -927,6 +927,7 @@ class EliteTUI:
         detect_runaway + guard_work_turn. Returns the final (non-confabulated) text.
         """
         profile = load_turn_profile(intake_kind)
+        iterations = min(self._max_iterations, profile.max_iterations)
         active_loop, active_model = self._loop_for_kind(intake_kind)
         if active_model != self.model and active_model not in self._models_used_this_turn:
             self._models_used_this_turn.append(active_model)
@@ -944,7 +945,7 @@ class EliteTUI:
                     result: LoopResult = active_loop.run(
                         user_input,
                         tools=self.tools if profile.tools_enabled else [],
-                        max_iterations=profile.max_iterations,
+                        max_iterations=iterations,
                         max_tokens=profile.max_tokens,
                         temperature=profile.temperature,
                         timeout=self._timeout,
@@ -957,7 +958,7 @@ class EliteTUI:
             result = active_loop.run(
                 user_input,
                 tools=self.tools if profile.tools_enabled else [],
-                max_iterations=profile.max_iterations,
+                max_iterations=iterations,
                 max_tokens=profile.max_tokens,
                 temperature=profile.temperature,
                 timeout=self._timeout,
@@ -975,6 +976,9 @@ class EliteTUI:
 
         def _rerun_forcing_tools(force: bool) -> tuple[str, int]:
             """Force one re-prompt: CALL the tool or admit it wasn't done."""
+            remaining = iterations - sum(run.iterations for run in results)
+            if remaining <= 0:
+                return "No action was completed; the configured iteration budget is exhausted.", 0
             forced = list(result.messages)
             forced.append({
                 "role": "system",
@@ -989,7 +993,7 @@ class EliteTUI:
             r2 = active_loop.run(
                 user_input,
                 tools=self.tools if profile.tools_enabled else [],
-                max_iterations=profile.max_iterations,
+                max_iterations=remaining,
                 max_tokens=profile.max_tokens,
                 temperature=profile.temperature,
                 timeout=self._timeout,

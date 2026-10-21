@@ -16,6 +16,10 @@ from __future__ import annotations
 import urllib.error
 import urllib.parse
 import urllib.request
+import json
+import math
+import subprocess
+import sys
 
 from hydra.http_policy import open_checked
 
@@ -36,6 +40,38 @@ def run(
     max_bytes: int = DEFAULT_MAX_BYTES,
     user_agent: str = DEFAULT_USER_AGENT,
 ) -> dict:
+    """Run the complete request in a killable worker under one wall deadline."""
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 < timeout <= 120:
+        raise SkillError("timeout must be finite and between 0 and 120 seconds")
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or not 1 <= max_bytes <= 1024 * 1024:
+        raise SkillError("max_bytes must be between 1 and 1048576")
+    from hydra.proc import kill_tree, popen_portable
+    request = json.dumps(dict(url=url, allowed_hosts=allowed_hosts, timeout=timeout,
+                              max_bytes=max_bytes, user_agent=user_agent))
+    process = popen_portable([sys.executable, "-I", "-m", "skills.http_fetch", "--worker"],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True)
+    try:
+        output, diagnostics = process.communicate(request, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        kill_tree(process)
+        process.communicate(timeout=5)
+        raise SkillError(f"HTTP fetch deadline exceeded after {timeout}s") from exc
+    except BaseException:
+        kill_tree(process)
+        process.communicate(timeout=5)
+        raise
+    try:
+        result = json.loads(output)
+    except (ValueError, TypeError) as exc:
+        raise SkillError(f"HTTP worker failed (exit {process.returncode}): {diagnostics[-500:]}") from exc
+    if process.returncode or not result.get("ok"):
+        raise SkillError(result.get("error", "HTTP worker failed"))
+    return result
+
+
+def _fetch(url, allowed_hosts, timeout, max_bytes, user_agent) -> dict:
+    """Socket timeout is secondary; the caller enforces the full deadline."""
     if not allowed_hosts:
         raise SkillError("allowed_hosts is empty; refusing fetch")
     allowed = {h.lower() for h in allowed_hosts}
@@ -72,3 +108,11 @@ def run(
         "bytes_read": len(raw),
         "body": raw.decode("utf-8", errors="replace"),
     }
+
+
+if __name__ == "__main__":
+    try:
+        print(json.dumps(_fetch(**json.load(sys.stdin))))
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)[:2000]}))
+        raise SystemExit(1)

@@ -27,6 +27,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from hydra.atomic_write import atomic_write_bytes
+from hydra.edit_checkpoints import get_default_store
 from skills.fs_read import SkillError
 
 DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024
@@ -122,6 +123,11 @@ def run(
         )
 
     try:
+        store = get_default_store(root_resolved)
+        pre_image = text.encode("utf-8")
+        if len(pre_image) > store.max_bytes:
+            raise SkillError("existing file exceeds the recoverable checkpoint limit")
+        store.record(target_path=target_resolved, op="modify", pre_image=pre_image)
         atomic_write_bytes(target_resolved, payload)
     except OSError as e:
         raise SkillError(f"write failed for {target_resolved}: {e}") from e
