@@ -6,5 +6,9 @@
   "license": "MIT",
   "credits": [
     "Cuzzo and BACKS AIOS"
+  ],
+  "library": [
+    "invariant-floor",
+    "design-taste"
   ]
 }

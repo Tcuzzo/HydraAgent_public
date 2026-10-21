@@ -9,15 +9,22 @@ from pathlib import Path
 
 from hydra.orchestrate import SubagentTask, dispatch_graph
 from hydra.specialists import ROLES, WRITERS, read_json, canonical_path, reject_links
+from hydra.team_acceptance import validate_acceptance
 
 
 def make_plan(goal: str, provider: str, model: str) -> dict:
-    dependencies = {'vision': [], 'design_taste': ['vision'], 'software_engineer': ['design_taste'],
-                    'test_engineer': ['software_engineer'], 'code_reviewer': ['test_engineer'],
-                    'kaizen': ['code_reviewer'], 'lean_six_sigma': ['code_reviewer']}
+    roles = ('hydra_bot', 'grok_bot', 'seam_bot', 'test_engineer', 'code_reviewer')
+    assignments = {
+        'hydra_bot': 'Compile the goal into a concrete brief with scope and observable acceptance criteria.',
+        'grok_bot': 'Inspect actual source, reproduce the issue where read-only tools permit, and identify the shared cause.',
+        'seam_bot': 'Apply the smallest complete repair at the shared primitive and report real edit and check receipts.',
+        'test_engineer': 'Execute focused checks against the changed artifacts; record commands and actual failures.',
+        'code_reviewer': 'Inspect the current artifacts and evidence independently; report concrete defects or evidence gaps.',
+    }
     return {'schema': 'hydra.team.v1', 'goal': goal, 'provider': provider, 'model': model,
             'max_concurrency': 2, 'timeout_seconds': 300, 'max_iterations': 8,
-            'tasks': [{'id': role, 'specialist': role, 'depends_on': dependencies[role]} for role in ROLES]}
+            'tasks': [{'id': role, 'specialist': role, 'depends_on': [roles[index - 1]] if index else [],
+                       'prompt': assignments[role]} for index, role in enumerate(roles)]}
 
 
 def validate_plan(plan: dict) -> dict:
@@ -37,10 +44,11 @@ def validate_plan(plan: dict) -> dict:
         raise ValueError('task IDs must be unique safe identifiers')
     by_id = dict(zip(ids, tasks))
     for task in tasks:
-        if set(task) - {'id', 'specialist', 'depends_on', 'prompt', 'provider', 'model', 'family', 'fallbacks', 'images'}:
+        if set(task) - {'id', 'specialist', 'depends_on', 'prompt', 'provider', 'model', 'family', 'fallbacks', 'images', 'acceptance'}:
             raise ValueError('unknown task fields')
         if task.get('specialist') not in ROLES:
             raise ValueError('unknown specialist')
+        validate_acceptance(task.get('acceptance', {}))
         deps = task.get('depends_on', [])
         if not isinstance(deps, list) or not all(isinstance(d, str) and d in by_id for d in deps):
             raise ValueError('task has an unknown dependency')
@@ -85,21 +93,23 @@ def validate_plan(plan: dict) -> dict:
         if 'images' in task and (not isinstance(task['images'], list) or len(task['images']) > 4 or not all(isinstance(p, str) for p in task['images'])):
             raise ValueError('images must be a list of at most four workspace paths')
     if plan.get('require_independent_review'):
-        builders = [t for t in tasks if t['specialist'] == 'software_engineer']
+        builders = [t for t in tasks if t['specialist'] in WRITERS]
         reviewers = [t for t in tasks if t['specialist'] == 'code_reviewer']
         if not reviewers:
             raise ValueError('independent review requires a reviewer task')
         for reviewer in reviewers:
-            rf = reviewer.get('family', plan.get('family'))
             for builder in builders:
                 if builder['id'] not in ancestors[reviewer['id']]:
                     raise ValueError('independent reviewer must depend on every builder')
     return plan
 
 
-def run_team(plan: dict, *, root: Path, output_root: Path, approval_policy: str = 'ask', private_root: Path | None = None, env_dir: Path | None = None) -> dict:
+def run_team(plan: dict, *, root: Path, output_root: Path, approval_policy: str = 'ask', private_root: Path | None = None,
+             env_dir: Path | None = None, memory_root: Path | None = None) -> dict:
     validate_plan(plan)
     root = canonical_path(root)
+    from hydra.local_memory import DEFAULT_MEMORY_ROOT
+    memory_root = canonical_path(memory_root if memory_root is not None else DEFAULT_MEMORY_ROOT)
     if private_root:
         reject_links(private_root)
     private_root = canonical_path(private_root) if private_root else None
@@ -123,7 +133,8 @@ def run_team(plan: dict, *, root: Path, output_root: Path, approval_policy: str 
                    'approval_policy': approval_policy, 'max_iterations': plan.get('max_iterations', 8),
                    'timeout_seconds': plan.get('timeout_seconds', 300),
                    'private_root': str(private_root) if private_root else None,
-                   'env_dir': str(env_dir) if env_dir else None}
+                   'env_dir': str(env_dir) if env_dir else None,
+                   'memory_root': str(memory_root)}
         packet = run_dir / f'{task["id"]}.request.json'
         packet.write_text(json.dumps(request, ensure_ascii=False), encoding='utf-8')
         jobs.append(SubagentTask(id=task['id'], command=[sys.executable, '-I', '-m', 'hydra.team_worker', '--request', str(packet)],
@@ -137,6 +148,10 @@ def run_team(plan: dict, *, root: Path, output_root: Path, approval_policy: str 
     report.update(schema='hydra.team.v1', run_id=run_dir.name, run_directory=str(run_dir), outcomes=outcomes,
                   verified=False, verification_note='Completed execution is not a quality certification; inspect artifacts and recorded evidence.')
     report['independence'] = team_independence(plan, outcomes)
+    if plan.get('require_independent_review') and report['independence']['status'] != 'independent':
+        report['verdict'] = 'RED'
+        report['status'] = 'incomplete'
+        report['acceptance_failure'] = 'Required independent review was not established.'
     (run_dir / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
     return report
 
@@ -145,12 +160,12 @@ def team_independence(plan: dict, outcomes: list[dict]) -> dict:
     if not plan.get('require_independent_review'):
         return {'status': 'not_required', 'basis': 'operator-declared model family labels'}
     rows = {row['id']: row for row in outcomes}
-    builders = [t for t in plan['tasks'] if t['specialist'] == 'software_engineer']
+    builders = [t for t in plan['tasks'] if t['specialist'] in WRITERS]
     reviewers = [t for t in plan['tasks'] if t['specialist'] == 'code_reviewer']
     reasons = []
     for task in builders + reviewers:
         result = rows.get(task['id'], {})
-        if not result.get('ok') or not result.get('family') or result.get('family') == 'unspecified':
+        if not result.get('ok') or str(result.get('family', '')).strip().casefold() in {'', 'unspecified', 'unknown'}:
             reasons.append('Missing successful execution with an explicit family: ' + task['id'])
     for builder in builders:
         for reviewer in reviewers:
