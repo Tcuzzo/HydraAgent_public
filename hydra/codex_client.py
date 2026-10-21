@@ -161,6 +161,7 @@ def _default_runner(argv, *, input=None, capture_output=True, text=True, timeout
         stdout=subprocess.PIPE if capture_output else None,
         stderr=subprocess.PIPE if capture_output else None,
         text=text,
+        encoding="utf-8" if text else None,
     )
     pending_input = input
     try:

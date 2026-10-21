@@ -52,7 +52,7 @@ from textual.widgets import Footer, Input, RichLog, Static, TextArea
 from hydra.intake import COLLAB, CONVO, STEERING, classify
 from hydra.loop import AgentLoop, LoopStep, LoopResult, Tool
 from hydra.turn_profiles import load_turn_profile
-from hydra.turn_memory import finish_turn, learn_turn, recall_turn
+from hydra.turn_memory import finish_turn, learn_turn, recall_turn, run_observed_turn
 from hydra.operator_auth import OperatorAuth, OperatorAuthError, render_qr_ascii
 from hydra.work_executor import (
     detect_runaway,
@@ -865,7 +865,7 @@ class HydraApp(App[int]):
             initial.append({"role": "system", "content": context})
         turn_tools = self.tools if profile.tools_enabled else []
         iterations = min(self._max_iterations, profile.max_iterations)
-        result = agent_loop.run(
+        result = run_observed_turn(agent_loop,
             user_text,
             tools=turn_tools,
             max_iterations=iterations,
@@ -904,7 +904,7 @@ class HydraApp(App[int]):
                     "it yet. Do NOT claim success again without calling a tool."
                 ),
             })
-            r2 = agent_loop.run(
+            r2 = run_observed_turn(agent_loop,
                 user_text,
                 tools=turn_tools,
                 max_iterations=remaining,
@@ -918,7 +918,7 @@ class HydraApp(App[int]):
             results.append(r2)
             return (r2.final_response or "", r2.tool_calls_made)
 
-        if result.halted_reason != "cancelled":
+        if result.halted_reason not in {"cancelled", "provider_error"}:
             outcome = guard_work_turn(
                 kind=intake_kind,
                 final_text=final,
@@ -926,7 +926,7 @@ class HydraApp(App[int]):
                 rerun=_rerun_forcing_tools,
             )
             final = outcome.text
-        result = finish_turn(results, previous, final)
+        result = finish_turn(results, self._chat_messages, final)
         self._last_turn_result = result
         self._chat_messages = list(result.messages)
         self._last_memory_receipt, warnings = learn_turn(
@@ -1005,8 +1005,11 @@ class HydraApp(App[int]):
         # Only show turn-complete chrome when the agent actually worked
         # (i.e. fired at least one tool). Pure chat turns stay clean.
         if self._tools_used_this_turn > 0:
+            state = ("turn interrupted" if self._last_turn_result is not None and
+                     self._last_turn_result.halted_reason in {"cancelled", "provider_error"}
+                     else "turn complete")
             self._post_log(
-                f"  [bright_magenta]●[/bright_magenta] [dim]turn complete in {elapsed:.1f}s "
+                f"  [bright_magenta]●[/bright_magenta] [dim]{state} in {elapsed:.1f}s "
                 f"· {self._tools_used_this_turn} tool calls[/dim]"
             )
         if final:

@@ -95,7 +95,7 @@ except ImportError:
 from dataclasses import dataclass  # noqa: E402
 from hydra.inter_agent import redact_value  # noqa: E402
 from hydra.loop import AgentLoop, LoopStep, LoopResult, Tool  # noqa: E402
-from hydra.turn_memory import finish_turn, learn_turn, recall_turn  # noqa: E402
+from hydra.turn_memory import finish_turn, learn_turn, recall_turn, run_observed_turn  # noqa: E402
 from hydra.cli.tool_binding import bind_tools  # noqa: E402
 from hydra.operator_auth import OperatorAuth, OperatorAuthError, render_qr_ascii  # noqa: E402
 from hydra.skill_spine import build_agent_system_prompt, list_skill_records  # noqa: E402
@@ -497,8 +497,8 @@ class EliteTUI:
                 if session_exists(session_id):
                     try:
                         rotate_session(session_id, "TUI restarted — new session")
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        self.console.print(Text(f"Session history was not saved: {exc}", style="yellow"))
                 try:
                     create_session(session_id, "HydraAgent elite TUI session")
                 except Exception:
@@ -717,8 +717,8 @@ class EliteTUI:
                         if reply.strip():
                             add_message(self.session_id, "assistant", reply)
                         compact_session(self.session_id)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        self.console.print(Text(f"Session history was not saved: {exc}", style="yellow"))
 
                 # Multi-model usage line
                 if len(self._models_used_this_turn) > 1:
@@ -906,7 +906,7 @@ class EliteTUI:
                 "Do not route to any skill. Just talk."
             ),
         })
-        result = self._loop.run(
+        result = run_observed_turn(self._loop,
             user_input,
             tools=[],
             max_iterations=min(self._max_iterations, profile.max_iterations),
@@ -957,7 +957,7 @@ class EliteTUI:
             ) as live:
                 self._live_status = live
                 try:
-                    result: LoopResult = active_loop.run(
+                    result: LoopResult = run_observed_turn(active_loop,
                         user_input,
                         tools=self.tools if profile.tools_enabled else [],
                         max_iterations=iterations,
@@ -970,7 +970,7 @@ class EliteTUI:
                 finally:
                     self._live_status = None
         else:
-            result = active_loop.run(
+            result = run_observed_turn(active_loop,
                 user_input,
                 tools=self.tools if profile.tools_enabled else [],
                 max_iterations=iterations,
@@ -1005,7 +1005,7 @@ class EliteTUI:
                     "it yet. Do NOT claim success again without calling a tool."
                 ),
             })
-            r2 = active_loop.run(
+            r2 = run_observed_turn(active_loop,
                 user_input,
                 tools=self.tools if profile.tools_enabled else [],
                 max_iterations=remaining,
@@ -1018,13 +1018,15 @@ class EliteTUI:
             results.append(r2)
             return (r2.final_response or "", r2.tool_calls_made)
 
-        outcome = guard_work_turn(
-            kind=intake_kind,
-            final_text=final,
-            tool_calls_made=result.tool_calls_made,
-            rerun=_rerun_forcing_tools,
-        )
-        result = finish_turn(results, self._chat_messages, outcome.text)
+        if result.halted_reason not in {"cancelled", "provider_error"}:
+            outcome = guard_work_turn(
+                kind=intake_kind,
+                final_text=final,
+                tool_calls_made=result.tool_calls_made,
+                rerun=_rerun_forcing_tools,
+            )
+            final = outcome.text
+        result = finish_turn(results, self._chat_messages, final)
         self._last_turn_result = result
         self._last_turn_provider = next(
             (pair[0] for pair, loop in self._work_loops.items() if loop is active_loop),
@@ -1044,7 +1046,7 @@ class EliteTUI:
         self._memory_warnings.extend(warnings)
         for warning in warnings:
             self.console.print(Text(warning, style="yellow"))
-        return outcome.text
+        return result.final_response
 
     def _stream_turn(self, user_input: str, *, source: str = "operator") -> str:
         """Run one AgentLoop turn, streaming output inline. Returns final reply.
