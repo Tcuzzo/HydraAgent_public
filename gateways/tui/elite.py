@@ -95,6 +95,7 @@ except ImportError:
 from dataclasses import dataclass  # noqa: E402
 from hydra.inter_agent import redact_value  # noqa: E402
 from hydra.loop import AgentLoop, LoopStep, LoopResult, Tool  # noqa: E402
+from hydra.turn_memory import finish_turn, learn_turn, recall_turn  # noqa: E402
 from hydra.cli.tool_binding import bind_tools  # noqa: E402
 from hydra.operator_auth import OperatorAuth, OperatorAuthError, render_qr_ascii  # noqa: E402
 from hydra.skill_spine import build_agent_system_prompt, list_skill_records  # noqa: E402
@@ -433,10 +434,14 @@ class EliteTUI:
         self.memory_workspace_root = (
             Path(memory_workspace_root).expanduser().resolve()
             if memory_workspace_root
-            else None
+            else Path(root).expanduser().resolve()
         )
         self.recall_builder = recall_builder
         self.local_memory_chars = local_memory_chars
+        self._memory_warnings: list[str] = []
+        self._last_memory_recall: dict = {}
+        self._last_memory_receipt: dict = {}
+        self._last_turn_result: LoopResult | None = None
         self.runtime = dict(runtime or {})
         self.trace_out_path = Path(trace_out_path).expanduser().resolve() if trace_out_path else None
         self._trace_turn_index = 0
@@ -577,6 +582,10 @@ class EliteTUI:
             system_prompt=self.system_prompt,
             tools=self.tools,
             workspace_root=self.root,
+            memory_root=self.memory_root,
+            memory_workspace_root=self.memory_workspace_root,
+            recall_builder=self.recall_builder,
+            local_memory_chars=self.local_memory_chars,
             on_persist=_persist,
             on_command=_route_command,
             max_iterations=self._max_iterations,
@@ -941,13 +950,7 @@ class EliteTUI:
                 on_step=self._on_step,
             )
 
-        self._cumulative_iterations += result.iterations
-        self._cumulative_tool_calls += result.tool_calls_made
-        for m in result.messages:
-            content = m.get("content")
-            if isinstance(content, str):
-                self._cumulative_chars += len(content)
-
+        results = [result]
         final = result.final_response or ""
 
         # Cap runaway/degenerate output, then block confabulation.
@@ -957,7 +960,7 @@ class EliteTUI:
 
         def _rerun_forcing_tools(force: bool) -> tuple[str, int]:
             """Force one re-prompt: CALL the tool or admit it wasn't done."""
-            forced = list(initial_messages)
+            forced = list(result.messages)
             forced.append({
                 "role": "system",
                 "content": (
@@ -978,8 +981,7 @@ class EliteTUI:
                 initial_messages=forced,
                 on_step=self._on_step,
             )
-            self._cumulative_iterations += r2.iterations
-            self._cumulative_tool_calls += r2.tool_calls_made
+            results.append(r2)
             return (r2.final_response or "", r2.tool_calls_made)
 
         outcome = guard_work_turn(
@@ -988,6 +990,22 @@ class EliteTUI:
             tool_calls_made=result.tool_calls_made,
             rerun=_rerun_forcing_tools,
         )
+        result = finish_turn(results, self._chat_messages, outcome.text)
+        self._last_turn_result = result
+        self._cumulative_iterations += result.iterations
+        self._cumulative_tool_calls += result.tool_calls_made
+        self._cumulative_chars += sum(len(m.get("content") or "") for m in result.messages
+                                      if isinstance(m.get("content"), str))
+        pair = resolve_work_model(intake_kind) if active_model != self.model else None
+        self._last_memory_receipt, warnings = learn_turn(
+            user_input, result,
+            enabled=self.recall_builder is not None and profile.memory.enabled and profile.tools_enabled,
+            workspace_root=self.root, memory_root=self.memory_root,
+            provider=pair[0] if pair else self.provider_name, model=active_model,
+        )
+        self._memory_warnings.extend(warnings)
+        for warning in warnings:
+            self.console.print(Text(warning, style="yellow"))
         return outcome.text
 
     def _stream_turn(self, user_input: str, *, source: str = "operator") -> str:
@@ -1008,6 +1026,7 @@ class EliteTUI:
         self._models_used_this_turn = [self.model]
         self._turn_had_tools = False
         self._tool_start_times = {}
+        self._last_turn_result = None
         self._screen_transcript.append(f"operator: {user_input}")
         self._turn_start_time = time.monotonic()
         self._current_status = "thinking"
@@ -1020,24 +1039,17 @@ class EliteTUI:
 
         initial_messages = list(self._chat_messages)
 
-        # Per-turn, query-aware memory recall.  Gated by profile.memory.enabled
-        # so convo turns never call recall_builder (execute-bias fix).
-        # The ranked block is appended to this LOCAL copy only (never
-        # self._chat_messages) so each turn recalls by its OWN query.
-        if profile.memory.enabled and self.recall_builder is not None and self.memory_root is not None:
-            try:
-                recall = self.recall_builder(
-                    user_input,
-                    root=self.memory_root,
-                    workspace_root=self.memory_workspace_root,
-                )
-                if getattr(recall, "status", None) == "OK" and getattr(recall, "context", ""):
-                    initial_messages.append(
-                        {"role": "system", "content": recall.context}
-                    )
-            except Exception:
-                # Recall is best-effort; chat must never break on a memory miss.
-                pass
+        # Passive, query-aware recall is bounded independently from tool access.
+        # The block belongs only to this turn, never the retained conversation.
+        context, self._last_memory_recall, self._memory_warnings = recall_turn(
+            user_input, profile=profile, builder=self.recall_builder,
+            memory_root=self.memory_root, workspace_root=self.memory_workspace_root,
+            max_chars=self.local_memory_chars,
+        )
+        if context:
+            initial_messages.append({"role": "system", "content": context})
+        for warning in self._memory_warnings:
+            self.console.print(Text(warning, style="yellow"))
 
         self.console.print()
 
@@ -1096,8 +1108,11 @@ class EliteTUI:
             print(final)
 
         # Update chat history
-        self._chat_messages.append({"role": "user", "content": user_input})
-        self._chat_messages.append({"role": "assistant", "content": final})
+        if self._last_turn_result is not None:
+            self._chat_messages = list(self._last_turn_result.messages)
+        else:
+            self._chat_messages.append({"role": "user", "content": user_input})
+            self._chat_messages.append({"role": "assistant", "content": final})
 
         if self._parallel_agents_this_turn:
             self._print_parallel_summary(None)
