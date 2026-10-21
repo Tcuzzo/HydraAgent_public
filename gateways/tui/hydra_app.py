@@ -489,6 +489,7 @@ class HydraApp(App[int]):
         self._last_memory_recall: dict = {}
         self._last_memory_receipt: dict = {}
         self._last_turn_result: LoopResult | None = None
+        self._active_user_text: str | None = None
         self._on_persist = on_persist
         self._on_command = on_command
         self._max_iterations = max_iterations
@@ -572,6 +573,16 @@ class HydraApp(App[int]):
         else:
             self._work_provider = None
             self._work_model = None
+
+    def reconfigure_runtime(self, *, client, model: str, cfg) -> None:
+        """Apply an accepted provider switch to the live conversation loop."""
+        self.client, self.model, self.cfg = client, model, cfg
+        self._provider_name = getattr(cfg, "name", "") or "hydra"
+        self._active_model, self._active_provider = model, self._provider_name
+        self._agent_loop = AgentLoop(client, model=model, system_prompt=self.system_prompt)
+        self._work_loops.clear()
+        self._models_used_this_turn = [model]
+        self._update_stat_bar()
 
     def rebind_workspace(self, root: Path, memory_workspace_root: Path | None = None) -> None:
         """Apply an accepted /root change without moving the global memory store."""
@@ -714,6 +725,9 @@ class HydraApp(App[int]):
             return
         if self._on_command is not None and self._on_command(text):
             return
+        if self._turn_in_flight:
+            self._post_log("[yellow]A turn is already running; wait for it to finish.[/yellow]")
+            return
         self._post_chat_line("user", text)
         # Fabric §5 step 1: classify before we route.
         intake = classify(text, source="operator")
@@ -726,6 +740,7 @@ class HydraApp(App[int]):
             )
             return
         self._turn_in_flight = True
+        self._active_user_text = user_text
         self._stat_live = True
         self._update_stat_bar()
         self._turn_start = time.monotonic()
@@ -943,6 +958,8 @@ class HydraApp(App[int]):
 
     def _handle_turn_done(self, final_response: str) -> None:
         """Runs on the UI event loop after AgentLoop returns."""
+        completed_user_text = self._active_user_text
+        self._active_user_text = None
         self._turn_in_flight = False
         self._stat_live = False
         # Dragon seam: thinking -> idle. Banner eyes re-open.
@@ -964,11 +981,13 @@ class HydraApp(App[int]):
             self._post_chat_line("hydra", final)
             if self._on_persist is not None:
                 try:
-                    self._on_persist(self._last_user_text(), final)
+                    if completed_user_text is not None:
+                        self._on_persist(completed_user_text, final)
                 except Exception:
                     pass
 
     def _handle_turn_error(self, detail: str) -> None:
+        self._active_user_text = None
         self._turn_in_flight = False
         self._stat_live = False
         # Dragon seam: thinking -> idle on error path too.

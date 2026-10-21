@@ -11,6 +11,8 @@ from pathlib import Path
 from hydra.inter_agent import use_correlation_id, use_trace_id
 from hydra.llm import LlmError
 from hydra.loop import AgentLoop, LoopError
+from hydra.codex_client import configure_native_scope
+from hydra.turn_memory import finish_turn
 from hydra.policy import POLICY_CHOICES
 from hydra.providers import DEFAULT_ENV_DIR, ProviderError
 from hydra.roles import RoleError, resolve_roles
@@ -262,6 +264,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
     if routed_skill_context:
         system_prompt = system_prompt.rstrip() + "\n\n" + routed_skill_context
 
+    configure_native_scope(client, root=root, approval_policy=args.approval_policy)
     loop = AgentLoop(client, model=model, system_prompt=system_prompt)
     tools = _bind_tools(root, approval_policy=args.approval_policy, memory_root=memory_root,
                         memory_workspace_root=root)
@@ -274,34 +277,55 @@ def cmd_ask(args: argparse.Namespace) -> int:
     if context_proof_lines:
         print("  context: " + "; ".join(context_proof_lines[:3]), file=sys.stderr)
     attempted_local_fallback = False
+    attempt_results = []
+    retry_messages = None
+    exit_code = 0
     while True:
         try:
             with use_trace_id(os.environ.get("HYDRA_TRACE_ID")), use_correlation_id(
                 os.environ.get("HYDRA_PARENT_MESSAGE_ID")
             ):
                 result = loop.run(
-                    _with_workspace_context(args.prompt, root),
+                    (_with_workspace_context(args.prompt, root) if retry_messages is None else
+                     "Continue the same operator task using the completed tool results above. "
+                     "Do not repeat completed actions."),
                     tools=tools,
-                    max_iterations=args.max_iterations,
+                    max_iterations=max(1, args.max_iterations - sum(r.iterations for r in attempt_results)),
                     timeout=args.timeout,
+                    initial_messages=retry_messages,
                 )
+            attempt_results.append(result)
             break
         except LoopError as e:
             print(f"ask error: {e}", file=sys.stderr)
             return 2
         except LlmError as e:
+            partial = getattr(e, "partial_result", None)
+            if partial is not None:
+                attempt_results.append(partial)
+                retry_messages = partial.messages
             if attempted_local_fallback or args.provider == "ollama":
                 print(f"LLM error: {e}", file=sys.stderr)
-                return 1
+                if partial is None:
+                    return 1
+                result, exit_code = partial, 1
+                break
+            if sum(r.iterations for r in attempt_results) >= args.max_iterations:
+                print(f"LLM error: {e}; iteration budget exhausted", file=sys.stderr)
+                if partial is None:
+                    return 1
+                result, exit_code = partial, 1
+                break
             fallback = _local_gpu_fallback_client(args)
             if fallback is None:
                 print(f"LLM error: {e}", file=sys.stderr)
-                return 1
+                if partial is None:
+                    return 1
+                result, exit_code = partial, 1
+                break
             client, cfg = fallback
             args.provider = cfg.name
-            if not args.model:
-                args.model = cfg.model
-            model = args.model or cfg.model
+            model = cfg.model
             print(
                 f"API failure on the configured provider. Falling back to local GPU provider {cfg.name}/{model}.",
                 file=sys.stderr,
@@ -309,6 +333,8 @@ def cmd_ask(args: argparse.Namespace) -> int:
             loop = AgentLoop(client, model=model, system_prompt=system_prompt)
             attempted_local_fallback = True
             continue
+
+    result = finish_turn(attempt_results, [{"role": "system", "content": system_prompt}], result.final_response)
 
     if not getattr(args, "no_local_memory", False):
         try:
@@ -375,4 +401,4 @@ def cmd_ask(args: argparse.Namespace) -> int:
                 )
             if args.judge_fail_exit and judge_report["verdict"] != "PASS":
                 return 1
-    return 0 if result.halted_reason == "natural" else 1
+    return exit_code or (0 if result.halted_reason == "natural" else 1)
