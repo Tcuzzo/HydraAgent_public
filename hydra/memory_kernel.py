@@ -197,11 +197,13 @@ def _lesson_records(memory_root: Path, repo_root: Path) -> list[dict[str, Any]]:
 
 def _wiki_records(repo_root: Path) -> list[dict[str, Any]]:
     root = repo_root / WIKI_ROOT
-    if not root.is_dir():
+    if (not root.is_dir() or not root.resolve().is_relative_to(repo_root.resolve()) or
+        any(path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction())
+            for path in (root, root.parent))):
         return []
     records = []
     for path in sorted(root.rglob("*.md")):
-        if path.name == "index.md":
+        if path.name == "index.md" or path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
             continue
         text = _read_text(path)
         title = _first_heading(text) or path.stem

@@ -292,7 +292,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
                     tools=tools,
                     max_iterations=max(1, args.max_iterations - sum(r.iterations for r in attempt_results)),
                     timeout=args.timeout,
-                    initial_messages=retry_messages,
+                    **({"initial_messages": retry_messages} if retry_messages is not None else {}),
                 )
             attempt_results.append(result)
             break
@@ -334,7 +334,8 @@ def cmd_ask(args: argparse.Namespace) -> int:
             attempted_local_fallback = True
             continue
 
-    result = finish_turn(attempt_results, [{"role": "system", "content": system_prompt}], result.final_response)
+    if len(attempt_results) > 1:
+        result = finish_turn(attempt_results, [{"role": "system", "content": system_prompt}], result.final_response)
 
     if not getattr(args, "no_local_memory", False):
         try:

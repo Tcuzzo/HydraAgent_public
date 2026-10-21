@@ -430,6 +430,8 @@ class EliteTUI:
         self._max_iterations = max_iterations
         self._timeout = timeout
         self.approval_policy = approval_policy
+        from hydra.codex_client import configure_native_scope
+        configure_native_scope(self.client, root=self.root, approval_policy=approval_policy)
         self.memory_root = Path(memory_root).expanduser().resolve() if memory_root else None
         self.memory_workspace_root = (
             Path(memory_workspace_root).expanduser().resolve()
@@ -602,7 +604,9 @@ class EliteTUI:
             recall_builder=self.recall_builder,
             local_memory_chars=self.local_memory_chars,
             on_persist=_persist,
+            on_trace=self._write_trace_turn,
             on_command=_route_command,
+            approval_policy=self.approval_policy,
             max_iterations=self._max_iterations,
             timeout=self._timeout,
             initial_request=self._initial_request,
@@ -835,6 +839,8 @@ class EliteTUI:
             from hydra.providers import make_client
 
             client, _cfg = make_client(provider)
+            from hydra.codex_client import configure_native_scope
+            configure_native_scope(client, root=self.root, approval_policy=self.approval_policy)
             work_loop = AgentLoop(client, model=model, system_prompt=self.system_prompt)
         except Exception:
             # Executor unavailable — keep the chat loop; the guard still applies.
@@ -1216,6 +1222,8 @@ class EliteTUI:
         self.client = client
         self.cfg = cfg
         self.model = model
+        from hydra.codex_client import configure_native_scope
+        configure_native_scope(client, root=self.root, approval_policy=self.approval_policy)
         self.model_short = _short_model(model)
         self.provider_name = getattr(cfg, "name", None) or self.provider_name
         if runtime is not None:
@@ -1227,7 +1235,7 @@ class EliteTUI:
             system_prompt=self.system_prompt,
         )
 
-    def _write_trace_turn(self, user_input: str, result: LoopResult) -> None:
+    def _write_trace_turn(self, user_input: str, result: LoopResult, *, provider=None, model=None) -> None:
         if self.trace_out_path is None:
             return
         self.trace_out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1248,8 +1256,8 @@ class EliteTUI:
                 "schema": "hydra.chat_trace_turn.v1",
                 "turn_index": self._trace_turn_index,
                 "prompt": user_input,
-                "provider": self.provider_name,
-                "model": self.model,
+                "provider": provider or self.provider_name,
+                "model": model or self.model,
                 "trace_id": result.trace_id,
                 "iterations": result.iterations,
                 "tool_calls_made": result.tool_calls_made,

@@ -532,6 +532,11 @@ class AgentLoop:
                     continue
 
                 tool_duration_ms = int((time.time() - tool_started) * 1000)
+                reported_error = None
+                if isinstance(result, dict) and result.get("ok") is False:
+                    reported_error = str(result.get("error") or
+                        (f"process exited with code {result['exit_code']}" if "exit_code" in result else
+                         "tool reported an unsuccessful result"))
                 record_step(
                     LoopStep(
                         step=iteration,
@@ -541,6 +546,7 @@ class AgentLoop:
                         tool_name=tc.name,
                         tool_call_id=tc.id,
                         tool_arguments=tc.arguments,
+                        tool_error=reported_error,
                         tool_duration_ms=tool_duration_ms,
                         trace_id=run_trace_id,
                     )
