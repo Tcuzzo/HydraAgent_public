@@ -45,12 +45,22 @@ Select a checkpoint with `HYDRA_NEEDLE_MODEL` for the selector tool,
 releases. Model grounding through canon/essence is not weight training. The earlier
 starter models require further evaluation before unattended routing.
 
-Local prediction workers apply `HYDRA_LOCAL_CPU_FRACTION=0.15` by default using
-available process affinity and thread settings. On a 24-logical-CPU machine this
-selects three logical CPUs (12.5% of logical scheduling capacity). It does **not**
-promise 15% electrical power use. The receipt states the applied CPUs or an
-unsupported backend. Multiple workers still need queue admission; affinity does
-not make model loading or disk contention free.
+Kev, Laya and embedding prediction workers apply a CPU fraction of `0.15` by
+default using available process affinity and thread settings. On a
+24-logical-CPU machine this selects three logical CPUs (12.5% of logical
+scheduling capacity). Needle defaults to all CPUs already available to its
+process because its native engine can slow dramatically under one-core
+affinity. Setting `HYDRA_LOCAL_CPU_FRACTION` explicitly overrides either default.
+This is a scheduling budget, not an electrical-power guarantee. The receipt
+states the applied CPUs or an unsupported backend. Multiple workers still need
+queue admission; affinity does not make model loading or disk contention free.
+
+In the repair sandbox on 2026-10-21, the same warmed Needle 3 request, tool schema
+and 128-token limit took 75.8709 seconds with one allowed logical CPU and 0.5043
+seconds with all nine available logical CPUs. Both proposed the same
+`fs_read` call with confidence `0.6516`. These are two local measurements of
+this input, not a general latency benchmark or a quality estimate. The first
+configuration exceeded the normal 60-second selector deadline.
 
 ## Keep source lookup fresh
 
