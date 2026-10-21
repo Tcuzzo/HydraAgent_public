@@ -8,6 +8,7 @@ from typing import Any
 
 from hydra.lessons import LESSON_RELATIVE_PATH
 from hydra.wiki_memory import WIKI_ROOT
+from hydra.local_memory import DEFAULT_MEMORY_ROOT
 
 
 INDEX_SCHEMA = "hydra.memory_kernel.index.v1"
@@ -22,12 +23,15 @@ TOKEN_RE = re.compile(r"[A-Za-z0-9_§\.\-]{2,}")
 
 def build_memory_index(*, repo_root: Path, memory_root: Path | None = None) -> dict[str, Any]:
     repo = Path(repo_root).expanduser().resolve()
-    memory = Path(memory_root).expanduser().resolve() if memory_root else Path.home() / ".hydra-memory"
+    memory = Path(memory_root).expanduser().resolve() if memory_root else DEFAULT_MEMORY_ROOT
     records: list[dict[str, Any]] = []
     records.extend(_lesson_records(memory, repo))
     records.extend(_wiki_records(repo))
     records.extend(_mission_evidence_records(repo))
     records.extend(_source_receipt_records(repo))
+    from hydra.execution_learning import execution_chunks
+    records.extend(_record("execution", "Observed task execution", chunk, Path(path), repo)
+                   for path, chunk in execution_chunks(memory, repo))
     records.sort(key=lambda row: (row["kind"], row["title"], row["provenance"]["path"]))
     return {
         "schema": INDEX_SCHEMA,
@@ -111,7 +115,11 @@ def assemble_truth_context(
         "Use only as prior memory; verify live state before claiming current facts.",
         "",
     ]
-    remaining = max(1000, budget_chars) - sum(len(line) + 1 for line in lines)
+    budget_chars = max(0, int(budget_chars))
+    header = "\n".join(lines)
+    remaining = budget_chars - len(header)
+    if remaining <= 0:
+        lines = []
     for score, record in scored:
         block = (
             f"- [{record['kind']}] {record['title']}\n"
@@ -119,7 +127,7 @@ def assemble_truth_context(
             f"  source: {record['provenance']['path']}\n"
         )
         if len(block) > remaining:
-            break
+            continue
         lines.append(block.rstrip())
         selected.append({**record, "score": score})
         remaining -= len(block)
@@ -128,7 +136,7 @@ def assemble_truth_context(
         "query": query,
         "tokens": tokens,
         "records": selected,
-        "text": "\n".join(lines).strip() + "\n",
+        "text": ("\n".join(lines).strip() + "\n")[:budget_chars] if selected else "",
         "proof": [
             f"records_indexed={index['records_count']}",
             f"records_selected={len(selected)}",
