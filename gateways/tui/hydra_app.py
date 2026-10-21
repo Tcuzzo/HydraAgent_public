@@ -465,7 +465,9 @@ class HydraApp(App[int]):
         recall_builder: Callable[..., object] | None = None,
         local_memory_chars: int = 12000,
         on_persist: Callable[[str, str], None] | None = None,
+        on_trace: Callable[..., None] | None = None,
         on_command: Callable[[str], bool] | None = None,
+        approval_policy: str = "ask",
         max_iterations: int = 200,  # UNLOCKED: iterate like Claude Code/Codex (operator: no iteration gates)
         timeout: float = 120.0,
         initial_request: str | None = None,
@@ -491,6 +493,10 @@ class HydraApp(App[int]):
         self._last_turn_result: LoopResult | None = None
         self._active_user_text: str | None = None
         self._on_persist = on_persist
+        self._on_trace = on_trace
+        self.approval_policy = approval_policy
+        from hydra.codex_client import configure_native_scope
+        configure_native_scope(client, root=self.workspace_root, approval_policy=approval_policy)
         self._on_command = on_command
         self._max_iterations = max_iterations
         self._timeout = timeout
@@ -577,6 +583,8 @@ class HydraApp(App[int]):
     def reconfigure_runtime(self, *, client, model: str, cfg) -> None:
         """Apply an accepted provider switch to the live conversation loop."""
         self.client, self.model, self.cfg = client, model, cfg
+        from hydra.codex_client import configure_native_scope
+        configure_native_scope(client, root=self.workspace_root, approval_policy=self.approval_policy)
         self._provider_name = getattr(cfg, "name", "") or "hydra"
         self._active_model, self._active_provider = model, self._provider_name
         self._agent_loop = AgentLoop(client, model=model, system_prompt=self.system_prompt)
@@ -589,6 +597,9 @@ class HydraApp(App[int]):
         old_prompt = self.system_prompt
         self.workspace_root = Path(root).expanduser().resolve()
         self.memory_workspace_root = Path(memory_workspace_root or root).expanduser().resolve()
+        from hydra.codex_client import configure_native_scope
+        configure_native_scope(self.client, root=self.workspace_root, approval_policy=self.approval_policy)
+        self._work_loops.clear()
         self.system_prompt = _augment_system_prompt(
             self._base_system_prompt, workspace_root=self.workspace_root,
             tool_names=[tool.name for tool in self.tools],
@@ -806,6 +817,8 @@ class HydraApp(App[int]):
             from hydra.providers import make_client
 
             client, _cfg = make_client(provider)
+            from hydra.codex_client import configure_native_scope
+            configure_native_scope(client, root=self.workspace_root, approval_policy=self.approval_policy)
             work_loop = AgentLoop(client, model=model, system_prompt=self.system_prompt)
         except Exception:
             # Executor unavailable — keep the chat loop; the guard still applies.
@@ -915,6 +928,11 @@ class HydraApp(App[int]):
             provider=self._active_provider, model=active_model,
         )
         self._memory_warnings.extend(warnings)
+        if self._on_trace is not None:
+            try:
+                self._on_trace(user_text, result, provider=self._active_provider, model=active_model)
+            except Exception as exc:
+                self._memory_warnings.append(f"Requested trace could not be saved: {exc}")
         return result
 
     # ── Loop step callback (runs in worker thread) ───────────────────────

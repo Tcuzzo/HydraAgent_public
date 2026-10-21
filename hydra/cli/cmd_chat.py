@@ -11,6 +11,7 @@ from typing import Any
 from hydra.inter_agent import redact_text
 from hydra.llm import LlmError
 from hydra.loop import AgentLoop
+from hydra.codex_client import configure_native_scope
 from hydra.policy import POLICY_CHOICES
 from hydra.providers import (
     DEFAULT_ENV_DIR,
@@ -750,6 +751,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 notify_telegram=True,  # Enabled — callback infrastructure verified working
             )
             tui.root = root
+            configure_native_scope(tui.client, root=root, approval_policy=args.approval_policy)
+            tui._work_loops.clear()
             tui.memory_workspace_root = memory_workspace_root
             tui.tools = tools
             # Optional startup context is scoped just as per-turn recall is.
