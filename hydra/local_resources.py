@@ -5,8 +5,8 @@ import math
 import os
 
 
-def cpu_budget():
-    fraction = float(os.environ.get('HYDRA_LOCAL_CPU_FRACTION', '0.15'))
+def cpu_budget(*, default_fraction=0.15):
+    fraction = float(os.environ.get('HYDRA_LOCAL_CPU_FRACTION', str(default_fraction)))
     if not math.isfinite(fraction) or not 0 < fraction <= 1:
         raise ValueError('HYDRA_LOCAL_CPU_FRACTION must be >0 and <=1')
     import psutil
