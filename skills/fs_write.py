@@ -29,6 +29,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from hydra.atomic_write import atomic_write_bytes
+from hydra.edit_checkpoints import get_default_store
 from skills.fs_read import SkillError
 
 DEFAULT_MAX_BYTES = 1024 * 1024  # 1 MiB
@@ -131,6 +132,14 @@ def run(
     # Atomic write: write to a sibling temp file then os.replace().
     # Prevents readers from seeing a partially-written file.
     try:
+        store = get_default_store(root_resolved)
+        pre_image = None
+        if overwrote:
+            with target_resolved.open("rb") as stream:
+                pre_image = stream.read(store.max_bytes + 1)
+            if len(pre_image) > store.max_bytes:
+                raise SkillError("existing file exceeds the recoverable checkpoint limit")
+        store.record(target_path=target_resolved, op="modify" if overwrote else "create", pre_image=pre_image)
         atomic_write_bytes(target_resolved, payload, overwrite=overwrite)
     except OSError as e:
         raise SkillError(f"write failed for {target_resolved}: {e}") from e
