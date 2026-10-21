@@ -59,6 +59,7 @@ def _learn(*, root: Path, memory_root: str | None, goal: str, result, provider: 
 def execute(request: dict, run_dir: Path) -> dict:
     from hydra.cli.tool_binding import bind_tools
     from hydra.loop import AgentLoop
+    from hydra.turn_memory import run_observed_turn
     from hydra.providers import make_runtime_client
     task = request['task']
     role = task['specialist']
@@ -138,7 +139,7 @@ def execute(request: dict, run_dir: Path) -> dict:
                 for failed_index in pending_errors.pop(operation, []):
                     evidence[failed_index]['recovered_by'] = index
     started = time.monotonic()
-    result = AgentLoop(client, model=request['model'], system_prompt=system).run(
+    result = run_observed_turn(AgentLoop(client, model=request['model'], system_prompt=system),
         prompt, tools=tools, max_iterations=request['max_iterations'], max_tokens=2048,
         timeout=min(120, request['timeout_seconds']), initial_messages=initial, on_step=record,
         repo_root=root, requested_provider=request['provider'])
@@ -152,6 +153,7 @@ def execute(request: dict, run_dir: Path) -> dict:
                                         result=result, provider=actual['provider'], model=actual['model'])
     return {'id': task['id'], 'specialist': role, 'ok': ok, 'verified': False,
             'status': 'completed' if ok else 'incomplete', 'halted_reason': result.halted_reason,
+            **({'failure': result.provider_error} if result.provider_error else {}),
             **actual,
             'requested_route': client.requested_route, 'routing_attempts': client.attempts,
             'tool_runtime': 'codex-native-sandbox' if native else 'hydra',

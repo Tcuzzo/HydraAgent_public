@@ -5,6 +5,28 @@ from dataclasses import replace
 from pathlib import Path
 
 from hydra.loop import LoopResult
+from hydra.llm import LlmError
+
+
+def run_observed_turn(loop, *args, **kwargs) -> LoopResult:
+    """Return interrupted runs through the same evidence-persistence path.
+
+    The agent loop keeps raising provider errors for callers that implement
+    provider failover. Chat and team surfaces instead retain the attached
+    partial result, so already completed actions do not disappear on failure.
+    """
+    try:
+        return loop.run(*args, **kwargs)
+    except LlmError as exc:
+        partial = getattr(exc, "partial_result", None)
+        if not isinstance(partial, LoopResult):
+            raise
+        failure = exc.to_dict()
+        message = (f"Provider interrupted this turn: {failure['message']}\n"
+                   f"Recorded tool observations: {partial.tool_calls_made}. "
+                   "The task is incomplete; review those observations before retrying.")
+        return replace(partial, final_response=message, provider_error=failure,
+                       messages=[*partial.messages, {"role": "assistant", "content": message}])
 
 
 def recall_turn(query, *, profile, builder, memory_root, workspace_root, max_chars):
@@ -65,9 +87,16 @@ def finish_turn(results: list[LoopResult], previous_messages: list[dict], final_
     permanent_system = [m for m in previous_messages if m.get("role") == "system"]
     history = [dict(m) for m in last.messages
                if m.get("role") != "system" or m in permanent_system]
-    for message in reversed(history):
+    # Context commands may have been accepted while the model was running.
+    # Retain those current persistent instructions as well as its transcript.
+    history.extend(dict(m) for m in permanent_system if m not in history)
+    current_user = max((i for i, m in enumerate(history) if m.get("role") == "user"), default=-1)
+    for index in range(len(history) - 1, current_user, -1) if current_user >= 0 else ():
+        message = history[index]
         if message.get("role") == "assistant" and not message.get("tool_calls"):
             message["content"] = final_text
             break
+    else:
+        history.append({"role": "assistant", "content": final_text})
     result.messages = history
     return result

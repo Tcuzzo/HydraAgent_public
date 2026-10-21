@@ -5,6 +5,7 @@ import datetime as _dt
 import difflib
 import ipaddress
 import json
+import math
 import shutil
 import socket
 import subprocess
@@ -14,6 +15,7 @@ from urllib.parse import urlparse
 import urllib.request
 
 from hydra.http_policy import open_checked
+from hydra.proc import kill_owned_group, popen_portable
 
 
 SESSION_SCHEMA = "hydra.environment.session.v1"
@@ -79,24 +81,53 @@ def run_session_command(
     workspace = Path(session["workspace"])
     if not isinstance(command, list) or not command or not all(isinstance(part, str) for part in command):
         raise EnvironmentError("command must be a non-empty list of strings")
+    if (isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
+        raise EnvironmentError("timeout_seconds must be a finite positive number")
     started = _now()
-    proc = subprocess.run(
+    proc = popen_portable(
         command,
         cwd=workspace,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        timeout=timeout_seconds,
-        check=False,
+        encoding="utf-8",
+        errors="replace",
     )
+    timed_out = False
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            # Stop the owned tree while its leader still exists, then recover
+            # output and persist the failed attempt through the normal path.
+            kill_owned_group(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                stdout, stderr = exc.stdout or b"", exc.stderr or b""
+                stdout = stdout.decode("utf-8", errors="replace") if isinstance(stdout, bytes) else stdout
+                stderr = stderr.decode("utf-8", errors="replace") if isinstance(stderr, bytes) else stderr
+    finally:
+        kill_owned_group(proc)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        for stream in (proc.stdout, proc.stderr):
+            if stream is not None:
+                stream.close()
     packet = {
         "schema": COMMAND_SCHEMA,
         "session_id": session_id,
         "command": command,
-        "status": "ok" if proc.returncode == 0 else "failed",
+        "status": "timed_out" if timed_out else "ok" if proc.returncode == 0 else "failed",
         "returncode": proc.returncode,
-        "stdout": proc.stdout,
-        "stderr": proc.stderr,
+        "stdout": stdout,
+        "stderr": stderr,
+        "timed_out": timed_out,
         "timeout_seconds": timeout_seconds,
         "started_at": started,
         "finished_at": _now(),
