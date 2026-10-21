@@ -36,5 +36,7 @@ def needle_select(query, candidates, tools):
     response = NeedleClient(model=model).chat([ChatMessage('user', query)], model=model, tools=schemas, timeout=60)
     return {'status': 'completed', 'backend': 'needle', 'model': model, 'executed_actions': False,
             'selections': [{'tool': call.name, 'arguments': call.arguments} for call in response.tool_calls],
+            'confidence': response.raw.get('confidence'),
+            'confidence_available': response.raw.get('confidence') is not None,
             'resource_budget': response.raw.get('resource_budget'),
             'next_step': 'These are proposals. Invoke the selected tool through the normal runtime policy.'}
