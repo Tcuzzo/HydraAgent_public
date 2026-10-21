@@ -10,8 +10,8 @@ def test_recovered_same_regression_passes_team_with_original_failure_preserved(t
     from hydra.teams import run_team
     root = tmp_path / "workspace"
     root.mkdir()
-    (root / "source.py").write_text("def answer():\n    return 41\n")
-    (root / "check.py").write_text("from source import answer\nassert answer() == 42, answer()\n")
+    (root / "source.py").write_bytes(b"def answer():\n    return 41\n")
+    (root / "check.py").write_bytes(b"from source import answer\nassert answer() == 42, answer()\n")
     requests = []
     command = f'"{sys.executable}" -B check.py'
     class Handler(BaseHTTPRequestHandler):
