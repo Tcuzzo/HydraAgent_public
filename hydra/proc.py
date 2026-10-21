@@ -388,6 +388,7 @@ def run_captured(
     text=True, timeout=None, cancel_event: Event | None = None,
     max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
     stdout_file=None, merge_output=False, fail_on_output_limit=False, popen_factory=None,
+    output_file_limit: tuple[str | Path, int] | None = None,
 ) -> subprocess.CompletedProcess:
     """Drain owned process pipes without retaining unbounded progress output.
 
@@ -401,6 +402,21 @@ def run_captured(
         raise ValueError("timeout must be a finite positive number")
     if isinstance(max_output_bytes, bool) or not isinstance(max_output_bytes, int) or max_output_bytes < 0:
         raise ValueError("max_output_bytes must be a non-negative integer")
+    if output_file_limit is not None:
+        output_path, output_bytes = output_file_limit
+        output_path = Path(output_path)
+        if isinstance(output_bytes, bool) or not isinstance(output_bytes, int) or output_bytes < 0:
+            raise ValueError("output file byte limit must be a non-negative integer")
+
+    def file_limit_error():
+        if output_file_limit is not None:
+            try:
+                size = output_path.stat().st_size
+            except FileNotFoundError:
+                return None
+            if size > output_bytes:
+                return OutputLimitExceeded(f"process output file exceeds {output_bytes} bytes")
+        return None
     if cancel_event is None:
         cancel_event = _ACTIVE_CANCELLATION.get()
     if cancel_event is not None and cancel_event.is_set():
@@ -454,6 +470,9 @@ def run_captured(
         for thread in threads:
             thread.start()
         while proc.poll() is None:
+            error = file_limit_error()
+            if error is not None:
+                break
             if io_errors:
                 error = io_errors[0]
                 break
@@ -494,6 +513,8 @@ def run_captured(
         error = io_errors[0]
     if limit_reached.is_set() and error is None:
         error = OutputLimitExceeded(f"process output exceeds {max_output_bytes} bytes")
+    if error is None:
+        error = file_limit_error()
     if error is not None:
         if isinstance(error, subprocess.TimeoutExpired):
             error.output, error.stderr = captured

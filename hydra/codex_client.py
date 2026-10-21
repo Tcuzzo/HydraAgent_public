@@ -47,6 +47,7 @@ from hydra.llm import ChatMessage, ChatResponse, LlmError
 # / Codex CLI configuration; this is just the catalog name Hydra reports and can
 # be overridden per call or at construction.
 _DEFAULT_MODEL = "codex"
+_MAX_FINAL_BYTES = 1024 * 1024
 
 # Substrings that pin the cause of a FAILED turn (no valid final answer). Only
 # consulted when there is NO clean answer — a non-empty `-o` answer with exit 0
@@ -143,7 +144,7 @@ def _native_launcher_argv(argv: list[str]) -> list[str]:
 
 
 def _default_runner(argv, *, input=None, capture_output=True, text=True, timeout=None,
-                    cancel_event: Event | None = None):
+                    cancel_event: Event | None = None, output_file: str | None = None):
     """Run a native provider in an owned group with cancellation and a deadline.
 
     Injected so unit tests can pass a fake and never touch the CLI/account.
@@ -152,7 +153,8 @@ def _default_runner(argv, *, input=None, capture_output=True, text=True, timeout
     try:
         return run_captured(_native_launcher_argv(argv), input=input,
             capture_output=capture_output, text=text, timeout=timeout,
-            cancel_event=cancel_event, max_output_bytes=1024 * 1024)
+            cancel_event=cancel_event, max_output_bytes=1024 * 1024,
+            output_file_limit=(output_file, _MAX_FINAL_BYTES) if output_file is not None else None)
     except ProcessCancelled as exc:
         raise LlmError(f"codex exec {exc}") from exc
 
@@ -239,6 +241,7 @@ class CodexClient:
             # alone owns processes and accepts the turn cancellation token.
             if self._runner is _default_runner:
                 runner_options["cancel_event"] = self.cancel_event
+                runner_options["output_file"] = out_file
             proc = self._runner(argv, **runner_options)
         except Exception as exc:  # TimeoutExpired, OSError, ValueError, etc.
             Path(out_file).unlink(missing_ok=True)
@@ -332,8 +335,8 @@ class CodexClient:
         try:
             if os.path.isfile(out_file):
                 with open(out_file, "rb") as fh:
-                    data = fh.read(1024 * 1024 + 1)
-                if len(data) > 1024 * 1024:
+                    data = fh.read(_MAX_FINAL_BYTES + 1)
+                if len(data) > _MAX_FINAL_BYTES:
                     raise LlmError("codex final message exceeds the 1 MiB limit")
                 data = data.decode("utf-8")
                 if data.strip():
