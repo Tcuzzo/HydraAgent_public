@@ -200,7 +200,10 @@ def main() -> int:
     try:
         request = json.load(sys.stdin)
         from hydra.local_resources import cpu_budget
-        resource_receipt = cpu_budget()
+        # Needle's native engine manages its own parallel work. Restricting it
+        # to one implicit CPU caused measured threadpool thrashing (75.9s vs
+        # 0.5s for the same warm request). Explicit operator budgets still win.
+        resource_receipt = cpu_budget(default_fraction=1.0 if request.get("backend") == "needle" else 0.15)
         # Third-party progress output must not corrupt the JSON protocol.
         with contextlib.redirect_stdout(sys.stderr):
             backend = request["backend"]
