@@ -27,7 +27,6 @@ def register_personal_commands(sub):
     run.add_argument('--output-root', type=Path, default=Path.home() / '.hydraAgent' / 'team-runs')
     run.add_argument('--private-profiles', type=Path)
     run.add_argument('--env-dir', type=Path)
-    run.add_argument('--memory-root', type=Path, help='durable memory shared by this team (default: ~/.hydra-memory)')
     run.add_argument('--approval-policy', choices=['allow', 'ask', 'deny'], default='ask')
     show = modes.add_parser('show', help='inspect the public canon and essence for one specialist')
     show.add_argument('specialist')
@@ -128,8 +127,7 @@ def cmd_personal(args) -> int:
                     atomic_write_bytes(args.output, (json.dumps(result, indent=2) + '\n').encode(), overwrite=False)
             else:
                 result = run_team(read_json(args.plan, 131072), root=args.root, output_root=args.output_root,
-                                  approval_policy=args.approval_policy, private_root=args.private_profiles, env_dir=args.env_dir,
-                                  memory_root=getattr(args, 'memory_root', None))
+                                  approval_policy=args.approval_policy, private_root=args.private_profiles, env_dir=args.env_dir)
         elif args.cmd == 'mcp':
             if args.action == 'serve':
                 from hydra.mcp_server import serve

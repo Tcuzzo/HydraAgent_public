@@ -15,8 +15,7 @@ profiles:
     max_tokens: 600
     temperature: 0.6
     memory:
-      # Reading prior evidence is passive; tools remain disabled above.
-      enabled: true
+      enabled: false
       top_k: 2
       max_chars: 1200
       min_similarity: 0.70

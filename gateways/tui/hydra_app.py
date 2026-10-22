@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,8 +50,6 @@ from textual.widgets import Footer, Input, RichLog, Static, TextArea
 
 from hydra.intake import COLLAB, CONVO, STEERING, classify
 from hydra.loop import AgentLoop, LoopStep, LoopResult, Tool
-from hydra.turn_profiles import load_turn_profile
-from hydra.turn_memory import finish_turn, learn_turn, recall_turn, run_observed_turn
 from hydra.operator_auth import OperatorAuth, OperatorAuthError, render_qr_ascii
 from hydra.work_executor import (
     detect_runaway,
@@ -461,14 +458,8 @@ class HydraApp(App[int]):
         system_prompt: str,
         tools: list[Tool],
         workspace_root: Path | str | None = None,
-        memory_root: Path | str | None = None,
-        memory_workspace_root: Path | str | None = None,
-        recall_builder: Callable[..., object] | None = None,
-        local_memory_chars: int = 12000,
         on_persist: Callable[[str, str], None] | None = None,
-        on_trace: Callable[..., None] | None = None,
         on_command: Callable[[str], bool] | None = None,
-        approval_policy: str = "ask",
         max_iterations: int = 200,  # UNLOCKED: iterate like Claude Code/Codex (operator: no iteration gates)
         timeout: float = 120.0,
         initial_request: str | None = None,
@@ -481,24 +472,7 @@ class HydraApp(App[int]):
         self.cfg = cfg
         self.tools = tools
         self.workspace_root = Path(workspace_root).expanduser().resolve() if workspace_root else Path.cwd()
-        self.memory_root = Path(memory_root).expanduser().resolve() if memory_root else None
-        self.memory_workspace_root = (
-            Path(memory_workspace_root).expanduser().resolve()
-            if memory_workspace_root else self.workspace_root
-        )
-        self.recall_builder = recall_builder
-        self.local_memory_chars = local_memory_chars
-        self._memory_warnings: list[str] = []
-        self._last_memory_recall: dict = {}
-        self._last_memory_receipt: dict = {}
-        self._last_turn_result: LoopResult | None = None
-        self._active_user_text: str | None = None
-        self._turn_cancel = threading.Event()
         self._on_persist = on_persist
-        self._on_trace = on_trace
-        self.approval_policy = approval_policy
-        from hydra.codex_client import configure_native_scope
-        configure_native_scope(client, root=self.workspace_root, approval_policy=approval_policy)
         self._on_command = on_command
         self._max_iterations = max_iterations
         self._timeout = timeout
@@ -511,7 +485,6 @@ class HydraApp(App[int]):
         # Inject workspace + toolkit context into the system prompt so the
         # agent always knows where it is and what it can do. Without this
         # the model asks 'what's the repo root?' every turn.
-        self._base_system_prompt = system_prompt
         self.system_prompt = _augment_system_prompt(
             system_prompt,
             workspace_root=self.workspace_root,
@@ -581,37 +554,6 @@ class HydraApp(App[int]):
         else:
             self._work_provider = None
             self._work_model = None
-
-    def reconfigure_runtime(self, *, client, model: str, cfg) -> None:
-        """Apply an accepted provider switch to the live conversation loop."""
-        self.client, self.model, self.cfg = client, model, cfg
-        from hydra.codex_client import configure_native_scope
-        configure_native_scope(client, root=self.workspace_root, approval_policy=self.approval_policy)
-        self._provider_name = getattr(cfg, "name", "") or "hydra"
-        self._active_model, self._active_provider = model, self._provider_name
-        self._agent_loop = AgentLoop(client, model=model, system_prompt=self.system_prompt)
-        self._work_loops.clear()
-        self._models_used_this_turn = [model]
-        self._update_stat_bar()
-
-    def rebind_workspace(self, root: Path, memory_workspace_root: Path | None = None) -> None:
-        """Apply an accepted /root change without moving the global memory store."""
-        old_prompt = self.system_prompt
-        self.workspace_root = Path(root).expanduser().resolve()
-        self.memory_workspace_root = Path(memory_workspace_root or root).expanduser().resolve()
-        from hydra.codex_client import configure_native_scope
-        configure_native_scope(self.client, root=self.workspace_root, approval_policy=self.approval_policy)
-        self._work_loops.clear()
-        self.system_prompt = _augment_system_prompt(
-            self._base_system_prompt, workspace_root=self.workspace_root,
-            tool_names=[tool.name for tool in self.tools],
-        )
-        for message in self._chat_messages:
-            if message.get("role") == "system" and message.get("content") == old_prompt:
-                message["content"] = self.system_prompt
-        self._agent_loop.system_prompt = self.system_prompt
-        for loop in self._work_loops.values():
-            loop.system_prompt = self.system_prompt
 
     # ── Layout ───────────────────────────────────────────────────────────
 
@@ -719,7 +661,6 @@ class HydraApp(App[int]):
             return
         # Slash commands handled inline
         if text.lower() in {"/exit", "/quit", "stop"}:
-            self._turn_cancel.set()
             self.exit(0)
             return
         if text == "/help":
@@ -739,9 +680,6 @@ class HydraApp(App[int]):
             return
         if self._on_command is not None and self._on_command(text):
             return
-        if self._turn_in_flight:
-            self._post_log("[yellow]A turn is already running; wait for it to finish.[/yellow]")
-            return
         self._post_chat_line("user", text)
         # Fabric §5 step 1: classify before we route.
         intake = classify(text, source="operator")
@@ -754,8 +692,6 @@ class HydraApp(App[int]):
             )
             return
         self._turn_in_flight = True
-        self._turn_cancel.clear()
-        self._active_user_text = user_text
         self._stat_live = True
         self._update_stat_bar()
         self._turn_start = time.monotonic()
@@ -779,8 +715,6 @@ class HydraApp(App[int]):
             result: LoopResult = await loop.run_in_executor(
                 None, self._run_agent_loop_sync, user_text, intake_kind
             )
-            for warning in self._memory_warnings:
-                self._post_log(Text(warning, style="yellow").markup)
             self._handle_turn_done(result.final_response or "")
         except Exception as exc:
             self._handle_turn_error(str(exc))
@@ -821,8 +755,6 @@ class HydraApp(App[int]):
             from hydra.providers import make_client
 
             client, _cfg = make_client(provider)
-            from hydra.codex_client import configure_native_scope
-            configure_native_scope(client, root=self.workspace_root, approval_policy=self.approval_policy)
             work_loop = AgentLoop(client, model=model, system_prompt=self.system_prompt)
         except Exception:
             # Executor unavailable — keep the chat loop; the guard still applies.
@@ -839,8 +771,8 @@ class HydraApp(App[int]):
         _route_for_kind returns the chat loop so the turn still runs (guarded
         against confabulation by work_executor.guard_work_turn).
 
-        Passive memory is available to both profiles. Tool availability and
-        generation budgets follow the selected declarative turn profile.
+        The work loop receives the same tools list as the chat loop — the model
+        decides whether to call them; we never restrict the executor's toolkit.
         """
         agent_loop, active_model = self._route_for_kind(intake_kind)
         # Update _active_model so the stat bar shows the ACTUAL executor for
@@ -853,30 +785,17 @@ class HydraApp(App[int]):
             self._active_provider = _pair[0] if _pair else self._provider_name
         else:
             self._active_provider = self._provider_name
-        profile = load_turn_profile(intake_kind)
-        previous = list(self._chat_messages)
-        initial = list(previous)
-        context, self._last_memory_recall, self._memory_warnings = recall_turn(
-            user_text, profile=profile, builder=self.recall_builder,
-            memory_root=self.memory_root, workspace_root=self.memory_workspace_root,
-            max_chars=self.local_memory_chars,
-        )
-        if context:
-            initial.append({"role": "system", "content": context})
-        turn_tools = self.tools if profile.tools_enabled else []
-        iterations = min(self._max_iterations, profile.max_iterations)
-        result = run_observed_turn(agent_loop,
+        initial = list(self._chat_messages)
+        result = agent_loop.run(
             user_text,
-            tools=turn_tools,
-            max_iterations=iterations,
-            max_tokens=profile.max_tokens,
-            temperature=profile.temperature,
+            tools=self.tools,
+            max_iterations=self._max_iterations,
+            max_tokens=2048,
+            temperature=0.0 if intake_kind != CONVO else 0.5,
             timeout=self._timeout,
             initial_messages=initial,
             on_step=self._on_loop_step,
-            cancel_event=self._turn_cancel,
         )
-        results = [result]
 
         # NO-CONFABULATION GUARD (ported from elite.py:917-957). This was MISSING
         # on the live TUI path — a work turn could narrate "I connected to the server
@@ -885,15 +804,12 @@ class HydraApp(App[int]):
         # no tool call, force ONE re-prompt to actually call the tool or admit it
         # wasn't done. Convo turns pass straight through (guard exempts non-work).
         final = result.final_response or ""
-        runaway = detect_runaway(final, max_tokens=profile.max_tokens)
+        runaway = detect_runaway(final, max_tokens=2048)
         if runaway is not None:
             final = runaway.capped_text
 
         def _rerun_forcing_tools(force: bool) -> tuple[str, int]:
-            remaining = iterations - sum(run.iterations for run in results)
-            if remaining <= 0:
-                return "No action was completed; the configured iteration budget is exhausted.", 0
-            forced = list(result.messages)
+            forced = list(initial)
             forced.append({
                 "role": "system",
                 "content": (
@@ -904,43 +820,25 @@ class HydraApp(App[int]):
                     "it yet. Do NOT claim success again without calling a tool."
                 ),
             })
-            r2 = run_observed_turn(agent_loop,
+            r2 = agent_loop.run(
                 user_text,
-                tools=turn_tools,
-                max_iterations=remaining,
-                max_tokens=profile.max_tokens,
-                temperature=profile.temperature,
+                tools=self.tools,
+                max_iterations=self._max_iterations,
+                max_tokens=2048,
+                temperature=0.0 if intake_kind != CONVO else 0.5,
                 timeout=self._timeout,
                 initial_messages=forced,
                 on_step=self._on_loop_step,
-                cancel_event=self._turn_cancel,
             )
-            results.append(r2)
             return (r2.final_response or "", r2.tool_calls_made)
 
-        if result.halted_reason not in {"cancelled", "provider_error"}:
-            outcome = guard_work_turn(
-                kind=intake_kind,
-                final_text=final,
-                tool_calls_made=result.tool_calls_made,
-                rerun=_rerun_forcing_tools,
-            )
-            final = outcome.text
-        result = finish_turn(results, self._chat_messages, final)
-        self._last_turn_result = result
-        self._chat_messages = list(result.messages)
-        self._last_memory_receipt, warnings = learn_turn(
-            user_text, result,
-            enabled=self.recall_builder is not None and profile.memory.enabled and profile.tools_enabled,
-            workspace_root=self.workspace_root, memory_root=self.memory_root,
-            provider=self._active_provider, model=active_model,
+        outcome = guard_work_turn(
+            kind=intake_kind,
+            final_text=final,
+            tool_calls_made=result.tool_calls_made,
+            rerun=_rerun_forcing_tools,
         )
-        self._memory_warnings.extend(warnings)
-        if self._on_trace is not None:
-            try:
-                self._on_trace(user_text, result, provider=self._active_provider, model=active_model)
-            except Exception as exc:
-                self._memory_warnings.append(f"Requested trace could not be saved: {exc}")
+        result.final_response = outcome.text
         return result
 
     # ── Loop step callback (runs in worker thread) ───────────────────────
@@ -948,9 +846,6 @@ class HydraApp(App[int]):
     def _on_loop_step(self, step: LoopStep) -> None:
         """AgentLoop step callback. Runs in worker thread — must marshal
         all UI writes to the main thread via call_from_thread."""
-        cancel_event = getattr(self, "_turn_cancel", None)
-        if cancel_event is not None and cancel_event.is_set():
-            return  # Keep the loop receipt without posting into a closing UI.
         if step.kind == "assistant":
             content = (step.content or "").strip()
             if content and not content.startswith('{"'):
@@ -990,8 +885,6 @@ class HydraApp(App[int]):
 
     def _handle_turn_done(self, final_response: str) -> None:
         """Runs on the UI event loop after AgentLoop returns."""
-        completed_user_text = self._active_user_text
-        self._active_user_text = None
         self._turn_in_flight = False
         self._stat_live = False
         # Dragon seam: thinking -> idle. Banner eyes re-open.
@@ -1005,24 +898,21 @@ class HydraApp(App[int]):
         # Only show turn-complete chrome when the agent actually worked
         # (i.e. fired at least one tool). Pure chat turns stay clean.
         if self._tools_used_this_turn > 0:
-            state = ("turn interrupted" if self._last_turn_result is not None and
-                     self._last_turn_result.halted_reason in {"cancelled", "provider_error"}
-                     else "turn complete")
             self._post_log(
-                f"  [bright_magenta]●[/bright_magenta] [dim]{state} in {elapsed:.1f}s "
+                f"  [bright_magenta]●[/bright_magenta] [dim]turn complete in {elapsed:.1f}s "
                 f"· {self._tools_used_this_turn} tool calls[/dim]"
             )
         if final:
             self._post_chat_line("hydra", final)
+            self._chat_messages.append({"role": "user", "content": self._last_user_text()})
+            self._chat_messages.append({"role": "assistant", "content": final})
             if self._on_persist is not None:
                 try:
-                    if completed_user_text is not None:
-                        self._on_persist(completed_user_text, final)
-                except Exception as exc:
-                    self._post_log(Text(f"Session history was not saved: {exc}", style="yellow").markup)
+                    self._on_persist(self._last_user_text(), final)
+                except Exception:
+                    pass
 
     def _handle_turn_error(self, detail: str) -> None:
-        self._active_user_text = None
         self._turn_in_flight = False
         self._stat_live = False
         # Dragon seam: thinking -> idle on error path too.
@@ -1228,16 +1118,7 @@ class HydraApp(App[int]):
             "[dim](picking up new code)[/dim]"
         )
         self._restart_requested = True
-        self._turn_cancel.set()
         self.exit(0)
-
-    def action_quit(self) -> None:
-        """Revoke pending execution before Ctrl+C closes the interface."""
-        self._turn_cancel.set()
-        self.exit(0)
-
-    def on_unmount(self) -> None:
-        self._turn_cancel.set()
 
     def maybe_reexec(self) -> None:
         """Re-exec the process if /restart was requested.

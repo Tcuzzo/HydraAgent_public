@@ -4,8 +4,6 @@ recursive-include gateways *.yaml *.yml *.json *.md
 recursive-include skills *.md *.yaml *.yml *.json
 recursive-include core *.yaml *.yml *.json *.md
 include README.md NOTICE.md PROVENANCE.md LICENSE.md .env.example
-include QUICKSTART.md constraints.txt scripts/install_local.py
-include docs/MODELS.md docs/TRAINING.md docs/MEMORY-LEARNING.md docs/PERSONAL-ORCHESTRATION.md
 # Only reviewed product contracts; no memory, local configuration or secrets.
 include .hydraAgent/tools/registry.yaml
 include .hydraAgent/tools/filesystem.yaml

@@ -6,9 +6,5 @@
   "license": "MIT",
   "credits": [
     "Cuzzo and BACKS AIOS"
-  ],
-  "library": [
-    "invariant-floor",
-    "sniper-testing"
   ]
 }
