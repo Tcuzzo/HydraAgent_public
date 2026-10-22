@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import json
 import sys
-import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,22 +67,6 @@ class Tool:
     parameters: dict
     invoke: Callable[..., Any]
 
-    def __post_init__(self):
-        from jsonschema import Draft202012Validator
-        from referencing import Registry
-        if not isinstance(self.parameters, dict):
-            raise ValueError("tool parameters must be an object schema")
-        # Resolve local schema references only. Tool metadata cannot authorize
-        # network fetches during argument validation.
-        validator = Draft202012Validator({"type": "object", **self.parameters}, registry=Registry())
-        invoke = self.invoke
-        def checked(**arguments):
-            error = next(validator.iter_errors(arguments), None)
-            if error is not None:
-                raise ValueError(f"{self.name} argument {error.json_path} violates its {error.validator} constraint")
-            return invoke(**arguments)
-        self.invoke = checked
-
     def to_openai_schema(self) -> dict:
         return {
             "type": "function",
@@ -118,7 +101,7 @@ class LoopResult:
     final_response: str
     iterations: int
     tool_calls_made: int
-    halted_reason: str  # "natural" | "max_iterations" | "cancelled" | provider failure
+    halted_reason: str  # "natural" | "max_iterations"
     messages: list[dict] = field(repr=False)
     
     # Worker evidence validation: track real tool activity vs heartbeat-only
@@ -135,8 +118,6 @@ class LoopResult:
     substitution: dict | None = None
     fallback_checkpoint_path: str | None = None
     operator_message: str | None = None
-    provider_error: dict | None = None
-    provider_calls: int = 0
 
     # Phantom tool call recovery: set True when the provider returned HTTP 400
     # "tool call validation failed" for a tool that wasn't in the request (e.g.
@@ -219,7 +200,6 @@ class AgentLoop:
         timeout: float = 120.0,
         initial_messages: list[dict] | None = None,
         on_step: Callable[[LoopStep], None] | None = None,
-        cancel_event: threading.Event | None = None,
         autonomous: bool = False,
         mission_id: str | None = None,
         repo_root: "str | Path | None" = None,
@@ -268,20 +248,10 @@ class AgentLoop:
 
         steps: list[LoopStep] = []
         tool_calls_made = 0
-        provider_calls = 0
         final_response = ""
         halted_reason = "max_iterations"
         last_iteration = 0
         phantom_tool_recovery = False
-
-        def cancellation_requested() -> bool:
-            return cancel_event is not None and cancel_event.is_set()
-
-        # Native clients own their tool subprocesses, so the same cancellation
-        # signal must cross the transport boundary as well as this dispatcher.
-        from hydra.codex_client import CodexClient
-        if isinstance(self.client, CodexClient):
-            self.client.set_cancellation_event(cancel_event)
 
         def record_step(step: LoopStep) -> None:
             steps.append(step)
@@ -289,8 +259,6 @@ class AgentLoop:
                 on_step(step)
 
         for iteration in range(1, max_iterations + 1):
-            if cancellation_requested():
-                break
             last_iteration = iteration
             
             # AUTO-SYNTHESIS TRIGGER: when genuinely near the cap (2 before the
@@ -333,7 +301,6 @@ class AgentLoop:
                     record_step(LoopStep(step=iteration, kind="system", role="system", content=synthesis_prompt["content"]))
             
             try:
-                provider_calls += 1
                 resp = self.client.chat(
                     messages,
                     model=self.model,
@@ -343,8 +310,6 @@ class AgentLoop:
                     tools=tool_schemas,
                 )
             except LlmError as exc:
-                if cancellation_requested():
-                    break
                 # Phantom / tool-call-emission failure recovery.
                 #
                 # Cloud providers return HTTP 400 with an error class
@@ -379,7 +344,6 @@ class AgentLoop:
                         ),
                     })
                     try:
-                        provider_calls += 1
                         resp = self.client.chat(
                             recovery_messages,
                             model=self.model,
@@ -414,18 +378,6 @@ class AgentLoop:
                     # autonomous missions; interactive chat re-raises so the
                     # operator still sees the failure (§13).
                     if not autonomous:
-                        # A caller may change providers after this exception.
-                        # Completed actions and their transcript must survive
-                        # that boundary so retries do not repeat them blindly.
-                        exc.partial_result = LoopResult(
-                            steps=list(steps), final_response="", iterations=iteration,
-                            tool_calls_made=tool_calls_made, halted_reason="provider_error",
-                            messages=[dict(message) for message in messages],
-                            has_real_tool_activity=any(step.kind == "tool_result" for step in steps),
-                            trace_id=run_trace_id,
-                            provider_error=exc.to_dict(),
-                            provider_calls=provider_calls,
-                        )
                         raise
                     from hydra.emergency_fallback import engage_life_support_fallback
 
@@ -460,11 +412,8 @@ class AgentLoop:
                         substitution=fb["substitution"],
                         fallback_checkpoint_path=fb["checkpoint_path"],
                         operator_message=fb["operator_message"],
-                        provider_calls=provider_calls,
                     )
 
-            if cancellation_requested():
-                break
             tool_calls = list(resp.tool_calls)
             if not tool_calls and tools and not phantom_tool_recovery:
                 bridged = extract_bridged_tool_call(resp.content)
@@ -510,8 +459,6 @@ class AgentLoop:
 
             # Dispatch each tool call from this assistant turn.
             for tc in tool_calls:
-                if cancellation_requested():
-                    break
                 tool_calls_made += 1
                 tool = tool_by_name.get(tc.name)
                 if tool is None:
@@ -542,8 +489,7 @@ class AgentLoop:
 
                 tool_started = time.time()
                 try:
-                    from hydra.proc import use_cancellation
-                    with use_trace_id(run_trace_id), use_cancellation(cancel_event):
+                    with use_trace_id(run_trace_id):
                         result = tool.invoke(**tc.arguments)
                     # Serialization is part of dispatch: nested unsupported
                     # values and circular containers must follow the same
@@ -576,11 +522,6 @@ class AgentLoop:
                     continue
 
                 tool_duration_ms = int((time.time() - tool_started) * 1000)
-                reported_error = None
-                if isinstance(result, dict) and result.get("ok") is False:
-                    reported_error = str(result.get("error") or
-                        (f"process exited with code {result['exit_code']}" if "exit_code" in result else
-                         "tool reported an unsuccessful result"))
                 record_step(
                     LoopStep(
                         step=iteration,
@@ -590,7 +531,6 @@ class AgentLoop:
                         tool_name=tc.name,
                         tool_call_id=tc.id,
                         tool_arguments=tc.arguments,
-                        tool_error=reported_error,
                         tool_duration_ms=tool_duration_ms,
                         trace_id=run_trace_id,
                     )
@@ -602,9 +542,6 @@ class AgentLoop:
                         "content": payload,
                     }
                 )
-
-        if cancellation_requested():
-            halted_reason = "cancelled"
 
         if halted_reason == "max_iterations":
             # final_response = last assistant content we saw, if any.
@@ -640,7 +577,6 @@ class AgentLoop:
                     )
                 )
                 try:
-                    provider_calls += 1
                     synthesis_resp = self.client.chat(
                         messages,
                         model=self.model,
@@ -686,13 +622,6 @@ class AgentLoop:
                     )
                 )
         
-        if cancellation_requested():
-            halted_reason = "cancelled"
-            final_response = "Stopped. Remaining tool proposals were cancelled."
-            messages.append({"role": "assistant", "content": final_response})
-            record_step(LoopStep(step=last_iteration, kind="system", role="system",
-                                 content="Operator cancelled this turn.", trace_id=run_trace_id))
-
         # Worker evidence validation: distinguish real tool activity from heartbeat-only
         has_real_tool_activity = any(
             s.kind == "tool_result" and not s.tool_error
@@ -707,7 +636,7 @@ class AgentLoop:
             fake_final_scrubbed = scrubbed != final_response
             final_response = scrubbed
 
-        if phantom_tool_recovery and halted_reason not in ("natural", "phantom_tool_recovery", "cancelled"):
+        if phantom_tool_recovery and halted_reason not in ("natural", "phantom_tool_recovery"):
             halted_reason = "phantom_tool_recovery"
 
         return LoopResult(
@@ -722,5 +651,4 @@ class AgentLoop:
             fake_final_scrubbed=fake_final_scrubbed,
             trace_id=run_trace_id,
             phantom_tool_recovery=phantom_tool_recovery,
-            provider_calls=provider_calls,
         )

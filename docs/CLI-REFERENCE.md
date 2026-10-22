@@ -42,9 +42,7 @@ Run any command as `hydra <cmd>` (installed) or `python -m hydra <cmd>`, and add
 `ask` is the workhorse. Key flags: `--profile {auto,cloud,local}` ·
 `--provider`/`--model` override · `--root <dir>` scope (default: current dir) ·
 `--approval-policy {ask,allow,deny}` (default `ask`) · `--with-context` /
-`--truth-context` add optional context packets · `--no-local-memory` disable
-automatic recall and execution learning · `--memory-root <dir>` select durable memory ·
-`--auto-route` pick the model by task type ·
+`--truth-context` inject memory · `--auto-route` pick the model by task type ·
 `--trace-out <file>` write a JSON trace · `--runtime-only` show the resolved
 model/route without calling the model.
 
@@ -53,9 +51,6 @@ model/route without calling the model.
 | Command | What it does |
 |---|---|
 | `setup` | Guided provider setup (local Ollama, a cloud key, or Sign in with ChatGPT). |
-| `init [--check]` | Initialize installed Needle and Kev with real local inference; `--check` only inspects dependencies. Use the complete installer in QUICKSTART first. |
-| `decide --backend kev --state <json> --questions <json>` | Obtain a typed local choice, score or probability. A prediction does not execute an action or grant permission. |
-| `train --backend <needle\|kev> --train <jsonl> --eval <jsonl> --out <new-dir>` | Train locally, evaluate the starting model and candidate on held-out inputs, and save provenance. `--plan-only` validates without training. See [training](TRAINING.md). |
 | `providers` | List configured providers. |
 | `models --provider <name>` | List a provider's models. |
 | `roles` | Show planner/doer/auditor model routing. |
@@ -68,22 +63,7 @@ model/route without calling the model.
 | `skills list \| show <name> \| route "<prompt>" \| search "<q>"` | Inspect & route the skill library. |
 | `skills audit \| doctrine \| materialize \| doctor` | Audit skill coverage, print the skill doctrine, materialize the bundle catalogs into concrete `SKILL.md` docs, and health-check the library. |
 | `remember "<lesson>" --source <path>` | Save a sourced lesson to durable memory. |
-| `local-memory [root] --workspace-root <dir> [--query "<q>"]` | Inspect the bounded current memory corpus and retrieval backend. |
-| `local-memory [root] --workspace-root <dir> --query "<q>" --graph` | Inspect observed task/tool/artifact relationships and one-hop links. |
-
-Normal `ask`, `chat` and team workers recall current, sourced memory and record
-actual tool outcomes. No-tool prose is not an execution lesson. Stored episodes
-remain explicitly unverified for general task quality. See
-[Memory and learning](MEMORY-LEARNING.md) for the retrieval algorithm and controls.
-
-**Bot teams**
-
-`team list` shows the packaged roles; `team show grok_bot` shows its essence,
-canon and verified BACKS library. `team plan "<goal>" --provider <name>
---model <model> --output <plan.json>` creates an editable task graph.
-Run it with `team run <plan.json> --root <workspace> --approval-policy ask`.
-Use the [orchestration guide](PERSONAL-ORCHESTRATION.md) to select an independent
-review route and declare concrete artifact acceptance conditions.
+| `local-memory [--query "<q>"]` | Show or query durable memory. |
 
 **Inspect and maintain your workspace**
 

@@ -18,12 +18,6 @@ _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _MAX_DIAGNOSTIC_BYTES = 1024 * 1024
 
 
-def model_cache_dir() -> Path:
-    """One cache for initialization, prediction, and local training."""
-    configured = os.environ.get("HYDRA_MODEL_CACHE")
-    return (Path(configured).expanduser() if configured else Path.home() / ".hydraAgent" / "models").resolve()
-
-
 def _communicate_bounded(process, serialized, output, diagnostics, timeout):
     deadline = time.monotonic() + timeout
     pending = serialized
@@ -69,9 +63,7 @@ def predict_local(request: dict, *, timeout: float) -> dict:
     if len(serialized.encode("utf-8")) > 32 * 1024 * 1024:
         raise LlmError("local model request exceeded its byte budget")
     env = {**os.environ, "NEEDLE_TELEMETRY": "0", "DO_NOT_TRACK": "1",
-           "HF_HUB_DISABLE_TELEMETRY": "1", "HF_HUB_DISABLE_PROGRESS_BARS": "1", "USE_TF": "0"}
-    env.setdefault("HYDRA_MODEL_CACHE", str(model_cache_dir()))
-    env.setdefault("HF_HOME", str(Path(env["HYDRA_MODEL_CACHE"]).expanduser().resolve() / "huggingface"))
+           "HF_HUB_DISABLE_TELEMETRY": "1", "USE_TF": "0"}
     # Use the package root so callers can run outside a checkout without losing
     # the worker import. No shell, and private state is carried only on stdin.
     try:
@@ -102,13 +94,6 @@ def predict_local(request: dict, *, timeout: float) -> dict:
 
 def _needle(request: dict) -> dict:
     import needle
-
-    # The SDK's engine cache is not controlled by HF_HOME/XDG_CACHE_HOME.
-    # Scope this override to the isolated worker, without repurposing HOME.
-    if os.environ.get("HYDRA_MODEL_CACHE"):
-        from needle.agent import fetch
-        cache = Path(os.environ["HYDRA_MODEL_CACHE"]).expanduser().resolve()
-        fetch.cache_dir = lambda generation=3: str(cache / "needle" / f"v{generation}" / fetch.engine_version(generation))
 
     model = request["model"]
     schemas = [tool.get("function", tool) for tool in request["tools"]]
@@ -164,46 +149,11 @@ def _laya(request: dict) -> dict:
     return agent.predict(request["state"], request["questions"])
 
 
-def _kev(request: dict) -> dict:
-    """Thin adapter over Jared Palmer's Apache-2.0 Kev public inference API.
-
-    Source: https://github.com/jaredpalmer/kev. Use the checkpoint's fitted
-    temperature and strict context admission; never execute a predicted action.
-    """
-    import torch
-    from kev.api import SystemOneRequest, to_answers, to_record
-    from kev.checkpoint import Checkpoint, LoadOptions
-    from kev.device import select
-    from kev.model import admit
-
-    request_model = request["model"]
-    parsed = SystemOneRequest(state=request["state"], model=request_model, questions=request["questions"])
-    device = select(request.get("device") or "cpu")
-    checkpoint = Checkpoint(request_model)
-    # CPU uses fp32. Explicit CUDA/MPS supports the upstream auto backend;
-    # an unavailable requested device raises instead of silently substituting.
-    options = LoadOptions(backend="auto", dtype=torch.float32 if device == "cpu" else torch.bfloat16)
-    tokenizer, model = checkpoint.load(device, options)
-    record, metadata = to_record(parsed)
-    encoded = admit(model, tokenizer, record, truncate=False)
-    started = time.monotonic()
-    probabilities = [row.tolist() for row in model.probs(encoded)]
-    return {"backend": "kev", "model": request_model,
-            "answers": to_answers(probabilities, metadata),
-            "usage": {"input_tokens": len(encoded["ids"]), "output_tokens": 0,
-                      "state_tokens": encoded["state_tokens"], "truncated": False},
-            "latency_ms": round((time.monotonic() - started) * 1000, 2),
-            "executed_actions": False}
-
-
 def main() -> int:
     try:
         request = json.load(sys.stdin)
         from hydra.local_resources import cpu_budget
-        # Needle's native engine manages its own parallel work. Restricting it
-        # to one implicit CPU caused measured threadpool thrashing (75.9s vs
-        # 0.5s for the same warm request). Explicit operator budgets still win.
-        resource_receipt = cpu_budget(default_fraction=1.0 if request.get("backend") == "needle" else 0.15)
+        resource_receipt = cpu_budget()
         # Third-party progress output must not corrupt the JSON protocol.
         with contextlib.redirect_stdout(sys.stderr):
             backend = request["backend"]
@@ -211,8 +161,6 @@ def main() -> int:
                 result = _needle(request)
             elif backend == "laya":
                 result = _laya(request)
-            elif backend == "kev":
-                result = _kev(request)
             elif backend == "embedding":
                 from hydra.embeddings import embed
                 texts = request['texts']
@@ -222,10 +170,10 @@ def main() -> int:
             else:
                 raise ValueError(f"unknown local model backend: {backend}")
         result['resource_budget'] = resource_receipt
-        print(json.dumps(result, ensure_ascii=False, allow_nan=False))
+        print(json.dumps(result, ensure_ascii=False))
         return 0
     except ImportError as exc:
-        print(json.dumps({"error": f"Optional model dependency missing: {exc}. Use Hydra's intelligence installer for Needle and official Kev; hydraagent[laya] supplies Laya."}))
+        print(json.dumps({"error": f"Optional model dependency missing: {exc}. Install hydraagent[needle] or hydraagent[laya]."}))
     except Exception as exc:
         print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}))
     return 1

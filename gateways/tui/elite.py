@@ -95,7 +95,6 @@ except ImportError:
 from dataclasses import dataclass  # noqa: E402
 from hydra.inter_agent import redact_value  # noqa: E402
 from hydra.loop import AgentLoop, LoopStep, LoopResult, Tool  # noqa: E402
-from hydra.turn_memory import finish_turn, learn_turn, recall_turn, run_observed_turn  # noqa: E402
 from hydra.cli.tool_binding import bind_tools  # noqa: E402
 from hydra.operator_auth import OperatorAuth, OperatorAuthError, render_qr_ascii  # noqa: E402
 from hydra.skill_spine import build_agent_system_prompt, list_skill_records  # noqa: E402
@@ -430,22 +429,14 @@ class EliteTUI:
         self._max_iterations = max_iterations
         self._timeout = timeout
         self.approval_policy = approval_policy
-        from hydra.codex_client import configure_native_scope
-        configure_native_scope(self.client, root=self.root, approval_policy=approval_policy)
         self.memory_root = Path(memory_root).expanduser().resolve() if memory_root else None
         self.memory_workspace_root = (
             Path(memory_workspace_root).expanduser().resolve()
             if memory_workspace_root
-            else Path(root).expanduser().resolve()
+            else None
         )
         self.recall_builder = recall_builder
         self.local_memory_chars = local_memory_chars
-        self._memory_warnings: list[str] = []
-        self._last_memory_recall: dict = {}
-        self._last_memory_receipt: dict = {}
-        self._last_turn_result: LoopResult | None = None
-        self._last_turn_provider: str | None = None
-        self._last_turn_model: str | None = None
         self.runtime = dict(runtime or {})
         self.trace_out_path = Path(trace_out_path).expanduser().resolve() if trace_out_path else None
         self._trace_turn_index = 0
@@ -497,8 +488,8 @@ class EliteTUI:
                 if session_exists(session_id):
                     try:
                         rotate_session(session_id, "TUI restarted — new session")
-                    except Exception as exc:
-                        self.console.print(Text(f"Session history was not saved: {exc}", style="yellow"))
+                    except Exception:
+                        pass
                 try:
                     create_session(session_id, "HydraAgent elite TUI session")
                 except Exception:
@@ -563,32 +554,18 @@ class EliteTUI:
         def _persist(user: str, reply: str) -> None:
             if not self.session_id:
                 return
-            # The live app reports persistence failures while keeping the
-            # completed answer visible. Do not erase that signal at this seam.
-            add_message(self.session_id, "user", user)
-            if reply.strip():
-                add_message(self.session_id, "assistant", reply)
-            compact_session(self.session_id)
+            try:
+                add_message(self.session_id, "user", user)
+                if reply.strip():
+                    add_message(self.session_id, "assistant", reply)
+                compact_session(self.session_id)
+            except Exception:
+                pass
 
         def _route_command(text: str) -> bool:
             if self._command_handler is not None:
                 try:
-                    if (text.startswith("/root ") or text in {"/local", "/cloud"}) and app._turn_in_flight:
-                        app._post_log("[yellow]Wait for the active turn before changing workspace or provider.[/yellow]")
-                        return True
-                    # Textual owns the current transcript. The command handler
-                    # may append scope/runtime instructions to that history.
-                    self._chat_messages = list(app._chat_messages)
-                    handled = bool(self._command_handler(self, text))
-                    if handled:
-                        app._chat_messages = list(self._chat_messages)
-                        app.tools = self.tools
-                        if app.client is not self.client or app.model != self.model or app.cfg is not self.cfg:
-                            app.reconfigure_runtime(client=self.client, model=self.model, cfg=self.cfg)
-                        if app.workspace_root != self.root:
-                            app.rebind_workspace(self.root, self.memory_workspace_root)
-                            self._chat_messages = list(app._chat_messages)
-                    return handled
+                    return bool(self._command_handler(self, text))
                 except Exception:
                     return False
             return False
@@ -600,14 +577,8 @@ class EliteTUI:
             system_prompt=self.system_prompt,
             tools=self.tools,
             workspace_root=self.root,
-            memory_root=self.memory_root,
-            memory_workspace_root=self.memory_workspace_root,
-            recall_builder=self.recall_builder,
-            local_memory_chars=self.local_memory_chars,
             on_persist=_persist,
-            on_trace=self._write_trace_turn,
             on_command=_route_command,
-            approval_policy=self.approval_policy,
             max_iterations=self._max_iterations,
             timeout=self._timeout,
             initial_request=self._initial_request,
@@ -717,8 +688,8 @@ class EliteTUI:
                         if reply.strip():
                             add_message(self.session_id, "assistant", reply)
                         compact_session(self.session_id)
-                    except Exception as exc:
-                        self.console.print(Text(f"Session history was not saved: {exc}", style="yellow"))
+                    except Exception:
+                        pass
 
                 # Multi-model usage line
                 if len(self._models_used_this_turn) > 1:
@@ -840,8 +811,6 @@ class EliteTUI:
             from hydra.providers import make_client
 
             client, _cfg = make_client(provider)
-            from hydra.codex_client import configure_native_scope
-            configure_native_scope(client, root=self.root, approval_policy=self.approval_policy)
             work_loop = AgentLoop(client, model=model, system_prompt=self.system_prompt)
         except Exception:
             # Executor unavailable — keep the chat loop; the guard still applies.
@@ -876,13 +845,7 @@ class EliteTUI:
 
     # ── Chat draft (side-effect-free) ─────────────────────────────────────────
 
-    def _chat_draft(
-        self,
-        user_input: str,
-        initial_messages: list[dict],
-        *,
-        on_result: Callable[[LoopResult], None] | None = None,
-    ) -> str:
+    def _chat_draft(self, user_input: str, initial_messages: list[dict]) -> str:
         """Run the convo loop and return the text reply. Side-effect-free (tools=[]).
 
         Injects the CONVO_NO_TOOLS_GUARD. Used as the speculative draft in
@@ -906,10 +869,10 @@ class EliteTUI:
                 "Do not route to any skill. Just talk."
             ),
         })
-        result = run_observed_turn(self._loop,
+        result = self._loop.run(
             user_input,
             tools=[],
-            max_iterations=min(self._max_iterations, profile.max_iterations),
+            max_iterations=profile.max_iterations,
             max_tokens=profile.max_tokens,
             temperature=profile.temperature,
             timeout=min(self._timeout, 30.0),
@@ -923,8 +886,6 @@ class EliteTUI:
             content = m.get("content")
             if isinstance(content, str):
                 self._cumulative_chars += len(content)
-        if on_result is not None:
-            on_result(result)
         return result.final_response or ""
 
     # ── Work turn runner (steering/collab) ────────────────────────────────────
@@ -942,7 +903,6 @@ class EliteTUI:
         detect_runaway + guard_work_turn. Returns the final (non-confabulated) text.
         """
         profile = load_turn_profile(intake_kind)
-        iterations = min(self._max_iterations, profile.max_iterations)
         active_loop, active_model = self._loop_for_kind(intake_kind)
         if active_model != self.model and active_model not in self._models_used_this_turn:
             self._models_used_this_turn.append(active_model)
@@ -957,10 +917,10 @@ class EliteTUI:
             ) as live:
                 self._live_status = live
                 try:
-                    result: LoopResult = run_observed_turn(active_loop,
+                    result: LoopResult = active_loop.run(
                         user_input,
                         tools=self.tools if profile.tools_enabled else [],
-                        max_iterations=iterations,
+                        max_iterations=profile.max_iterations,
                         max_tokens=profile.max_tokens,
                         temperature=profile.temperature,
                         timeout=self._timeout,
@@ -970,10 +930,10 @@ class EliteTUI:
                 finally:
                     self._live_status = None
         else:
-            result = run_observed_turn(active_loop,
+            result = active_loop.run(
                 user_input,
                 tools=self.tools if profile.tools_enabled else [],
-                max_iterations=iterations,
+                max_iterations=profile.max_iterations,
                 max_tokens=profile.max_tokens,
                 temperature=profile.temperature,
                 timeout=self._timeout,
@@ -981,7 +941,13 @@ class EliteTUI:
                 on_step=self._on_step,
             )
 
-        results = [result]
+        self._cumulative_iterations += result.iterations
+        self._cumulative_tool_calls += result.tool_calls_made
+        for m in result.messages:
+            content = m.get("content")
+            if isinstance(content, str):
+                self._cumulative_chars += len(content)
+
         final = result.final_response or ""
 
         # Cap runaway/degenerate output, then block confabulation.
@@ -991,10 +957,7 @@ class EliteTUI:
 
         def _rerun_forcing_tools(force: bool) -> tuple[str, int]:
             """Force one re-prompt: CALL the tool or admit it wasn't done."""
-            remaining = iterations - sum(run.iterations for run in results)
-            if remaining <= 0:
-                return "No action was completed; the configured iteration budget is exhausted.", 0
-            forced = list(result.messages)
+            forced = list(initial_messages)
             forced.append({
                 "role": "system",
                 "content": (
@@ -1005,48 +968,27 @@ class EliteTUI:
                     "it yet. Do NOT claim success again without calling a tool."
                 ),
             })
-            r2 = run_observed_turn(active_loop,
+            r2 = active_loop.run(
                 user_input,
                 tools=self.tools if profile.tools_enabled else [],
-                max_iterations=remaining,
+                max_iterations=profile.max_iterations,
                 max_tokens=profile.max_tokens,
                 temperature=profile.temperature,
                 timeout=self._timeout,
                 initial_messages=forced,
                 on_step=self._on_step,
             )
-            results.append(r2)
+            self._cumulative_iterations += r2.iterations
+            self._cumulative_tool_calls += r2.tool_calls_made
             return (r2.final_response or "", r2.tool_calls_made)
 
-        if result.halted_reason not in {"cancelled", "provider_error"}:
-            outcome = guard_work_turn(
-                kind=intake_kind,
-                final_text=final,
-                tool_calls_made=result.tool_calls_made,
-                rerun=_rerun_forcing_tools,
-            )
-            final = outcome.text
-        result = finish_turn(results, self._chat_messages, final)
-        self._last_turn_result = result
-        self._last_turn_provider = next(
-            (pair[0] for pair, loop in self._work_loops.items() if loop is active_loop),
-            self.provider_name,
+        outcome = guard_work_turn(
+            kind=intake_kind,
+            final_text=final,
+            tool_calls_made=result.tool_calls_made,
+            rerun=_rerun_forcing_tools,
         )
-        self._last_turn_model = active_model
-        self._cumulative_iterations += result.iterations
-        self._cumulative_tool_calls += result.tool_calls_made
-        self._cumulative_chars += sum(len(m.get("content") or "") for m in result.messages
-                                      if isinstance(m.get("content"), str))
-        self._last_memory_receipt, warnings = learn_turn(
-            user_input, result,
-            enabled=self.recall_builder is not None and profile.memory.enabled and profile.tools_enabled,
-            workspace_root=self.root, memory_root=self.memory_root,
-            provider=self._last_turn_provider, model=active_model,
-        )
-        self._memory_warnings.extend(warnings)
-        for warning in warnings:
-            self.console.print(Text(warning, style="yellow"))
-        return result.final_response
+        return outcome.text
 
     def _stream_turn(self, user_input: str, *, source: str = "operator") -> str:
         """Run one AgentLoop turn, streaming output inline. Returns final reply.
@@ -1066,9 +1008,6 @@ class EliteTUI:
         self._models_used_this_turn = [self.model]
         self._turn_had_tools = False
         self._tool_start_times = {}
-        self._last_turn_result = None
-        self._last_turn_provider = None
-        self._last_turn_model = None
         self._screen_transcript.append(f"operator: {user_input}")
         self._turn_start_time = time.monotonic()
         self._current_status = "thinking"
@@ -1081,17 +1020,24 @@ class EliteTUI:
 
         initial_messages = list(self._chat_messages)
 
-        # Passive, query-aware recall is bounded independently from tool access.
-        # The block belongs only to this turn, never the retained conversation.
-        context, self._last_memory_recall, self._memory_warnings = recall_turn(
-            user_input, profile=profile, builder=self.recall_builder,
-            memory_root=self.memory_root, workspace_root=self.memory_workspace_root,
-            max_chars=self.local_memory_chars,
-        )
-        if context:
-            initial_messages.append({"role": "system", "content": context})
-        for warning in self._memory_warnings:
-            self.console.print(Text(warning, style="yellow"))
+        # Per-turn, query-aware memory recall.  Gated by profile.memory.enabled
+        # so convo turns never call recall_builder (execute-bias fix).
+        # The ranked block is appended to this LOCAL copy only (never
+        # self._chat_messages) so each turn recalls by its OWN query.
+        if profile.memory.enabled and self.recall_builder is not None and self.memory_root is not None:
+            try:
+                recall = self.recall_builder(
+                    user_input,
+                    root=self.memory_root,
+                    workspace_root=self.memory_workspace_root,
+                )
+                if getattr(recall, "status", None) == "OK" and getattr(recall, "context", ""):
+                    initial_messages.append(
+                        {"role": "system", "content": recall.context}
+                    )
+            except Exception:
+                # Recall is best-effort; chat must never break on a memory miss.
+                pass
 
         self.console.print()
 
@@ -1113,25 +1059,14 @@ class EliteTUI:
             def _intent_fn(msg: str):
                 return classify_intent(msg, client=_intent_client)
 
-            # The speculative worker may finish after the intent decision. Its
-            # result belongs to this invocation and becomes accepted evidence
-            # only when the selected route is chat.
-            draft_results: list[LoopResult] = []
-
             def _chat_draft_fn(msg: str) -> str:
-                return self._chat_draft(msg, initial_messages, on_result=draft_results.append)
+                return self._chat_draft(msg, initial_messages)
 
             route = route_turn(user_input, intent_fn=_intent_fn, chat_draft_fn=_chat_draft_fn)
 
             if route.intent == "chat":
                 # Chat path: the draft is already ready (zero added latency).
                 final = route.chat_draft or ""
-                if draft_results:
-                    self._last_turn_result = finish_turn(
-                        [draft_results[-1]], self._chat_messages, final
-                    )
-                    self._last_turn_provider = self.provider_name
-                    self._last_turn_model = self.model
             else:
                 # Model says task — discard the draft, run the full work executor.
                 # Use "steering" as the kind for operator-directed work turns.
@@ -1161,22 +1096,13 @@ class EliteTUI:
             print(final)
 
         # Update chat history
-        if self._last_turn_result is not None:
-            self._chat_messages = list(self._last_turn_result.messages)
-        else:
-            self._chat_messages.append({"role": "user", "content": user_input})
-            self._chat_messages.append({"role": "assistant", "content": final})
+        self._chat_messages.append({"role": "user", "content": user_input})
+        self._chat_messages.append({"role": "assistant", "content": final})
 
         if self._parallel_agents_this_turn:
             self._print_parallel_summary(None)
 
-        if self._last_turn_result is not None:
-            self._write_trace_turn(
-                user_input, self._last_turn_result,
-                provider=self._last_turn_provider, model=self._last_turn_model,
-            )
-        else:
-            self._write_trace_turn_text(user_input, final)
+        self._write_trace_turn_text(user_input, final)
         return final
 
     def _render_status(self):
@@ -1256,8 +1182,6 @@ class EliteTUI:
         self.client = client
         self.cfg = cfg
         self.model = model
-        from hydra.codex_client import configure_native_scope
-        configure_native_scope(client, root=self.root, approval_policy=self.approval_policy)
         self.model_short = _short_model(model)
         self.provider_name = getattr(cfg, "name", None) or self.provider_name
         if runtime is not None:
@@ -1269,7 +1193,7 @@ class EliteTUI:
             system_prompt=self.system_prompt,
         )
 
-    def _write_trace_turn(self, user_input: str, result: LoopResult, *, provider=None, model=None) -> None:
+    def _write_trace_turn(self, user_input: str, result: LoopResult) -> None:
         if self.trace_out_path is None:
             return
         self.trace_out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1290,11 +1214,10 @@ class EliteTUI:
                 "schema": "hydra.chat_trace_turn.v1",
                 "turn_index": self._trace_turn_index,
                 "prompt": user_input,
-                "provider": provider or self.provider_name,
-                "model": model or self.model,
+                "provider": self.provider_name,
+                "model": self.model,
                 "trace_id": result.trace_id,
                 "iterations": result.iterations,
-                "provider_calls": result.provider_calls,
                 "tool_calls_made": result.tool_calls_made,
                 "halted_reason": result.halted_reason,
                 "final_response": result.final_response,
@@ -1782,8 +1705,8 @@ class EliteTUI:
     def _write_trace_turn_text(self, user_input: str, final: str) -> None:
         """Write a simplified trace turn entry when we don't have a LoopResult.
 
-        Missing evidence stays unknown; session totals cannot describe the
-        current turn. Normal chat and work paths use the detailed serializer.
+        Used by the refactored _stream_turn which routes via intent_router and
+        doesn't expose a single LoopResult object at the top level.
         """
         if self.trace_out_path is None:
             return
@@ -1798,8 +1721,8 @@ class EliteTUI:
                 "provider": self.provider_name,
                 "model": self.model,
                 "trace_id": None,
-                "iterations": None,
-                "tool_calls_made": None,
+                "iterations": self._cumulative_iterations,
+                "tool_calls_made": self._cumulative_tool_calls,
                 "halted_reason": None,
                 "final_response": final,
                 "tool_steps": [],

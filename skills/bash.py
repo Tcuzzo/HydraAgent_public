@@ -28,7 +28,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from hydra.proc import ProcessCancelled, popen_portable, run_captured, _shell_argv
+from hydra.proc import kill_tree, popen_portable, _shell_argv
 from skills.fs_read import SkillError
 
 DEFAULT_TIMEOUT_S = 30.0
@@ -115,27 +115,30 @@ def run(
 
     start = time.monotonic()
     timed_out = False
-    # Shared capture owns output limits, cancellation, and process-group cleanup
-    # on POSIX and Windows. Keep the spawn seam available to runtime callers.
+    # Route through hydra.proc.popen_portable + kill_tree so this code path
+    # works on POSIX (start_new_session + os.killpg) AND Windows
+    # (CREATE_NEW_PROCESS_GROUP + taskkill) without any POSIX-only calls here.
+    # shell=True is replaced by an explicit argv built by hydra.proc._shell_argv
+    # so we can use bash -lc on POSIX (same effective behaviour as before) and
+    # cmd.exe /c on Windows.
     argv = _shell_argv(command)
-    truncated = False
-    cancelled = False
+    proc = popen_portable(
+        argv,
+        cwd=str(root_resolved),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     try:
-        proc = run_captured(argv, cwd=root_resolved, timeout=timeout,
-                            max_output_bytes=max_output_bytes, text=False,
-                            popen_factory=popen_portable)
-        stdout_b, stderr_b = proc.stdout, proc.stderr
-        truncated = proc.stdout_truncated or proc.stderr_truncated
+        stdout_b, stderr_b = proc.communicate(timeout=timeout)
         exit_code = proc.returncode
-    except subprocess.TimeoutExpired as exc:
-        stdout_b, stderr_b = exc.output or b"", exc.stderr or b""
-        truncated = bool(getattr(exc, "stdout_truncated", False) or getattr(exc, "stderr_truncated", False))
+    except subprocess.TimeoutExpired:
+        kill_tree(proc)
+        try:
+            stdout_b, stderr_b = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            stdout_b, stderr_b = b"", b""
         exit_code = -1
         timed_out = True
-    except ProcessCancelled:
-        stdout_b, stderr_b = b"", b"Operator cancelled the running command."
-        exit_code = -1
-        cancelled = True
 
     duration_s = time.monotonic() - start
     stdout, t1 = _truncate(stdout_b, max_output_bytes)
@@ -148,8 +151,7 @@ def run(
         "stderr": stderr,
         "duration_s": duration_s,
         "timed_out": timed_out,
-        "truncated": truncated or t1 or t2,
-        "cancelled": cancelled,
+        "truncated": t1 or t2,
         "command": command,
         "cwd": str(root_resolved),
     }
