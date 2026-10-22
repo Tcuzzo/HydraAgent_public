@@ -8,7 +8,6 @@ from typing import Any
 
 from hydra.lessons import LESSON_RELATIVE_PATH
 from hydra.wiki_memory import WIKI_ROOT
-from hydra.local_memory import DEFAULT_MEMORY_ROOT, _source_in_root
 
 
 INDEX_SCHEMA = "hydra.memory_kernel.index.v1"
@@ -23,15 +22,12 @@ TOKEN_RE = re.compile(r"[A-Za-z0-9_§\.\-]{2,}")
 
 def build_memory_index(*, repo_root: Path, memory_root: Path | None = None) -> dict[str, Any]:
     repo = Path(repo_root).expanduser().resolve()
-    memory = Path(memory_root).expanduser().resolve() if memory_root else DEFAULT_MEMORY_ROOT
+    memory = Path(memory_root).expanduser().resolve() if memory_root else Path.home() / ".hydra-memory"
     records: list[dict[str, Any]] = []
     records.extend(_lesson_records(memory, repo))
     records.extend(_wiki_records(repo))
     records.extend(_mission_evidence_records(repo))
     records.extend(_source_receipt_records(repo))
-    from hydra.execution_learning import execution_chunks
-    records.extend(_record("execution", "Observed task execution", chunk, Path(path), repo)
-                   for path, chunk in execution_chunks(memory, repo))
     records.sort(key=lambda row: (row["kind"], row["title"], row["provenance"]["path"]))
     return {
         "schema": INDEX_SCHEMA,
@@ -115,11 +111,7 @@ def assemble_truth_context(
         "Use only as prior memory; verify live state before claiming current facts.",
         "",
     ]
-    budget_chars = max(0, int(budget_chars))
-    header = "\n".join(lines)
-    remaining = budget_chars - len(header)
-    if remaining <= 0:
-        lines = []
+    remaining = max(1000, budget_chars) - sum(len(line) + 1 for line in lines)
     for score, record in scored:
         block = (
             f"- [{record['kind']}] {record['title']}\n"
@@ -127,7 +119,7 @@ def assemble_truth_context(
             f"  source: {record['provenance']['path']}\n"
         )
         if len(block) > remaining:
-            continue
+            break
         lines.append(block.rstrip())
         selected.append({**record, "score": score})
         remaining -= len(block)
@@ -136,7 +128,7 @@ def assemble_truth_context(
         "query": query,
         "tokens": tokens,
         "records": selected,
-        "text": ("\n".join(lines).strip() + "\n")[:budget_chars] if selected else "",
+        "text": "\n".join(lines).strip() + "\n",
         "proof": [
             f"records_indexed={index['records_count']}",
             f"records_selected={len(selected)}",
@@ -184,7 +176,7 @@ def assemble_memory_briefing(
 
 def _lesson_records(memory_root: Path, repo_root: Path) -> list[dict[str, Any]]:
     path = memory_root / LESSON_RELATIVE_PATH
-    if not _source_in_root(path, memory_root) or not path.is_file():
+    if not path.is_file():
         return []
     text = _read_text(path)
     entries = re.split(r"\n(?=## 20\d{2}-)", text)
@@ -197,11 +189,11 @@ def _lesson_records(memory_root: Path, repo_root: Path) -> list[dict[str, Any]]:
 
 def _wiki_records(repo_root: Path) -> list[dict[str, Any]]:
     root = repo_root / WIKI_ROOT
-    if not _source_in_root(root, repo_root) or not root.is_dir():
+    if not root.is_dir():
         return []
     records = []
     for path in sorted(root.rglob("*.md")):
-        if path.name == "index.md" or not _source_in_root(path, repo_root):
+        if path.name == "index.md":
             continue
         text = _read_text(path)
         title = _first_heading(text) or path.stem
@@ -211,12 +203,10 @@ def _wiki_records(repo_root: Path) -> list[dict[str, Any]]:
 
 def _mission_evidence_records(repo_root: Path) -> list[dict[str, Any]]:
     root = repo_root / "evidence" / "missions"
-    if not _source_in_root(root, repo_root) or not root.is_dir():
+    if not root.is_dir():
         return []
     records = []
     for path in sorted(root.glob("*/mission_loop.json")):
-        if not _source_in_root(path, repo_root):
-            continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -230,12 +220,10 @@ def _mission_evidence_records(repo_root: Path) -> list[dict[str, Any]]:
 
 def _source_receipt_records(repo_root: Path) -> list[dict[str, Any]]:
     root = repo_root / "evidence" / "source-reengineering"
-    if not _source_in_root(root, repo_root) or not root.is_dir():
+    if not root.is_dir():
         return []
     records = []
     for path in sorted(root.glob("*/receipts.jsonl")):
-        if not _source_in_root(path, repo_root):
-            continue
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             if not line.strip():
                 continue

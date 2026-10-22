@@ -24,11 +24,9 @@ Maturity: SCAFFOLDED. Promoted by §10.30.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from hydra.atomic_write import atomic_write_bytes
-from hydra.edit_checkpoints import get_default_store
 from skills.fs_read import SkillError
 
 DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024
@@ -83,19 +81,14 @@ def run(
     if not target_resolved.is_file():
         raise SkillError(f"not a regular file: {target_resolved}")
 
-    # The recovery ceiling also bounds source processing. Check size before
-    # allocation, then bound the read in case the source grows concurrently.
-    # Binary input preserves exact CR/LF bytes for matching and undo.
-    store = get_default_store(root_resolved)
-    with target_resolved.open("rb") as source:
-        source_size = os.fstat(source.fileno()).st_size
-        if source_size > store.max_bytes:
-            raise SkillError("existing file exceeds the recoverable checkpoint limit")
-        pre_image = source.read(source_size + 1)
-    if len(pre_image) != source_size:
-        raise SkillError("source changed while reading; retry the edit")
-    text = pre_image.decode("utf-8")
-    bytes_before = len(pre_image)
+    # Read with newline="" so CR/LF is preserved untranslated — the byte count
+    # (bytes_before) and the old_string occurrence match reflect the REAL file
+    # bytes, not a universal-newline-mangled view. ``Path.read_text`` does not
+    # accept ``newline`` (it raises TypeError on Python 3.12), so read via
+    # ``open`` which does.
+    with open(target_resolved, "r", encoding="utf-8", newline="") as f:
+        text = f.read()
+    bytes_before = len(text.encode("utf-8"))
 
     occurrences = text.count(old_string)
     if occurrences == 0:
@@ -109,13 +102,9 @@ def run(
             f"refusing ambiguous edit. Pass count='all' or narrow the match."
         )
 
-    replacements = occurrences if replace_all else min(count, occurrences)
-    expected_bytes = bytes_before + replacements * (len(new_string.encode("utf-8")) - len(old_string.encode("utf-8")))
-    if expected_bytes > max_bytes:
-        raise SkillError(f"resulting file {expected_bytes} bytes exceeds max_bytes {max_bytes}")
-
     if replace_all:
         new_text = text.replace(old_string, new_string)
+        replacements = occurrences
     else:
         # str.replace(old, new, count) makes AT MOST `count` replacements, but
         # when the file has fewer occurrences than `count` it makes only the
@@ -124,6 +113,7 @@ def run(
         # the ACTUAL number made (min), not the requested count — so the user
         # and the trace see the truth instead of an over-report.
         new_text = text.replace(old_string, new_string, count)
+        replacements = min(count, occurrences)
 
     payload = new_text.encode("utf-8")
     if len(payload) > max_bytes:
@@ -132,7 +122,6 @@ def run(
         )
 
     try:
-        store.record(target_path=target_resolved, op="modify", pre_image=pre_image)
         atomic_write_bytes(target_resolved, payload)
     except OSError as e:
         raise SkillError(f"write failed for {target_resolved}: {e}") from e

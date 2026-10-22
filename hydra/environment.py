@@ -5,7 +5,6 @@ import datetime as _dt
 import difflib
 import ipaddress
 import json
-import math
 import shutil
 import socket
 import subprocess
@@ -15,7 +14,6 @@ from urllib.parse import urlparse
 import urllib.request
 
 from hydra.http_policy import open_checked
-from hydra.proc import run_captured
 
 
 SESSION_SCHEMA = "hydra.environment.session.v1"
@@ -41,8 +39,6 @@ def create_session(
     if not title.strip():
         raise EnvironmentError("title must be non-empty")
     root = Path(env_root).expanduser().resolve()
-    if root == source:
-        raise EnvironmentError("environment storage must be a separate directory from the source repo")
     session_id = _session_id(title)
     session_path = root / session_id
     suffix = 1
@@ -51,22 +47,12 @@ def create_session(
         session_path = root / f"{session_id}-{suffix}"
     workspace = session_path / "workspace"
     session_path.mkdir(parents=True)
-    ignore_patterns = shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "node_modules")
-    def ignore_snapshot_entries(directory, names):
-        ignored = set(ignore_patterns(directory, names))
-        for name in names:
-            path = Path(directory) / name
-            # The default storage lives under source/evidence. Exclude the
-            # entire storage directory, including earlier session snapshots.
-            if (path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction())
-                    or path.resolve() == root):
-                ignored.add(name)
-        return ignored
-    try:
-        shutil.copytree(source, workspace, ignore=ignore_snapshot_entries, symlinks=False)
-    except BaseException:
-        shutil.rmtree(session_path)
-        raise
+    shutil.copytree(
+        source,
+        workspace,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "node_modules"),
+        symlinks=False,
+    )
     session = {
         "schema": SESSION_SCHEMA,
         "session_id": session_path.name,
@@ -93,32 +79,24 @@ def run_session_command(
     workspace = Path(session["workspace"])
     if not isinstance(command, list) or not command or not all(isinstance(part, str) for part in command):
         raise EnvironmentError("command must be a non-empty list of strings")
-    if (isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float))
-            or not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
-        raise EnvironmentError("timeout_seconds must be a finite positive number")
     started = _now()
-    timed_out = False
-    stdout_truncated = stderr_truncated = False
-    try:
-        proc = run_captured(command, cwd=workspace, timeout=timeout_seconds)
-        stdout, stderr, returncode = proc.stdout, proc.stderr, proc.returncode
-        stdout_truncated, stderr_truncated = proc.stdout_truncated, proc.stderr_truncated
-    except subprocess.TimeoutExpired as exc:
-        timed_out = True
-        stdout, stderr, returncode = exc.output or "", exc.stderr or "", -1
-        stdout_truncated = bool(getattr(exc, "stdout_truncated", False))
-        stderr_truncated = bool(getattr(exc, "stderr_truncated", False))
+    proc = subprocess.run(
+        command,
+        cwd=workspace,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+    )
     packet = {
         "schema": COMMAND_SCHEMA,
         "session_id": session_id,
         "command": command,
-        "status": "timed_out" if timed_out else "ok" if returncode == 0 else "failed",
-        "returncode": returncode,
-        "stdout": stdout,
-        "stderr": stderr,
-        "timed_out": timed_out,
-        "stdout_truncated": stdout_truncated,
-        "stderr_truncated": stderr_truncated,
+        "status": "ok" if proc.returncode == 0 else "failed",
+        "returncode": proc.returncode,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
         "timeout_seconds": timeout_seconds,
         "started_at": started,
         "finished_at": _now(),
@@ -193,15 +171,13 @@ def _is_ip_allowed(host: str) -> tuple[bool, str | None]:
         addr_info = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except socket.gaierror as e:
         return False, f"DNS resolution failed: {e}"
-    if not addr_info:
-        return False, "DNS returned no addresses"
     
     for family, _, _, _, sockaddr in addr_info:
         ip_str = sockaddr[0]
         try:
             ip = ipaddress.ip_address(ip_str)
         except ValueError:
-            return False, "DNS returned an invalid address"
+            continue
         
         # Check for private/internal ranges
         if ip.is_loopback:
@@ -236,8 +212,6 @@ def fetch_session_url(
             raise EnvironmentError("invalid URL: missing host")
         allowed, reason = _is_ip_allowed(host)
         if not allowed:
-            if reason and reason.startswith("DNS"):
-                raise EnvironmentError(f"cannot resolve fetch target: {host} ({reason})")
             raise EnvironmentError(f"refusing to fetch private/internal address: {host} ({reason})")
 
     validate(url)

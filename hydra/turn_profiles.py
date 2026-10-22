@@ -81,7 +81,7 @@ class TurnProfile:
 # ── Frozen DEFAULT: identical to today's elite.py literals ───────────────────
 
 def _frozen_default_memory_convo() -> MemoryProfile:
-    return MemoryProfile(enabled=True, top_k=2, max_chars=1200, min_similarity=0.70)
+    return MemoryProfile(enabled=False, top_k=2, max_chars=1200, min_similarity=0.70)
 
 
 def _frozen_default_memory_work() -> MemoryProfile:

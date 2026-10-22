@@ -26,45 +26,31 @@ the project. No model family is privileged by its name; the endpoint must suppor
 the selected protocol. An OpenAI-compatible local server and a native CLI are
 different transports, even when their models have similar names.
 
-## Needle, Kev and Laya beside your main model
+## Needle and Laya beside your main model
 
-The complete local installer supplies [Cactus Needle](https://github.com/cactus-compute/needle)
-for tool selection and [Kev](https://github.com/jaredpalmer/kev) for typed decisions.
-[Laya](https://github.com/NandhaKishorM/laya) is an optional separate decision model.
-They are helpers beside the main coding model. See [MODELS.md](MODELS.md) for the
-CPU-first installation and Python version requirements.
+Both are optional local dependencies. [Cactus Needle](https://github.com/cactus-compute/needle)
+selects tools; [Laya](https://github.com/NandhaKishorM/laya) answers typed decisions.
+Neither is a general coding model or a vector database.
 
-Every ordinary Hydra tool catalog includes `needle_select`, `kev_decide` and `laya_decide`.
+Every ordinary Hydra tool catalog now includes `needle_select` and `laya_decide`.
 They work beside any supported main model. Needle accepts a query and a short
 list of existing tool names, such as `source_lookup`, `source_read` and `grep`.
-It returns proposals, without executing them. Kev and Laya accept state and a questions
+It returns proposals, without executing them. Laya accepts state and a questions
 object with choice, score or noul questions. Missing optional packages produce
 an explicit installation error rather than silently using a paid service.
 
-Select a checkpoint with `HYDRA_NEEDLE_MODEL` (or legacy `NEEDLE_MODEL`) for
-both Needle entry points, `HYDRA_KEV_MODEL` for Kev, and `HYDRA_LAYA_MODEL` for
-Laya. `HYDRA_KEV_DEVICE` and `HYDRA_LAYA_DEVICE` default to CPU.
-Initialization and prediction share `HYDRA_MODEL_CACHE`, defaulting to
-`~/.hydraAgent/models`. Keep private trained weights outside public
+Select a checkpoint with `HYDRA_NEEDLE_MODEL` for the selector tool,
+`NEEDLE_MODEL` for provider `needle`, and `HYDRA_LAYA_MODEL` for typed decisions.
+`HYDRA_LAYA_DEVICE` defaults to CPU. Keep private trained weights outside public
 releases. Model grounding through canon/essence is not weight training. The earlier
 starter models require further evaluation before unattended routing.
 
-Kev, Laya and embedding prediction workers apply a CPU fraction of `0.15` by
-default using available process affinity and thread settings. On a
-24-logical-CPU machine this selects three logical CPUs (12.5% of logical
-scheduling capacity). Needle defaults to all CPUs already available to its
-process because its native engine can slow dramatically under one-core
-affinity. Setting `HYDRA_LOCAL_CPU_FRACTION` explicitly overrides either default.
-This is a scheduling budget, not an electrical-power guarantee. The receipt
-states the applied CPUs or an unsupported backend. Multiple workers still need
-queue admission; affinity does not make model loading or disk contention free.
-
-In the repair sandbox on 2026-10-21, the same warmed Needle 3 request, tool schema
-and 128-token limit took 75.8709 seconds with one allowed logical CPU and 0.5043
-seconds with all nine available logical CPUs. Both proposed the same
-`fs_read` call with confidence `0.6516`. These are two local measurements of
-this input, not a general latency benchmark or a quality estimate. The first
-configuration exceeded the normal 60-second selector deadline.
+Local prediction workers apply `HYDRA_LOCAL_CPU_FRACTION=0.15` by default using
+available process affinity and thread settings. On a 24-logical-CPU machine this
+selects three logical CPUs (12.5% of logical scheduling capacity). It does **not**
+promise 15% electrical power use. The receipt states the applied CPUs or an
+unsupported backend. Multiple workers still need queue admission; affinity does
+not make model loading or disk contention free.
 
 ## Keep source lookup fresh
 
@@ -144,7 +130,7 @@ flowchart LR
     U[CLI / normal Hydra session] --> R[Configured routing and literal health]
     R --> G[Main model: local 4080 via OCuLink]
     R --> C[Optional configured cloud model]
-    U --> N[Needle / Kev / Laya: bounded CPU workers]
+    U --> N[Needle / Laya: bounded CPU workers]
     U --> I[Shared source index: local disk]
     U --> M[Memory and provenance: local SQLite]
     M --> E[Separate embedding backend: detected iGPU or CPU]

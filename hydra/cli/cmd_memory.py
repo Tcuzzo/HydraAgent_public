@@ -72,9 +72,6 @@ def register_memory_commands(sub: argparse._SubParsersAction) -> None:
     p_memory.add_argument("--quality", action="store_true", help="run the truth memory quality gate")
     p_memory.add_argument("--brief", action="store_true", help="emit an operator memory briefing packet")
     p_memory.add_argument("--query", default="", help="query for truth-context assembly")
-    p_memory.add_argument("--graph", action="store_true", help="inspect execution evidence and one-hop links through shared artifacts")
-    p_memory.add_argument("--workspace-root", type=Path, default=Path.cwd(),
-                          help="project whose memory is being recalled (default: current directory)")
     p_memory.add_argument("--out", default=None, help="write truth query packet JSON to this path")
     p_memory.add_argument("--require-records", action="store_true", help="exit 1 when a truth query selects no records")
     p_memory.add_argument(
@@ -177,24 +174,11 @@ def _print_local_memory_result(result, *, context_only: bool = False) -> None:
 
 
 def cmd_local_memory(args: argparse.Namespace) -> int:
-    workspace = Path(getattr(args, "workspace_root", None) or Path.cwd()).expanduser().resolve()
-    if not workspace.is_dir():
-        print(f"memory workspace is not a directory: {workspace}", file=sys.stderr)
-        return 2
-    if getattr(args, "graph", False):
-        from hydra.execution_learning import query_execution_knowledge
-        try:
-            report = query_execution_knowledge(args.query, repo_root=workspace, memory_root=Path(args.root))
-        except (OSError, ValueError) as exc:
-            print(f"memory graph error: {exc}", file=sys.stderr)
-            return 2
-        print(json.dumps(report, indent=2, ensure_ascii=False))
-        return 1 if getattr(args, "require_records", False) and not report["matches"] else 0
     if getattr(args, "truth", False):
         try:
             if getattr(args, "quality", False):
                 report = truth_memory_quality_report(
-                    repo_root=workspace,
+                    repo_root=REPO_ROOT,
                     memory_root=Path(args.root),
                 )
                 print(json.dumps(report, indent=2, sort_keys=True))
@@ -202,7 +186,7 @@ def cmd_local_memory(args: argparse.Namespace) -> int:
             if getattr(args, "brief", False):
                 briefing = assemble_memory_briefing(
                     args.query or "hydra mission memory",
-                    repo_root=workspace,
+                    repo_root=REPO_ROOT,
                     memory_root=Path(args.root),
                     budget_chars=args.max_chars,
                 )
@@ -211,7 +195,7 @@ def cmd_local_memory(args: argparse.Namespace) -> int:
             if args.query:
                 context = assemble_truth_context(
                     args.query,
-                    repo_root=workspace,
+                    repo_root=REPO_ROOT,
                     memory_root=Path(args.root),
                     budget_chars=args.max_chars,
                 )
@@ -231,18 +215,16 @@ def cmd_local_memory(args: argparse.Namespace) -> int:
                 else:
                     print(json.dumps(context, indent=2, sort_keys=True))
             else:
-                index = build_memory_index(repo_root=workspace, memory_root=Path(args.root))
+                index = build_memory_index(repo_root=REPO_ROOT, memory_root=Path(args.root))
                 print(json.dumps(index, indent=2, sort_keys=True))
         except (OSError, ValueError, json.JSONDecodeError) as e:
             print(f"memory error: {e}", file=sys.stderr)
             return 2
         return 0
-    if getattr(args, "query", ""):
-        from hydra.semantic_recall import build_semantic_memory_context
-        result = build_semantic_memory_context(args.query, root=args.root, workspace_root=workspace,
-                                               max_chars=args.max_chars)
-    else:
-        result = build_local_memory_context(args.root, max_chars=args.max_chars, workspace_root=workspace)
+    result = build_local_memory_context(
+        args.root,
+        max_chars=args.max_chars,
+    )
     _print_local_memory_result(result, context_only=args.context_only)
     return 0 if result.status == "OK" else 2
 

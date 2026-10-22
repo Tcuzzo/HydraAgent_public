@@ -32,10 +32,11 @@ Graceful degrade: if the vec0 extension cannot load, or the embedder raises
 (ollama down), the affected call raises a typed :class:`BackendUnavailable`
 that the existing recall fallback already handles — chat never breaks.
 
-The existing edges table stores observed same-source relationships. Search uses
-one bounded hop, preserving the same scope, current-corpus and relevance filters.
-Execution episodes contribute task/tool/artifact observations through the same
-corpus; model-generated summaries never become verified facts automatically.
+DEFERRED (explicitly out of v1, no schema change to add later): the ``edges``
+graph tier (stub), LLM fact-extraction on the write path, summary pressure
+control, and quiet-hours curation. v1 also does NOT rewire the live chat path
+or migrate working_memory's JSON — those are the next increments. It does NOT
+touch ``memory/vector.py`` (its TF-IDF contract is pinned by the §10.8 eval).
 """
 from __future__ import annotations
 
@@ -46,7 +47,6 @@ import math
 import os
 import sqlite3
 import struct
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,7 +54,6 @@ from typing import Any, Callable, Iterable
 
 from hydra.local_memory import DEFAULT_MEMORY_ROOT
 from hydra.semantic_recall import _cosine_similarity, embed_nomic
-from hydra.file_lock import locked_path
 
 # ── Constants ───────────────────────────────────────────────────────────────
 
@@ -369,12 +368,8 @@ class UnifiedMemory:
             raise BackendUnavailable(
                 f"embedder probe returned unexpected type: {type(_probe)}"
             )
-        self._validate_vector(_probe)
         self._dim: int = len(_probe)
-        # Schema inspection and additive migrations must not race on the first
-        # simultaneous chat/team startup.
-        with locked_path(self.path):
-            self._db = self._open()
+        self._db = self._open()
 
     # -- connection / schema -------------------------------------------------
 
@@ -487,23 +482,7 @@ class UnifiedMemory:
                 f"embedder returned {len(vec) if isinstance(vec, list) else type(vec)} "
                 f"dims, expected {self._dim}"
             )
-        self._validate_vector(vec)
         return [float(x) for x in vec]
-
-    @staticmethod
-    def _validate_vector(vector: list) -> None:
-        if any(isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x) for x in vector):
-            raise BackendUnavailable("embedding vectors must contain only finite numeric values")
-
-    @contextmanager
-    def _transaction(self):
-        try:
-            yield
-        except BaseException:
-            self._db.rollback()
-            raise
-        else:
-            self._db.commit()
 
     # -- write path ----------------------------------------------------------
 
@@ -543,35 +522,28 @@ class UnifiedMemory:
         # Embed BEFORE writing so a failure leaves the store untouched.
         vec = self._embed(_DOC_PREFIX + body)
 
-        # Embedding happens outside the write lock; recheck deduplication inside
-        # it. All row/vector/FTS/history writes share one rollbackable transaction.
-        with locked_path(self.path), self._transaction():
-            existing = self._db.execute(
-                "SELECT id FROM entries WHERE content_hash = ?", (chash,)
-            ).fetchone()
-            if existing:
-                return int(existing["id"])
-            now = _now_iso()
-            tags_json = json.dumps(sorted({str(t) for t in tags})) if tags else "[]"
-            cur = self._db.execute(
-                "INSERT INTO entries(scope, kind, body, source, tags, content_hash, "
-                "created_at, valid_at) VALUES (?,?,?,?,?,?,?,?)",
-                (scope, kind, body, source, tags_json, chash, now, valid_at or now),
-            )
-            memory_id = int(cur.lastrowid)
-            self._db.execute(
-                "INSERT INTO entries_fts(rowid, body) VALUES (?, ?)", (memory_id, body)
-            )
-            self._db.execute(
-                "INSERT INTO entries_vec(rowid, emb) VALUES (?, ?)",
-                (memory_id, _serialize(vec)),
-            )
-            self._db.execute(
-                "INSERT INTO entries_history(memory_id, event, old, new, ts) "
-                "VALUES (?,?,?,?,?)",
-                (memory_id, "ADD", None, body, now),
-            )
-            return memory_id
+        now = _now_iso()
+        tags_json = json.dumps(sorted({str(t) for t in tags})) if tags else "[]"
+        cur = self._db.execute(
+            "INSERT INTO entries(scope, kind, body, source, tags, content_hash, "
+            "created_at, valid_at) VALUES (?,?,?,?,?,?,?,?)",
+            (scope, kind, body, source, tags_json, chash, now, valid_at or now),
+        )
+        memory_id = int(cur.lastrowid)
+        self._db.execute(
+            "INSERT INTO entries_fts(rowid, body) VALUES (?, ?)", (memory_id, body)
+        )
+        self._db.execute(
+            "INSERT INTO entries_vec(rowid, emb) VALUES (?, ?)",
+            (memory_id, _serialize(vec)),
+        )
+        self._db.execute(
+            "INSERT INTO entries_history(memory_id, event, old, new, ts) "
+            "VALUES (?,?,?,?,?)",
+            (memory_id, "ADD", None, body, now),
+        )
+        self._db.commit()
+        return memory_id
 
     def _nearest_in_scope(self, vec: list[float], scope: str) -> tuple[int, float] | None:
         """Return (id, cosine) of the nearest stored vector in ``scope``, or None.
@@ -629,7 +601,6 @@ class UnifiedMemory:
         scope: str | None = None,
         top_k: int = 6,
         min_similarity: float | None = None,
-        memory_ids: Iterable[int] | None = None,
     ) -> list[Hit]:
         """Hybrid semantic+keyword search with composite ranking, scope-filtered.
 
@@ -673,19 +644,10 @@ class UnifiedMemory:
         pool = max(top_k * 4, 24)
 
         qvec = self._embed(_QUERY_PREFIX + q)
-        allowed_ids = sorted({int(i) for i in memory_ids}) if memory_ids is not None else None
-        if allowed_ids == []:
-            return []
-        vec_ranks = self._vec_search(qvec, pool, scope=scope, memory_ids=allowed_ids)
-        fts_ranks = self._fts_search(q, pool, scope=scope, memory_ids=allowed_ids)
+        vec_ranks = self._vec_search(qvec, pool)
+        fts_ranks = self._fts_search(q, pool)
 
         fused = self._rrf_fuse(vec_ranks, fts_ranks)
-        # One bounded hop expands observed same-source evidence; scope, active
-        # source membership and the normal relevance floor still apply.
-        related = self.related_ids([i for i, _ in fused[:3]], scope=scope,
-                                   memory_ids=allowed_ids, limit=min(pool, 8))
-        if related:
-            fused = self._rrf_fuse(vec_ranks, fts_ranks, related)
 
         # Load policy (lazy import to avoid circular import at module load time).
         from hydra.memory_policy import load_policy as _load_policy
@@ -817,20 +779,7 @@ class UnifiedMemory:
 
         return hits
 
-    @staticmethod
-    def _eligible_query(scope: str | None, memory_ids: list[int] | None) -> tuple[str, list]:
-        clause = "invalid_at IS NULL AND expired_at IS NULL AND superseded_by IS NULL"
-        values: list = []
-        if scope is not None:
-            clause += " AND scope = ?"
-            values.append(scope)
-        if memory_ids is not None:
-            clause += " AND id IN (SELECT value FROM json_each(?))"
-            values.append(json.dumps(memory_ids))
-        return "SELECT id FROM entries WHERE " + clause, values
-
-    def _vec_search(self, qvec: list[float], k: int, *, scope: str | None = None,
-                    memory_ids: list[int] | None = None) -> list[int]:
+    def _vec_search(self, qvec: list[float], k: int) -> list[int]:
         """Return entry ids ordered by ascending cosine distance (best first).
 
         Raises :class:`BackendUnavailable` if the vec0 table rejects the query
@@ -838,12 +787,11 @@ class UnifiedMemory:
         existing table created with a different dimension), so the caller can
         degrade gracefully to the file-corpus fallback path.
         """
-        eligible, args = self._eligible_query(scope, memory_ids)
         try:
             rows = self._db.execute(
                 "SELECT rowid AS id FROM entries_vec "
-                f"WHERE emb MATCH ? AND k = ? AND rowid IN ({eligible}) ORDER BY distance",
-                (_serialize(qvec), k, *args),
+                "WHERE emb MATCH ? AND k = ? ORDER BY distance",
+                (_serialize(qvec), k),
             ).fetchall()
         except sqlite3.OperationalError as exc:
             raise BackendUnavailable(
@@ -852,54 +800,20 @@ class UnifiedMemory:
             ) from exc
         return [int(r["id"]) for r in rows]
 
-    def _fts_search(self, query: str, k: int, *, scope: str | None = None,
-                    memory_ids: list[int] | None = None) -> list[int]:
+    def _fts_search(self, query: str, k: int) -> list[int]:
         """Return entry ids ordered by BM25 (best first). Tolerant of FTS syntax."""
         match = _fts_query(query)
         if not match:
             return []
-        eligible, args = self._eligible_query(scope, memory_ids)
         try:
             rows = self._db.execute(
                 "SELECT rowid AS id FROM entries_fts "
-                f"WHERE entries_fts MATCH ? AND rowid IN ({eligible}) ORDER BY bm25(entries_fts) LIMIT ?",
-                (match, *args, k),
+                "WHERE entries_fts MATCH ? ORDER BY bm25(entries_fts) LIMIT ?",
+                (match, k),
             ).fetchall()
-        except sqlite3.OperationalError as exc:
-            raise BackendUnavailable(f"keyword memory query failed: {exc}") from exc
-        return [int(r["id"]) for r in rows]
-
-    def link(self, from_id: int, to_id: int, *, relation: str = "same_source") -> None:
-        """Add an observed, same-scope evidence relationship idempotently."""
-        if relation not in {"same_source", "supports", "contradicts", "supersedes"}:
-            raise ValueError("unsupported memory relationship")
-        if from_id == to_id:
-            return
-        rows = self._db.execute("SELECT id, scope FROM entries WHERE id IN (?, ?)",
-                                (from_id, to_id)).fetchall()
-        if len(rows) != 2 or rows[0]["scope"] != rows[1]["scope"]:
-            raise ValueError("memory relationships require existing rows in the same scope")
-        with self._db:
-            self._db.execute("INSERT INTO edges(from_id,to_id,relation,created_at) "
-                "SELECT ?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM edges WHERE from_id=? AND to_id=? AND relation=?)",
-                (from_id, to_id, relation, _now_iso(), from_id, to_id, relation))
-
-    def related_ids(self, seeds: Iterable[int], *, scope: str | None = None,
-                     memory_ids: list[int] | None = None, limit: int = 8) -> list[int]:
-        """Bounded one-hop retrieval over observed source relationships."""
-        seeds = sorted({int(i) for i in seeds})[:8]
-        if not seeds or limit <= 0:
+        except sqlite3.OperationalError:
             return []
-        eligible, args = self._eligible_query(scope, memory_ids)
-        rows = self._db.execute(
-            "SELECT DISTINCT neighbor FROM ("
-            "SELECT to_id AS neighbor FROM edges WHERE from_id IN (SELECT value FROM json_each(?)) "
-            "AND relation='same_source' UNION "
-            "SELECT from_id AS neighbor FROM edges WHERE to_id IN (SELECT value FROM json_each(?)) "
-            "AND relation='same_source') "
-            f"WHERE neighbor IN ({eligible}) ORDER BY neighbor LIMIT ?",
-            (json.dumps(seeds), json.dumps(seeds), *args, min(limit, 32))).fetchall()
-        return [int(row[0]) for row in rows if int(row[0]) not in seeds]
+        return [int(r["id"]) for r in rows]
 
     @staticmethod
     def _rrf_fuse(*rankings: list[int]) -> list[tuple[int, float]]:

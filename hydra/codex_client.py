@@ -32,12 +32,9 @@ silently dropped.
 from __future__ import annotations
 
 import os
-import re
 import shutil
-import subprocess
 import tempfile
-from pathlib import Path
-from threading import Event
+import uuid
 from typing import Callable, Iterable
 
 from hydra.llm import ChatMessage, ChatResponse, LlmError
@@ -47,7 +44,6 @@ from hydra.llm import ChatMessage, ChatResponse, LlmError
 # / Codex CLI configuration; this is just the catalog name Hydra reports and can
 # be overridden per call or at construction.
 _DEFAULT_MODEL = "codex"
-_MAX_FINAL_BYTES = 1024 * 1024
 
 # Substrings that pin the cause of a FAILED turn (no valid final answer). Only
 # consulted when there is NO clean answer — a non-empty `-o` answer with exit 0
@@ -66,14 +62,6 @@ _INSTALL_HINT = (
     "(e.g. `npm install -g @openai/codex`), run `codex login` to sign in with "
     "ChatGPT, or set HYDRA_CODEX_BIN to the codex binary path"
 )
-
-
-def configure_native_scope(client, *, root: str | Path, approval_policy: str) -> None:
-    """Bind native tools to the same selected scope and write policy as Hydra."""
-    if isinstance(client, CodexClient):
-        client.cd = str(Path(root).expanduser().resolve())
-        # Native exec cannot call Hydra's interactive approval callback.
-        client.sandbox = "workspace-write" if approval_policy == "allow" else "read-only"
 
 
 def resolve_codex_bin() -> str:
@@ -116,47 +104,20 @@ def codex_command(
     return argv
 
 
-def _native_launcher_argv(argv: list[str]) -> list[str]:
-    """Honor an explicit Python launcher on systems without shebang execution.
-
-    The shebang must be one complete, existing absolute interpreter path. No
-    shell or command-string splitting is involved, including when paths contain
-    spaces. Other executable formats retain their normal OS handling.
-    """
-    executable = Path(argv[0])
-    if not executable.is_absolute() and not os.path.dirname(argv[0]):
-        return argv
-    try:
-        if not executable.is_file():
-            return argv
-        with executable.open("rb") as source:
-            header = source.readline(4097)
-        if len(header) > 4096 or not header.startswith(b"#!"):
-            return argv
-        interpreter = Path(header[2:].decode("utf-8").strip())
-        if (not interpreter.is_absolute() or not interpreter.is_file()
-                or re.fullmatch(r"pythonw?(?:\d+(?:\.\d+)*)?(?:\.exe)?",
-                                interpreter.name, re.IGNORECASE) is None):
-            return argv
-        return [str(interpreter), *argv]
-    except (OSError, UnicodeError, ValueError):
-        return argv
-
-
-def _default_runner(argv, *, input=None, capture_output=True, text=True, timeout=None,
-                    cancel_event: Event | None = None, output_file: str | None = None):
-    """Run a native provider in an owned group with cancellation and a deadline.
+def _default_runner(argv, *, input=None, capture_output=True, text=True, timeout=None):
+    """Production runner: the real `subprocess.run` with the verified shape.
 
     Injected so unit tests can pass a fake and never touch the CLI/account.
     """
-    from hydra.proc import ProcessCancelled, run_captured
-    try:
-        return run_captured(_native_launcher_argv(argv), input=input,
-            capture_output=capture_output, text=text, timeout=timeout,
-            cancel_event=cancel_event, max_output_bytes=1024 * 1024,
-            output_file_limit=(output_file, _MAX_FINAL_BYTES) if output_file is not None else None)
-    except ProcessCancelled as exc:
-        raise LlmError(f"codex exec {exc}") from exc
+    import subprocess
+
+    return subprocess.run(
+        argv,
+        input=input,
+        capture_output=capture_output,
+        text=text,
+        timeout=timeout,
+    )
 
 
 class CodexClient:
@@ -184,11 +145,6 @@ class CodexClient:
         self.model = model or _DEFAULT_MODEL
         self._runner = runner or _default_runner
         self.sandbox = sandbox  # e.g. "read-only" to enforce read-only CLI sandbox
-        self.cancel_event: Event | None = None
-
-    def set_cancellation_event(self, event: Event | None) -> None:
-        """Attach the active turn's cancellation token to owned native work."""
-        self.cancel_event = event
 
     # --- public surface (mirrors OllamaClient) ---------------------------
 
@@ -216,8 +172,9 @@ class CodexClient:
 
         # Temp file for the clean final message. Random name under the OS temp
         # dir so concurrent calls never collide; deleted after we read it.
-        with tempfile.NamedTemporaryFile(prefix="hydra-codex-", suffix=".txt", delete=False) as output:
-            out_file = output.name
+        out_file = os.path.join(
+            tempfile.gettempdir(), f"hydra-codex-{uuid.uuid4().hex}.txt"
+        )
 
         # Only pass `-m` when the model differs from the generic default label —
         # otherwise let the user's `codex login` config pick the model.
@@ -236,15 +193,14 @@ class CodexClient:
             argv[2:2] = ["--sandbox", self.sandbox]
 
         try:
-            runner_options = dict(input=prompt, capture_output=True, text=True, timeout=timeout)
-            # Preserve the existing injected-runner contract. Real native work
-            # alone owns processes and accepts the turn cancellation token.
-            if self._runner is _default_runner:
-                runner_options["cancel_event"] = self.cancel_event
-                runner_options["output_file"] = out_file
-            proc = self._runner(argv, **runner_options)
+            proc = self._runner(
+                argv,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
         except Exception as exc:  # TimeoutExpired, OSError, ValueError, etc.
-            Path(out_file).unlink(missing_ok=True)
             if type(exc).__name__ == "TimeoutExpired":
                 raise LlmError(f"codex exec timed out after {timeout}s") from exc
             raise LlmError(f"could not run codex exec: {exc}") from exc
@@ -265,9 +221,7 @@ class CodexClient:
                 finish_reason="stop",
                 prompt_tokens=0,
                 completion_tokens=0,
-                raw={"stdout": stdout, "stderr": stderr, "returncode": returncode,
-                     "stdout_truncated": bool(getattr(proc, "stdout_truncated", False)),
-                     "stderr_truncated": bool(getattr(proc, "stderr_truncated", False))},
+                raw={"stdout": stdout, "stderr": stderr, "returncode": returncode},
                 tool_calls=[],
             )
 
@@ -329,22 +283,19 @@ class CodexClient:
     def _read_last_message(self, out_file: str, stdout: str) -> str:
         """Read the `-o` last-message file, then delete it.
 
-        Progress stdout is never a final answer. The caller diagnoses a missing
-        or empty final file using the bounded process logs.
+        If the file yields nothing, fall back to stdout (best effort); the caller
+        treats an empty answer as an outage.
         """
         try:
             if os.path.isfile(out_file):
-                with open(out_file, "rb") as fh:
-                    data = fh.read(_MAX_FINAL_BYTES + 1)
-                if len(data) > _MAX_FINAL_BYTES:
-                    raise LlmError("codex final message exceeds the 1 MiB limit")
-                data = data.decode("utf-8")
+                with open(out_file, "r", encoding="utf-8") as fh:
+                    data = fh.read()
+                try:
+                    os.remove(out_file)
+                except OSError:
+                    pass
                 if data.strip():
                     return data
         except OSError:
             pass
-        except UnicodeError as exc:
-            raise LlmError("codex final message is not valid UTF-8") from exc
-        finally:
-            Path(out_file).unlink(missing_ok=True)
-        return ""
+        return stdout

@@ -261,11 +261,7 @@ class CheckpointStore:
         content_file = self._content_path(entry["seq"])
         if not content_file.exists():
             return None
-        content = content_file.read_bytes()
-        if (len(content) != entry["pre_image_size"]
-                or hashlib.sha256(content).hexdigest() != entry["pre_image_sha"]):
-            raise ValueError(f"checkpoint pre-image checksum mismatch: {content_file}")
-        return content
+        return content_file.read_bytes()
 
 
 # ---------------------------------------------------------------------------
@@ -342,8 +338,7 @@ def undo(store: CheckpointStore, *, n: int = 1) -> str:
 
     restored = 0
     for _ in range(n):
-        entries = store.peek_all()
-        entry = entries[-1] if entries else None
+        entry = store.pop()
         if entry is None:
             if restored == 0:
                 return (
@@ -369,14 +364,12 @@ def undo(store: CheckpointStore, *, n: int = 1) -> str:
             pre_image = store.load_pre_image(entry)
             if pre_image is None:
                 messages.append(f"  WARNING: pre-image missing for {target} — skipped")
-                break  # Preserve this entry for recovery; do not bypass it.
+                continue
+            # Clean up the stored snapshot file after loading
+            store._delete_content(entry["seq"])
             _atomic_write_bytes(target, pre_image)
             messages.append(f"  restored: {target}")
 
-        # The pre-image remains durable until restoration and index publication
-        # succeed. A failed restore can therefore be retried without data loss.
-        store.pop()
-        store._delete_content(entry["seq"])
         restored += 1
 
     if restored == 0:

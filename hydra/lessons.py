@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from hydra.local_memory import DEFAULT_MEMORY_ROOT
-from hydra.file_lock import locked_path
 
 
 LESSON_RELATIVE_PATH = Path("workspace") / "memory" / "hydra-lessons.md"
@@ -48,6 +47,9 @@ def remember_lesson(
     root = Path(memory_root).expanduser().resolve() if memory_root else DEFAULT_MEMORY_ROOT
     path = root / LESSON_RELATIVE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text("# Hydra Lessons\n\n", encoding="utf-8")
+
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
     tag_text = ", ".join(clean_tags) if clean_tags else "untagged"
     entry = (
@@ -56,13 +58,8 @@ def remember_lesson(
         f"- tags: {tag_text}\n"
         f"- lesson: {clean_lesson}\n\n"
     )
-    # Creation and append are one operation across chat, team and listener
-    # processes; concurrent first writers must never truncate an earlier lesson.
-    with locked_path(path):
-        with path.open("a", encoding="utf-8") as f:
-            if f.tell() == 0:
-                f.write("# Hydra Lessons\n\n")
-            f.write(entry)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(entry)
     return {
         "schema": "hydra.lesson.v1",
         "status": "OK",

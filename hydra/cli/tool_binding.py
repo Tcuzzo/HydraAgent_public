@@ -1,9 +1,6 @@
 """Shared CLI tool binding helpers."""
 from __future__ import annotations
 
-import math
-from urllib.parse import urlsplit
-
 import json
 import os
 import re
@@ -34,18 +31,6 @@ from skills import http_fetch as skill_http_fetch
 from skills import list_directory as skill_ls
 from skills import system_stats as skill_system_stats
 from skills import todo as skill_todo
-
-
-def _fetch_same_host(url: str, *, timeout: float = 20, max_bytes: int = 200000) -> dict:
-    """Bound GET to the selected host, including every redirect."""
-    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 < timeout <= 120:
-        raise ValueError("timeout must be finite and in (0, 120] seconds")
-    if type(max_bytes) is not int or not 1 <= max_bytes <= 1024 * 1024:
-        raise ValueError("max_bytes must be an integer between 1 and 1048576")
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
-        raise ValueError("URL must be HTTP(S) with a host and without embedded credentials")
-    return skill_http_fetch.run(url, allowed_hosts=[parsed.hostname], timeout=timeout, max_bytes=max_bytes)
 
 
 DEFAULT_FILESYSTEM_ROOT = Path(os.environ.get("HYDRA_DEFAULT_ROOT", "")).expanduser().resolve() if os.environ.get("HYDRA_DEFAULT_ROOT") else Path.cwd()
@@ -175,11 +160,6 @@ def _grep_path_pattern_under(root: Path, path: str | Path, include: str | None) 
         raise SkillError(f"`..` in grep path refused: {path!r}")
     base_text = base.as_posix()
     if any(mark in base_text for mark in ("*", "?", "[")):
-        return base_text
-    target = (Path(root) / base).resolve()
-    if not target.is_relative_to(Path(root).resolve()):
-        raise SkillError(f"grep path {base} escapes root {root}")
-    if target.is_file() and (not include or base.match(include)):
         return base_text
     if include:
         if base_text in {"", "."}:
@@ -732,17 +712,27 @@ def bind_tools(
         ),
         Tool(
             name="http_fetch",
-            description="Read a URL using bounded HTTP GET. Redirects must stay on the selected host; no credential headers or request body.",
+            description="Fetch a URL with method/headers/body. Use for APIs or reachable docs.",
             parameters={
                 "type": "object",
                 "properties": {
                     "url": {"type": "string"},
-                    "timeout": {"type": "number", "default": 20, "exclusiveMinimum": 0, "maximum": 120},
-                    "max_bytes": {"type": "integer", "default": 200000, "minimum": 1, "maximum": 1048576},
+                    "method": {"type": "string", "default": "GET"},
+                    "headers": {"type": "object"},
+                    "body": {"type": "string"},
+                    "timeout": {"type": "number", "default": 20},
+                    "max_bytes": {"type": "integer", "default": 200000},
                 },
                 "required": ["url"],
             },
-            invoke=_fetch_same_host,
+            invoke=lambda url, method="GET", headers=None, body=None, timeout=20, max_bytes=200000: skill_http_fetch.run(
+                url,
+                method=method,
+                headers=headers,
+                body=body,
+                timeout=timeout,
+                max_bytes=max_bytes,
+            ),
         ),
         # (task_planner skill does not add a standalone orchestrate tool in this build)
         # SEAM CUT: roster_count, model_matrix, skill_scout tools removed (multi-agent fabric stripped).
@@ -853,11 +843,8 @@ def bind_tools(
         # SEAM CUT: studio_stitch/studio_edit tools removed (hydra.studio stripped).
         # SEAM CUT: backbone_ideate/produce/watch tools removed (hydra.backbone is stripped).
     ]
-    from hydra.decision_tools import kev_decide, laya_decide, needle_select
+    from hydra.decision_tools import laya_decide, needle_select
     _built.extend([
-        Tool(name='kev_decide', description='Ask the local Kev model typed choice/score/noul questions about supplied evidence. Returns probabilities, not authority; executes no actions.',
-             parameters={'type': 'object', 'properties': {'state': {}, 'questions': {'type': 'object'}}, 'required': ['state', 'questions']},
-             invoke=kev_decide),
         Tool(name='laya_decide', description='Ask the optional local Laya model typed choice/score/noul questions. Returns evidence, not authority; executes no actions.',
              parameters={'type': 'object', 'properties': {'state': {}, 'questions': {'type': 'object'}}, 'required': ['state', 'questions']},
              invoke=laya_decide),
