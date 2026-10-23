@@ -3,8 +3,8 @@
 The provider + verifier defaults are sourced from the single model-routing YAML
 (hydra/model_routing.yaml) via the typed loader, so editing a model/provider there
 changes them here with no Python edit. If the YAML is missing/invalid the loader
-returns the frozen DEFAULT (same values as the historical hardcodes), so this is
-fail-safe and never silently picks a different provider.
+raises RoutingConfigError naming the file, so it never silently picks a different
+provider.
 """
 from __future__ import annotations
 
