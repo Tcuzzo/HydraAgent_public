@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch, call
 import pytest
 import yaml
 
-from hydra.model_routing import load_routing, clear_cache, DEFAULT
+from hydra.model_routing import load_routing, clear_cache
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -60,25 +60,21 @@ class TestFreeFallbackLoader:
         routing = load_routing(yaml_path)
         assert list(routing.free_fallback_models) == ["nemotron-mini", "phi3:mini"]
 
-    def test_yaml_missing_free_fallback_uses_default(self, tmp_path):
-        """When yaml omits free_fallback_models, loader supplies safe default."""
+    def test_yaml_missing_free_fallback_uses_free_tagged_roster(self, tmp_path):
+        """When yaml omits free_fallback_models, the tier is the roster's free-tagged entries."""
         cfg = self._make_minimal_cfg()  # free_fallback_models deliberately omitted
         yaml_path = tmp_path / "model_routing.yaml"
         yaml_path.write_text(yaml.dump(cfg))
         clear_cache()
         routing = load_routing(yaml_path)
-        # Safe default must be non-empty
-        assert len(routing.free_fallback_models) >= 2
+        # Derived from the roster's free-tagged entries; the code never invents model names.
+        want = tuple(e["model"] for e in cfg["roster"] if "free" in (e.get("role_tags") or ()))
+        assert routing.free_fallback_models == want
 
-    def test_frozen_default_has_free_fallback_models(self):
-        """The in-code frozen DEFAULT always provides the free tier."""
-        assert "nemotron-mini" in DEFAULT.free_fallback_models
-        assert "phi3:mini" in DEFAULT.free_fallback_models
-
-    def test_frozen_default_order_is_nemotron_first(self):
-        """Ladder order: nemotron-mini before phi3:mini."""
-        ladder = list(DEFAULT.free_fallback_models)
-        assert ladder.index("nemotron-mini") < ladder.index("phi3:mini")
+    def test_no_in_code_default_free_tier(self):
+        """No model names live in code: there is no in-code DEFAULT free tier."""
+        import hydra.model_routing as mrc
+        assert not hasattr(mrc, "DEFAULT")
 
     def test_production_yaml_has_free_fallback_models(self):
         """The live model_routing.yaml exposes free_fallback_models."""

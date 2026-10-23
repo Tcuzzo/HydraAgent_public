@@ -10,9 +10,9 @@ from:
   * ``hydra/runtime_route.py``     → ``verifier_route()`` / provider helpers
 
 Editing a model name in the YAML changes the resolved model everywhere — NO Python
-edit. If the YAML is missing or unreadable, ``load_routing()`` returns the frozen
-``DEFAULT`` below, whose values are identical to the historical hardcodes, so the
-agent never crashes and never silently picks a different model.
+edit. No model is named in this code: if the YAML is missing or unreadable,
+``load_routing()`` raises ``RoutingConfigError`` naming the file and the cause, so a
+broken roster fails loudly instead of silently running on a hidden in-code roster.
 
 The loader is REUSE of the existing declarative pattern (see
 ``hydra/declarative_runtime.py`` + ``hydra/intake_rules.yaml``): schema + YAML +
@@ -64,9 +64,9 @@ class ModelRouting:
     cloud_fallback_ladder: tuple[str, ...]
     local_fallback_provider: str
     # Ordered FREE cloud models tried between paid-cloud failure and local last-resort.
-    # Safe default: ["nemotron-mini", "phi3:mini"] — same as the YAML value.
-    # A missing/invalid yaml never crashes and never silently drops the free tier.
-    free_fallback_models: tuple[str, ...] = ("nemotron-mini", "phi3:mini")
+    # Read from the YAML (routing.free_fallback_models, else the roster's free-tagged
+    # entries); never named in code.
+    free_fallback_models: tuple[str, ...] = ()
     source_path: str = ""
 
     _by_id: dict[str, RosterEntry] = field(default_factory=dict, compare=False, repr=False)
@@ -123,13 +123,13 @@ def _build(data: dict[str, Any], source_path: str) -> ModelRouting:
         )
     routing = data.get("routing") or {}
     by_id = {e.id: e for e in roster}
-    # free_fallback_models: ordered list of free cloud model names; safe default
-    # when the key is absent so a legacy yaml never loses the free tier.
+    # free_fallback_models: ordered list of free cloud model names. When the key is
+    # absent, the tier is the roster's free-tagged entries in roster order.
     _free_raw = routing.get("free_fallback_models")
     _free_tier: tuple[str, ...] = (
         tuple(str(m) for m in _free_raw)
         if _free_raw
-        else ("nemotron-mini", "phi3:mini")
+        else tuple(e.model for e in roster if "free" in e.role_tags)
     )
     mr = ModelRouting(
         schema=str(data.get("schema", SCHEMA)),
@@ -147,7 +147,7 @@ def _build(data: dict[str, Any], source_path: str) -> ModelRouting:
         _by_id=by_id,
     )
     # Validate required policy ids resolve — otherwise we'd silently pick a wrong
-    # model later. A broken file falls back to DEFAULT (caller catches).
+    # model later. A broken file fails loudly (load_routing raises RoutingConfigError).
     required_ids = (
         list(mr.chat_profiles.values())
         + list(mr.roles.values())
@@ -164,51 +164,8 @@ def _build(data: dict[str, Any], source_path: str) -> ModelRouting:
     return mr
 
 
-# ── Frozen DEFAULT: identical to the historical hardcodes. Used only when the
-#    YAML is missing/invalid. NEVER a different model than today's code. ──────
-def _frozen_default() -> ModelRouting:
-    # Frozen default: identical to hydra/model_routing.yaml. Used only when the
-    # YAML is missing or unreadable. Never a different model than the YAML.
-    roster = [
-        RosterEntry("cloud-doer", "ollama-cloud", "qwen2.5:32b",
-                    ("chat", "conversation", "doer", "moderate", "intent"),
-                    "https://api.ollama.cloud"),
-        RosterEntry("cloud-planner", "ollama-cloud", "qwen2.5:72b",
-                    ("planner", "complex", "critical", "auditor", "verifier", "work"),
-                    "https://api.ollama.cloud"),
-        RosterEntry("cloud-free-nemotron", "ollama-cloud", "nemotron-mini",
-                    ("free", "cloud", "fallback"),
-                    "https://api.ollama.cloud"),
-        RosterEntry("cloud-free-phi", "ollama-cloud", "phi3:mini",
-                    ("free", "cloud", "fallback"),
-                    "https://api.ollama.cloud"),
-        RosterEntry("local-worker", "ollama", "qwen2.5-coder:7b",
-                    ("worker", "local", "router", "read"), "http://127.0.0.1:11434"),
-    ]
-    data = {
-        "schema": SCHEMA,
-        "roster": [
-            {"id": e.id, "provider": e.provider, "model": e.model,
-             "role_tags": list(e.role_tags), "base_url": e.base_url}
-            for e in roster
-        ],
-        "routing": {
-            "chat_profiles": {"auto": "cloud-doer", "cloud": "cloud-planner", "local": "local-worker"},
-            "complexity": {"simple": "local-worker", "moderate": "cloud-doer",
-                           "complex": "cloud-planner", "critical": "cloud-planner"},
-            "roles": {"router": "local-worker", "worker": "local-worker",
-                      "doer": "cloud-doer", "planner": "cloud-planner", "auditor": "cloud-planner",
-                      "work": "cloud-planner", "intent": "cloud-doer"},
-            "verifier": "cloud-planner",
-            "cloud_fallback_ladder": ["ollama-cloud"],
-            "local_fallback_provider": "ollama",
-            "free_fallback_models": ["nemotron-mini", "phi3:mini"],
-        },
-    }
-    return _build(data, source_path="<frozen-default>")
-
-
-DEFAULT: ModelRouting = _frozen_default()
+class RoutingConfigError(RuntimeError):
+    """The model routing file is missing or invalid. Hydra keeps no in-code roster."""
 
 
 # ── Module-level cache (one load). Path-keyed so tests can repoint it. ───────
@@ -218,8 +175,8 @@ _CACHE: dict[str, ModelRouting] = {}
 def load_routing(path: str | Path | None = None, *, refresh: bool = False) -> ModelRouting:
     """Load + cache the model routing config.
 
-    Fail-safe: a missing or invalid file returns the frozen ``DEFAULT`` (same
-    values as today's hardcodes), never an exception and never a different model.
+    Fails loudly: a missing or invalid file raises ``RoutingConfigError`` naming the
+    file and the cause. Nothing is cached on failure, so a repaired file loads next call.
     """
     resolved = Path(path) if path is not None else DEFAULT_ROUTING_PATH
     key = str(resolved)
@@ -231,11 +188,12 @@ def load_routing(path: str | Path | None = None, *, refresh: bool = False) -> Mo
         if not isinstance(data, dict):
             raise ValueError("model_routing.yaml top-level must be a mapping")
         mr = _build(data, source_path=key)
-    except FileNotFoundError:
-        mr = DEFAULT
-    except Exception as exc:  # malformed YAML, bad ids, etc. — fail safe.
-        _LOG.warning("model_routing config %s unreadable (%s); using frozen DEFAULT", key, exc)
-        mr = DEFAULT
+    except Exception as exc:  # missing file, malformed YAML, bad ids — fail loudly.
+        raise RoutingConfigError(
+            f"model_routing config {key} can't be used ({type(exc).__name__}: {exc}). "
+            "Hydra names no model in code, so it will not guess one: restore the file "
+            "(git checkout -- hydra/model_routing.yaml) or fix the error above."
+        ) from exc
     _CACHE[key] = mr
     return mr
 

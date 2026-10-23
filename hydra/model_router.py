@@ -221,8 +221,8 @@ class ModelRouter:
         hydra/model_routing.yaml (routing.roles) — editing a model name there
         changes it here, no Python edit. The per-role runtime KNOBS (base_url,
         max_tokens, temperature) are router tuning, not routing policy, so they
-        stay in code. Falls back to the loader's frozen DEFAULT if the YAML is
-        missing/invalid, so this never crashes and never picks a different model.
+        stay in code. A missing/invalid YAML raises RoutingConfigError (no model
+        is named in code, so none is guessed).
         """
         routing = load_routing()
 
