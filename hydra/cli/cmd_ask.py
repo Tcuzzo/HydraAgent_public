@@ -277,12 +277,15 @@ def cmd_ask(args: argparse.Namespace) -> int:
                 print(f"LLM error: {e}", file=sys.stderr)
                 return 1
             client, cfg = fallback
+            failed_provider = args.provider
             args.provider = cfg.name
-            if not args.model:
-                args.model = cfg.model
-            model = args.model or cfg.model
+            # The explicit --model named the failed provider's model; the local
+            # server answers with its own configured model.
+            args.model = cfg.model or args.model
+            model = args.model
+            reason = str(e).splitlines()[0][:160] if str(e) else type(e).__name__
             print(
-                f"API failure on the configured provider. Falling back to local GPU provider {cfg.name}/{model}.",
+                f"API failure on {failed_provider} ({reason}). Falling back to local GPU provider {cfg.name}/{model}.",
                 file=sys.stderr,
             )
             loop = AgentLoop(_budgeted(client, cfg.name, model, args.prompt), model=model,
