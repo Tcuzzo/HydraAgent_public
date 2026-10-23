@@ -182,9 +182,17 @@ class OllamaClient:
         endpoint: str = "http://localhost:11434",
         *,
         api_key: str | None = None,
+        num_ctx: int | None = None,
     ) -> None:
         self.endpoint = endpoint.rstrip("/")
         self.api_key = api_key
+        # Context window for a keyless (local) server. The OpenAI-compatible
+        # endpoint ignores a context size, so when one is configured chat()
+        # uses the native /api/chat wire, which honours options.num_ctx.
+        try:
+            self.num_ctx = 0 if api_key else max(0, int(num_ctx or 0))
+        except (TypeError, ValueError):
+            self.num_ctx = 0
 
     @property
     def api_base(self) -> str:
@@ -236,9 +244,13 @@ class OllamaClient:
         }
         if tools:
             body["tools"] = tools
-        payload = self._post_json(
-            f"{self.api_base}/chat/completions", body, timeout=timeout
-        )
+        if self.num_ctx:
+            payload = self._native_chat(msgs, model=model, max_tokens=max_tokens,
+                                        temperature=temperature, timeout=timeout, tools=tools)
+        else:
+            payload = self._post_json(
+                f"{self.api_base}/chat/completions", body, timeout=timeout
+            )
         if not isinstance(payload, dict):
             raise LlmError("chat: response must be a JSON object")
         choices = payload.get("choices") or []
@@ -280,6 +292,56 @@ class OllamaClient:
             raw=payload,
             tool_calls=tool_calls,
         )
+
+    def _native_chat(self, msgs: list[dict], *, model: str, max_tokens: int, temperature: float,
+                     timeout: float, tools: list[dict] | None) -> dict:
+        """Native /api/chat call carrying options.num_ctx. The reply is mapped
+        back onto the chat-completions payload shape so chat() parses one shape."""
+        native_msgs: list[dict] = []
+        for m in msgs:
+            m = dict(m)
+            if m.get("tool_calls"):
+                calls = []
+                for c in m["tool_calls"]:
+                    fn = dict((c or {}).get("function") or {})
+                    args = fn.get("arguments")
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args) if args else {}
+                        except json.JSONDecodeError:
+                            args = {}
+                    fn["arguments"] = args if isinstance(args, dict) else {}
+                    calls.append({"function": fn})
+                m["tool_calls"] = calls
+            native_msgs.append(m)
+        body: dict = {
+            "model": model,
+            "messages": native_msgs,
+            "stream": False,
+            "options": {"num_ctx": self.num_ctx, "num_predict": max_tokens, "temperature": temperature},
+        }
+        if tools:
+            body["tools"] = tools
+        root = self.endpoint[:-3] if self.endpoint.endswith("/v1") else self.endpoint
+        payload = self._post_json(f"{root}/api/chat", body, timeout=timeout)
+        if not isinstance(payload, dict) or not isinstance(payload.get("message"), dict):
+            return payload
+        msg = payload["message"]
+        calls = [
+            {"id": f"call_{i}", "type": "function",
+             "function": {"name": (c.get("function") or {}).get("name"),
+                          "arguments": json.dumps((c.get("function") or {}).get("arguments") or {})}}
+            for i, c in enumerate(msg.get("tool_calls") or []) if isinstance(c, dict)
+        ]
+        return {
+            "model": payload.get("model", model),
+            "choices": [{
+                "message": {"role": "assistant", "content": msg.get("content"), "tool_calls": calls},
+                "finish_reason": "tool_calls" if calls else (payload.get("done_reason") or "stop"),
+            }],
+            "usage": {"prompt_tokens": payload.get("prompt_eval_count", 0),
+                      "completion_tokens": payload.get("eval_count", 0)},
+        }
 
     def list_models(self, *, timeout: float = 10.0, force_refresh: bool = False) -> list[str]:
         """List available models from the provider.

@@ -234,8 +234,23 @@ def _make_transport_client(
         # shutil.which), raising the clear install/login error if absent.
         client = CodexClient(**kwargs)
         return client, cfg
-    client = OllamaClient(endpoint=cfg.endpoint, api_key=cfg.api_key)
+    num_ctx = None if cfg.api_key else local_num_ctx(cfg.name, env_dir=env_dir)
+    client = OllamaClient(endpoint=cfg.endpoint, api_key=cfg.api_key, num_ctx=num_ctx)
     return client, cfg
+
+
+def local_num_ctx(name: str, *, env_dir: str | Path | None = None) -> int:
+    """Context window a keyless provider asks its server for: ``<NAME>_NUM_CTX``
+    from the provider's env file (or the process env). 0 = server default."""
+    name = _canonical_provider_name(name)
+    spec = _BUILTINS.get(name)
+    env_root = Path(env_dir) if env_dir else DEFAULT_ENV_DIR
+    env = _parse_env_file(env_root / (spec.env_file if spec else f".env.{name}"))
+    raw = _lookup_env_value(env, f"{_env_prefix(name)}_NUM_CTX") or ""
+    try:
+        return max(0, int(raw.strip()))
+    except ValueError:
+        return 0
 
 
 def make_client(name: str, *, env_dir: str | Path | None = None, health_path: str | Path | None = None):
