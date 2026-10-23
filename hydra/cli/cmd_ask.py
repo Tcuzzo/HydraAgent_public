@@ -8,6 +8,7 @@ import os
 import sys
 from pathlib import Path
 
+from hydra.answer_budget import AnswerBudgetClient, Rung
 from hydra.inter_agent import use_correlation_id, use_trace_id
 from hydra.llm import LlmError
 from hydra.loop import AgentLoop, LoopError
@@ -37,6 +38,11 @@ from hydra.cli.cmd_chat import (
 
 
 DEFAULT_ASK_MAX_ITERATIONS = 20
+
+
+def _budgeted(client, provider: str, model: str, prompt: str) -> AnswerBudgetClient:
+    """Never print a reply cut off at its output budget: retry bigger, learn each rung's allowance."""
+    return AnswerBudgetClient([Rung(str(provider), str(model), client=client)], question=prompt)
 HYDRA_ASK_MAX_ITERATIONS_ENV = "HYDRA_ASK_MAX_ITERATIONS"
 
 
@@ -235,7 +241,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
     if routed_skill_context:
         system_prompt = system_prompt.rstrip() + "\n\n" + routed_skill_context
 
-    loop = AgentLoop(client, model=model, system_prompt=system_prompt)
+    loop = AgentLoop(_budgeted(client, cfg.name, model, args.prompt), model=model, system_prompt=system_prompt)
     memory_root = Path(args.memory_root).expanduser().resolve()
     tools = _bind_tools(root, approval_policy=args.approval_policy, memory_root=memory_root)
     print(
@@ -279,7 +285,8 @@ def cmd_ask(args: argparse.Namespace) -> int:
                 f"API failure on the configured provider. Falling back to local GPU provider {cfg.name}/{model}.",
                 file=sys.stderr,
             )
-            loop = AgentLoop(client, model=model, system_prompt=system_prompt)
+            loop = AgentLoop(_budgeted(client, cfg.name, model, args.prompt), model=model,
+                             system_prompt=system_prompt)
             attempted_local_fallback = True
             continue
 
