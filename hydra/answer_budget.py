@@ -10,6 +10,7 @@ Ported from the Hydra research runtime (the Ask Hydra path):
 * Long questions skip rungs that keep cutting off long answers (they become a fallback only).
 * A rung whose model is gone (HTTP 410: retired upstream) is skipped for a while instead of failing every call, and
   the next rung answers. Other 4xx errors (bad request, auth) still surface at once.
+* A rung that prints its tool call as text gets that call run for real (see hydra.text_tool_calls).
 
 Model-agnostic: rungs come from the caller's routing config and are keyed by their identity string; this module names no
 model, provider or secret. The ledger is small JSON under the Hydra home directory and never holds secrets.
@@ -26,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from hydra.llm import LlmError
+from hydra.text_tool_calls import promote_text_tool_calls
 
 LEDGER_FILE = "runtime/rung_ledger.json"
 LONG_WORDS = 14
@@ -249,6 +251,7 @@ class AnswerBudgetClient:
                         first_err = first_err or exc
                         break
                     raise
+                resp = promote_text_tool_calls(resp, kw.get("tools"), log=self._log, rung=rung.identity)
                 ms = int((self._clock() - t0) * 1000)
                 receipt = {"rung": rung.identity, "max_tokens": budget, "attempt": attempt + 1, "latency_ms": ms,
                            "output_tokens": getattr(resp, "completion_tokens", 0) or 0, "answer_size":
