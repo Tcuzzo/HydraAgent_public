@@ -28,12 +28,66 @@ from skills import fs_write as skill_fs_write
 from skills import glob_files as skill_glob
 from skills import grep_files as skill_grep
 from skills import http_fetch as skill_http_fetch
+from skills import web_extract as skill_web_extract
 from skills import list_directory as skill_ls
 from skills import system_stats as skill_system_stats
 from skills import todo as skill_todo
 
 
 DEFAULT_FILESYSTEM_ROOT = Path(os.environ.get("HYDRA_DEFAULT_ROOT", "")).expanduser().resolve() if os.environ.get("HYDRA_DEFAULT_ROOT") else Path.cwd()
+
+
+HTTP_FETCH_TEXT_CHARS = 12000
+
+
+def _http_fetch_tool(
+    url: str,
+    method: str = "GET",
+    headers: dict | None = None,
+    body: str | None = None,
+    timeout: float = 20,
+    max_bytes: int = 200000,
+    raw: bool = False,
+) -> dict:
+    """Adapt the agent's http_fetch call to the GET-only, allow-listed skill.
+
+    HTML pages come back as readable text (title + text, capped at
+    HTTP_FETCH_TEXT_CHARS) unless raw=True: raw markup can push the question
+    out of a small local model's context window.
+
+    The skill requires an allow-list. When the operator sets
+    HYDRA_HTTP_FETCH_ALLOWED_HOSTS (comma separated) that list binds; otherwise
+    the host the agent asked for is the allow-list, which is what this tool
+    promises ("reachable docs"). Non-GET requests are refused plainly instead
+    of crashing with a TypeError.
+    """
+    import urllib.parse
+
+    verb = (method or "GET").strip().upper()
+    if verb != "GET" or body:
+        raise skill_http_fetch.SkillError(f"http_fetch only does GET (asked for {verb}{' with a body' if body else ''})")
+    configured = [h.strip() for h in os.environ.get("HYDRA_HTTP_FETCH_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    allowed = configured or [urllib.parse.urlparse(str(url)).hostname or ""]
+    kwargs: dict[str, object] = {"timeout": float(timeout), "max_bytes": int(max_bytes)}
+    agent = next((str(v) for k, v in (headers or {}).items() if str(k).lower() == "user-agent"), None)
+    if agent:
+        kwargs["user_agent"] = agent
+    fetched = skill_http_fetch.run(str(url), allowed, **kwargs)
+    page = str(fetched.get("body") or "")
+    content_type = str(fetched.get("content_type") or "").lower()
+    if raw or not ("html" in content_type or skill_web_extract._looks_like_html(page)):
+        return fetched
+    parser = skill_web_extract._Extractor()
+    parser.feed(page)
+    parser.close()
+    text = parser.text()
+    truncated = len(text) > HTTP_FETCH_TEXT_CHARS
+    if truncated:
+        text = text[:HTTP_FETCH_TEXT_CHARS] + "\n[truncated]"
+    out = {k: v for k, v in fetched.items() if k != "body"}
+    out.update(title=parser.title(), text=text, truncated=truncated,
+               note="HTML shown as readable text; pass raw=true for markup")
+    return out
 
 
 def guarded(
@@ -712,7 +766,7 @@ def bind_tools(
         ),
         Tool(
             name="http_fetch",
-            description="Fetch a URL with method/headers/body. Use for APIs or reachable docs.",
+            description="Fetch a URL (HTTP GET). HTML pages come back as readable text (raw=true for markup). Use for APIs or reachable docs.",
             parameters={
                 "type": "object",
                 "properties": {
@@ -722,17 +776,11 @@ def bind_tools(
                     "body": {"type": "string"},
                     "timeout": {"type": "number", "default": 20},
                     "max_bytes": {"type": "integer", "default": 200000},
+                    "raw": {"type": "boolean", "default": False},
                 },
                 "required": ["url"],
             },
-            invoke=lambda url, method="GET", headers=None, body=None, timeout=20, max_bytes=200000: skill_http_fetch.run(
-                url,
-                method=method,
-                headers=headers,
-                body=body,
-                timeout=timeout,
-                max_bytes=max_bytes,
-            ),
+            invoke=_http_fetch_tool,
         ),
         # (task_planner skill does not add a standalone orchestrate tool in this build)
         # SEAM CUT: roster_count, model_matrix, skill_scout tools removed (multi-agent fabric stripped).
