@@ -1,9 +1,9 @@
 schema: hydra.model_routing.v1
 # SINGLE SOURCE OF TRUTH for the model roster + routing policy.
 # Read by hydra/model_routing.py (typed loader). Editing a model name here
-# changes the resolved model everywhere — no Python edit. If this file is
-# missing/invalid the loader falls back to the frozen DEFAULT in code (same
-# values), so the agent never crashes and never silently picks a different model.
+# changes the resolved model everywhere — no Python edit. No model is named in
+# code: if this file is missing/invalid the loader raises RoutingConfigError
+# naming the file, so the agent never silently picks a different model.
 
 # ── ROSTER: every model the agent can route to. id is referenced by rules. ──
 roster:

@@ -75,8 +75,8 @@ def build_chat_profile_defaults() -> dict[str, tuple[str, str]]:
     Editing a model name there changes the resolved chat model everywhere — no
     Python edit here. The chat/conversation brain uses the cloud-doer roster entry;
     local qwen2.5-coder stays for forced --local + bounded worker loops. If the
-    YAML is missing/invalid the loader returns the frozen DEFAULT (same values),
-    so this never crashes and never silently picks a different model.
+    YAML is missing/invalid the loader raises RoutingConfigError naming the file,
+    so it never silently picks a different model.
     """
     routing = load_routing()
     return {
