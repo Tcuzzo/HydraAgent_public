@@ -1,6 +1,8 @@
 """Ask/chat CLI command handlers and parser registration."""
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import argparse
 import json
 import os
@@ -43,7 +45,9 @@ from hydra.memory_kernel import assemble_truth_context
 from hydra.rubric_judge import RubricJudgeError, judge as rubric_judge
 from hydra.prompt_builder import PromptBuilderError, compose_operator_prompt
 from hydra.runtime_route import default_runtime_route, route_string
-from hydra.model_routing import load_routing
+from hydra.model_routing import RungResolutionError, load_routing
+from hydra.providers import is_local_provider
+from hydra.rung_resolver import LOCAL as LOCAL_TRANSPORT
 from hydra.session_memory import (
     DEFAULT_STARTUP_HISTORY_LIMIT,
     add_message,
@@ -72,11 +76,10 @@ def build_chat_profile_defaults() -> dict[str, tuple[str, str]]:
     """Build the chat-profile (provider, model) map from the single YAML source.
 
     Reads hydra/model_routing.yaml via the typed loader (hydra.model_routing).
-    Editing a model name there changes the resolved chat model everywhere — no
-    Python edit here. The chat/conversation brain uses the cloud-doer roster entry;
-    local qwen2.5-coder stays for forced --local + bounded worker loops. If the
-    YAML is missing/invalid the loader returns the frozen DEFAULT (same values),
-    so this never crashes and never silently picks a different model.
+    The file names BACKS rungs only; each rung resolves to a live model through
+    Kev/Needle at call time, so nothing here names a model. The chat brain is a
+    cloud rung; the local GPU rung serves forced --local and bounded worker loops.
+    A missing/invalid file raises RoutingConfigError (no in-code roster).
     """
     routing = load_routing()
     return {
@@ -86,9 +89,26 @@ def build_chat_profile_defaults() -> dict[str, tuple[str, str]]:
     }
 
 
-# Kept as a module-level dict (same name + shape) so all existing callers/tests
-# are untouched — but its values now come from the YAML, not literals.
-CHAT_PROFILE_DEFAULTS = build_chat_profile_defaults()
+class _ChatProfileDefaults(Mapping):
+    """Same name + shape as the old module dict, but each profile resolves its rung
+    when read, so importing this module never waits on BACKS (or fails without it)."""
+
+    _PROFILES = ("auto", "cloud", "local")
+
+    def __getitem__(self, profile: str) -> tuple[str, str]:
+        if profile not in self._PROFILES:
+            raise KeyError(profile)
+        routing = load_routing()
+        return routing.worker_default() if profile == "local" else routing.chat_default(profile)
+
+    def __iter__(self):
+        return iter(self._PROFILES)
+
+    def __len__(self) -> int:
+        return len(self._PROFILES)
+
+
+CHAT_PROFILE_DEFAULTS = _ChatProfileDefaults()
 DEFAULT_WORKBENCH_API = "http://127.0.0.1:8765"
 
 
@@ -346,6 +366,8 @@ def _auto_route_role(args: argparse.Namespace) -> dict | None:
 def _make_client_or_setup(args: argparse.Namespace):
     env_dir = getattr(args, "env_dir", None)
     try:
+        if not args.provider:
+            raise ProviderError("no model rung is reachable and no provider is set up")
         return make_client(args.provider, env_dir=env_dir)
     except ProviderError as e:
         if not getattr(args, "setup_if_needed", False):
@@ -385,12 +407,12 @@ def _make_client_or_setup(args: argparse.Namespace):
 
 
 def _local_gpu_fallback_client(args: argparse.Namespace):
-    """Attempt to configure a local Ollama client for fallback when API calls fail."""
-    if getattr(args, "provider", None) == "ollama":
+    """Attempt to configure the local GPU rung for fallback when API calls fail."""
+    if is_local_provider(getattr(args, "provider", None)):
         return None
     env_dir = getattr(args, "env_dir", None)
     try:
-        client, cfg = make_client("ollama", env_dir=env_dir)
+        client, cfg = make_client(LOCAL_TRANSPORT, env_dir=env_dir)
     except ProviderError as e:
         print(
             f"local GPU fallback unavailable: {e}. "
@@ -403,19 +425,26 @@ def _local_gpu_fallback_client(args: argparse.Namespace):
 
 def _resolve_chat_runtime(args: argparse.Namespace) -> dict[str, str]:
     profile = getattr(args, "profile", "auto") or "auto"
-    default_provider, default_model = CHAT_PROFILE_DEFAULTS[profile]
+    try:
+        default_provider, default_model = CHAT_PROFILE_DEFAULTS[profile]
+    except RungResolutionError:
+        default_provider, default_model = "", ""  # no rung reachable: setup decides
     provider = getattr(args, "provider", None) or os.environ.get("HYDRA_PROVIDER")
     env_dir = getattr(args, "env_dir", None)
     if not provider and profile == "auto":
-        # Setup writes provider env files. Prefer a configured default, then
-        # another configured provider, so a local/custom setup can start chat.
+        # Setup writes provider env files. A rung BACKS answered for wins; when the
+        # rung fell back to the local GPU, the operator's own setup goes first.
         env_root = Path(env_dir) if env_dir else DEFAULT_ENV_DIR
-        candidates = [default_provider]
+        setup: list[str] = []
         if env_root.is_dir():
-            candidates += [p.name[5:] for p in sorted(env_root.glob(".env.*"))
-                           if p.is_file() and p.name not in {".env.hydra", ".env.needle"}]
+            setup += [p.name[5:] for p in sorted(env_root.glob(".env.*"))
+                      if p.is_file() and p.name not in {".env.hydra", ".env.needle"}]
         if any(os.environ.get(key) for key in ("OLLAMA_MODEL", "OLLAMA_ENDPOINT", "OLLAMA_BASE_URL")):
-            candidates.append("ollama")
+            setup.append(LOCAL_TRANSPORT)
+        if default_provider and not is_local_provider(default_provider):
+            candidates = [default_provider, *setup]
+        else:
+            candidates = [*setup, *([default_provider] if default_provider else [])]
         for candidate in dict.fromkeys(candidates):
             try:
                 cfg = resolve(candidate, env_dir=env_dir)
@@ -425,12 +454,13 @@ def _resolve_chat_runtime(args: argparse.Namespace) -> dict[str, str]:
             break
     provider = provider or default_provider
     model = getattr(args, "model", None)
-    if not model:
+    if not model and provider:
         try:
             model = resolve(provider, env_dir=env_dir).model
         except ProviderError:
             model = ""
         model = model or (default_model if provider == default_provider else "")
+    model = model or ""
     route = default_runtime_route()
     route["conversation_provider"] = provider
     if profile == "local":
@@ -449,7 +479,7 @@ def _resolve_chat_runtime(args: argparse.Namespace) -> dict[str, str]:
 
 
 def _identity_from_runtime(runtime: dict[str, str]):
-    worker_provider = runtime.get("local_worker_provider") or runtime.get("worker_provider", "ollama")
+    worker_provider = runtime.get("local_worker_provider") or runtime.get("worker_provider", LOCAL_TRANSPORT)
     return build_identity(
         profile=runtime["profile"],
         provider=runtime["provider"],
@@ -480,7 +510,7 @@ def _print_chat_identity(runtime: dict[str, str], root: Path, approval_policy: s
     print(f"provider={runtime['provider']}")
     print(f"model={runtime['model']}")
     print(f"planner_provider={runtime.get('planner_provider', runtime['provider'])}")
-    print(f"local_worker_provider={runtime.get('local_worker_provider', runtime.get('worker_provider', 'ollama'))}")
+    print(f"local_worker_provider={runtime.get('local_worker_provider', runtime.get('worker_provider', LOCAL_TRANSPORT))}")
     print(f"runtime_route={runtime['runtime_route']}")
     print(f"root={scope_note}")
     print(f"approval_policy={approval_policy}")
@@ -551,7 +581,7 @@ def _print_ask_identity(runtime: dict[str, str], root: Path, approval_policy: st
     print(f"provider={runtime['provider']}")
     print(f"model={runtime['model']}")
     print(f"planner_provider={runtime.get('planner_provider', runtime['provider'])}")
-    print(f"local_worker_provider={runtime.get('local_worker_provider', runtime.get('worker_provider', 'ollama'))}")
+    print(f"local_worker_provider={runtime.get('local_worker_provider', runtime.get('worker_provider', LOCAL_TRANSPORT))}")
     print(f"runtime_route={runtime['runtime_route']}")
     print(f"root={scope_note}")
     print(f"approval_policy={approval_policy}")
@@ -572,7 +602,7 @@ def _print_runtime_route(runtime: dict[str, str]) -> None:
     print(f"conversation_provider={runtime['provider']}")
     print(f"conversation_model={runtime['model']}")
     print(f"planner_provider={runtime.get('planner_provider', runtime['provider'])}")
-    print(f"worker_provider={runtime.get('local_worker_provider', runtime.get('worker_provider', 'ollama'))}")
+    print(f"worker_provider={runtime.get('local_worker_provider', runtime.get('worker_provider', LOCAL_TRANSPORT))}")
     print(f"runtime_route={runtime['runtime_route']}")
     print("inference=one chat entrypoint; cloud speaks by default, local GPU is reserved for bounded worker/loop work")
     print("identity:")
@@ -776,10 +806,10 @@ def cmd_chat(args: argparse.Namespace) -> int:
             print("Built-in providers:")
             for provider in list_providers_fn():
                 print(f"  {provider}")
-            print("chat profiles:")
-            print("  auto -> chat:ollama-cloud planner:ollama-cloud worker:ollama")
-            print("  cloud -> ollama-cloud")
-            print("  local -> ollama")
+            print("chat profiles (BACKS rungs; Kev/Needle pick the model per call):")
+            _r = load_routing()
+            for _profile, _rid in _r.chat_profiles.items():
+                print(f"  {_profile} -> rung {_r.entry(_rid).rung}")
             return True
         if stripped == "/skills":
             print(render_skill_list(list_skill_records()))
@@ -921,7 +951,7 @@ def register_chat_commands(
         "--profile",
         choices=("auto", "cloud", "local"),
         default="auto",
-        help="chat runtime profile: auto uses cloud chat plus local worker routing; local uses Ollama",
+        help="chat runtime profile: auto uses cloud chat plus local worker routing; local uses the local GPU rung",
     )
     p_chat.add_argument("--provider", default=None, help="override provider selected by --profile")
     p_chat.add_argument("--model", default=None)
