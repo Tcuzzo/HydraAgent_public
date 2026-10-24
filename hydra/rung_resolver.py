@@ -1,0 +1,372 @@
+"""hydra.rung_resolver — turn a BACKS rung name into a live route at call time.
+
+Hydra's routing file names BACKS rungs only (``plan``, ``work``, ``build``, ``auto``
+or a ladder rung identity such as the local GPU rung). No model, provider or key
+name lives in Hydra. At call time this module asks the BACKS rung resolver
+(Kev/Needle on the BACKS host) what a rung means right now:
+
+* a cloud rung names a BACKS router task (``backs.router.v1``, see
+  docs/BACKS_ROUTER_CONTRACT.md). Hydra asks ``POST /api/router/resolve`` for the live
+  chain, logs the head rung and its model, and sends the turn to
+  ``POST /api/router/complete``, where BACKS walks the chain, carries the essence and
+  records an outcome per attempt. Turns that carry Hydra's own tools go through the
+  BACKS gateway capability for the rung, and Hydra reports that outcome to
+  ``POST /api/router/outcome``. BACKS holds the keys; Hydra sends none.
+* a local GPU rung (``local: true`` in the routing file) resolves to the model the
+  BACKS ladder assigns that rung, served by this host's local GPU endpoint.
+
+Never-fail rule (operator 2026-10-23): a rung that can't be resolved or that fails
+mid-call raises ``RungResolutionError`` -- a retryable ``LlmError`` -- so the router
+falls through the role's rung chain and finally the local GPU rung. The local rung
+still works with BACKS down: it asks this host's GPU endpoint what it is serving.
+Hydra only gives up when no rung at all is reachable. There is no baked model list
+and nothing is cached on disk; each response's route receipt (rung -> Kev/Needle
+decision -> model) is logged, never stored. Hydra keeps no learning or routing
+logic of its own: BACKS Kev/Needle own the choice.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import socket
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any, Callable
+
+from hydra.llm import LlmError, OllamaClient
+
+_LOG = logging.getLogger("hydra.rung")
+
+#: Hydra's own transport names (not model providers): the BACKS gateway and the
+#: host-local GPU endpoint.
+GATEWAY = "backs"
+LOCAL = "local"
+
+#: Where the BACKS host lives: env var, else ``<env_dir>/.env.backs``. Never in the repo.
+URL_ENV = "HYDRA_BACKS_URL"
+ENV_FILE = ".env.backs"
+ENV_FILE_KEY = "BACKS_ENDPOINT"
+
+#: BACKS router contract (backs.router.v1). Paths only; BACKS names the rungs.
+ROUTER_RESOLVE = "/api/router/resolve"
+ROUTER_COMPLETE = "/api/router/complete"
+ROUTER_OUTCOME = "/api/router/outcome"
+#: Hydra route string for a router task: ``router/<task>/<rung>``. Not a model name.
+ROUTE_PREFIX = "router/"
+#: The router walks a whole chain, so a call gets at least this long.
+ROUTER_MIN_TIMEOUT = 300.0
+#: Last chain the router gave per task (this process only, for logs). Never stored.
+_CHAINS: dict[str, list[dict]] = {}
+#: When BACKS was last found unreachable or out of rungs: (monotonic time, why). For a
+#: short while every other cloud rung is skipped at once so the turn reaches the local
+#: GPU rung without waiting on a dead host once per rung.
+_DOWN: list[tuple[float, str]] = []
+DOWN_RETRY_SECONDS = 60.0
+
+
+def _mark_down(why: str) -> None:
+    _DOWN[:] = [(time.monotonic(), why)]
+
+
+def _check_down() -> None:
+    if _DOWN and time.monotonic() - _DOWN[0][0] < DOWN_RETRY_SECONDS:
+        raise RungResolutionError(f"{_DOWN[0][1]} (BACKS retried in under {DOWN_RETRY_SECONDS:.0f}s)")
+    _DOWN.clear()
+
+
+class RungResolutionError(LlmError):
+    """A rung could not be resolved or failed mid-call; the router moves to the next rung."""
+
+
+def backs_url(env_dir: str | Path | None = None) -> str:
+    url = os.environ.get(URL_ENV, "").strip()
+    if not url:
+        from hydra.providers import DEFAULT_ENV_DIR, _parse_env_file
+
+        root = Path(env_dir) if env_dir else DEFAULT_ENV_DIR
+        url = _parse_env_file(root / ENV_FILE).get(ENV_FILE_KEY, "").strip()
+    if not url:
+        raise RungResolutionError(
+            f"BACKS rung resolver location is not set: export {URL_ENV} or put "
+            f"{ENV_FILE_KEY}=<url> in ~/.hydraAgent/workspace/{ENV_FILE}. Hydra names no "
+            "model itself, so it can't route without BACKS."
+        )
+    return url.rstrip("/")
+
+
+def _get(url: str, timeout: float) -> Any:
+    req = urllib.request.Request(url, headers={"User-Agent": OllamaClient._USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError) as exc:
+        if not isinstance(exc, urllib.error.HTTPError):
+            _mark_down(f"BACKS at {url} is unreachable: {exc}")
+        raise RungResolutionError(f"BACKS rung resolver at {url} failed: {exc}") from exc
+    except ValueError as exc:
+        raise RungResolutionError(f"BACKS rung resolver at {url} failed: {exc}") from exc
+
+
+def _post(url: str, body: dict, timeout: float) -> tuple[int, Any]:
+    """POST JSON; returns (status, body). Only an unreachable host raises."""
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode("utf-8"), method="POST",
+        headers={"User-Agent": OllamaClient._USER_AGENT, "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+            status = resp.status
+    except urllib.error.HTTPError as exc:
+        status, raw = exc.code, exc.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, OSError) as exc:
+        _mark_down(f"BACKS at {url} is unreachable: {exc}")
+        raise RungResolutionError(f"BACKS at {url} is unreachable: {exc}") from exc
+    try:
+        return status, json.loads(raw) if raw else {}
+    except ValueError:
+        return status, {"message": raw[:300]}
+
+
+def route_for(task: str, rung: str) -> str:
+    return f"{ROUTE_PREFIX}{task}/{rung}"
+
+
+def parse_route(route: str) -> tuple[str, str] | None:
+    """``router/<task>/<rung>`` -> (task, rung); anything else -> None."""
+    if not str(route).startswith(ROUTE_PREFIX):
+        return None
+    task, _, rung = str(route)[len(ROUTE_PREFIX):].partition("/")
+    return (task, rung) if task else None
+
+
+def report_outcome(base: str, body: dict, *, post: Callable[..., tuple[int, Any]] | None = None,
+                   timeout: float = 5.0) -> bool:
+    """Best-effort outcome report to the BACKS router; never raises."""
+    try:
+        status, data = (post or _post)(f"{base.rstrip('/')}{ROUTER_OUTCOME}", {"source": "hydra", **body}, timeout)
+    except RungResolutionError as exc:
+        _LOG.warning("router outcome not recorded: %s", exc)
+        return False
+    if status != 200:
+        _LOG.warning("router outcome not recorded: HTTP %s %s", status, str(data)[:200])
+        return False
+    return True
+
+
+def _capability_for(rung: str, catalog: Any) -> str | None:
+    for item in (catalog or {}).get("data") or []:
+        cap_id = str(item.get("id") or "")
+        names = {str(item.get("display_name") or "").strip().lower(), cap_id.rsplit("-", 1)[-1].lower()}
+        if rung.lower() in names:
+            return cap_id
+    return None
+
+
+def _ladder_model(rung: str, rows: Any) -> str | None:
+    for candidates in ((rows or {}).get("roles") or {}).values():
+        for row in candidates or []:
+            if row.get("identity") == rung and row.get("model"):
+                return str(row["model"])
+    return None
+
+
+def _local_served_model(env_dir: str | Path | None, get: Callable[[str, float], Any], timeout: float) -> str | None:
+    """What this host's GPU endpoint is serving right now (loaded first, else installed)."""
+    from hydra.providers import resolve as resolve_transport
+
+    base = resolve_transport(LOCAL, env_dir=env_dir, rung_model=False).endpoint.rstrip("/")
+    for path, key in (("/api/ps", "models"), ("/api/tags", "models")):
+        try:
+            rows = (get(f"{base}{path}", timeout) or {}).get(key) or []
+        except RungResolutionError:
+            continue
+        for row in rows:
+            name = str(row.get("model") or row.get("name") or "")
+            if name and "embed" not in name.lower():
+                return name
+    return None
+
+
+def resolve(rung: str, *, local: bool = False, task: str | None = None, env_dir: str | Path | None = None,
+            fetch: Callable[[str, float], Any] | None = None,
+            post: Callable[..., tuple[int, Any]] | None = None, timeout: float = 15.0) -> tuple[str, str]:
+    """Resolve one rung to Hydra's ``(transport, route)`` pair.
+
+    Raises ``RungResolutionError`` (retryable) when this rung can't be used, so the
+    caller moves on to the next rung.
+    """
+    if not rung:
+        raise RungResolutionError("routing entry has no rung name")
+    get = fetch or _get
+    if local:
+        model = None
+        why = "BACKS ladder has no model for this rung"
+        try:
+            model = _ladder_model(rung, get(f"{backs_url(env_dir)}/api/system/needle_engineer_rungs", timeout))
+        except RungResolutionError as exc:
+            why = "BACKS unreachable"
+            _LOG.warning("rung %s: BACKS ladder unreachable (%s); asking the local GPU", rung, exc)
+        if model:
+            _LOG.info("rung %s -> BACKS ladder -> local GPU model %s", rung, model)
+            return LOCAL, model
+        model = _local_served_model(env_dir, get, min(timeout, 5.0))
+        if not model:
+            raise RungResolutionError(f"local GPU rung {rung!r} is not reachable")
+        _LOG.warning("rung %s -> %s -> local GPU serving %s", rung, why, model)
+        return LOCAL, model
+    base = backs_url(env_dir)
+    if post is None:
+        _check_down()
+    if task:
+        status, data = (post or _post)(
+            f"{base}{ROUTER_RESOLVE}", {"task_type": task, "task": "route check", "tools": []}, timeout)
+        if status == 200:
+            rows = [row for row in (data or {}).get("chain") or [] if row.get("usable")]
+            if not rows:
+                raise RungResolutionError(f"BACKS router has no usable rung for task {task!r} right now")
+            _CHAINS[task] = rows
+            head = rows[0]
+            line = (f"hydra: rung {rung} -> BACKS router task {task} (Kev/Needle order) -> "
+                    f"rung {head.get('rung', '?')} -> model {head.get('model', '?')} "
+                    f"({len(rows)} usable)")
+            _LOG.info(line)
+            print(line, file=sys.stderr)
+            return GATEWAY, route_for(task, rung)
+        if status != 404:
+            raise RungResolutionError(
+                f"BACKS router refused task {task!r}: HTTP {status} {str(data)[:200]}")
+        _LOG.warning("BACKS router is not deployed (404); using the capability rung %s", rung)
+    cap = _capability_for(rung, get(f"{base}/v1/models", timeout))
+    if not cap:
+        raise RungResolutionError(f"BACKS has no capability rung named {rung!r}")
+    _LOG.info("rung %s -> BACKS capability %s (Kev/Needle pick the model per request)", rung, cap)
+    return GATEWAY, cap
+
+
+def _task_text(msgs: list[dict]) -> str:
+    """Flatten a chat into the router's single ``task`` text (the router adds the essence)."""
+    names = {}
+    parts: list[str] = []
+    for m in msgs:
+        role = str(m.get("role") or "user")
+        content = str(m.get("content") or "")
+        if role == "tool":
+            name = m.get("name") or names.get(m.get("tool_call_id"), "tool")
+            parts.append(f'<tool_result name="{name}">{content}</tool_result>')
+            continue
+        calls = []
+        for c in m.get("tool_calls") or []:
+            fn = (c or {}).get("function") or {}
+            names[c.get("id")] = fn.get("name")
+            calls.append(f'<tool_call>{json.dumps({"name": fn.get("name"), "arguments": fn.get("arguments")})}</tool_call>')
+        parts.append(f"## {role.capitalize()}\n" + "\n".join([content, *calls]).strip())
+    return "\n\n".join(parts)
+
+
+class RungGatewayClient(OllamaClient):
+    """Client for BACKS: router turns go to /api/router/complete; tool turns go to the
+    gateway capability and report their outcome. Logs each route receipt."""
+
+    last_receipt: dict[str, str] = {}
+    post: Callable[..., tuple[int, Any]] | None = None
+
+    def chat(self, messages, *, model: str, max_tokens: int = 1024, temperature: float = 0.2,
+             timeout: float = 60.0, tools: list[dict] | None = None):
+        route = parse_route(model)
+        if route is None:
+            return super().chat(messages, model=model, max_tokens=max_tokens,
+                                temperature=temperature, timeout=timeout, tools=tools)
+        task, rung = route
+        if self.post is None:
+            _check_down()
+        if tools:
+            return self._tool_turn(messages, task=task, rung=rung, max_tokens=max_tokens,
+                                   temperature=temperature, timeout=timeout, tools=tools)
+        from hydra.llm import ChatMessage, ChatResponse
+
+        msgs = [m.to_dict() if isinstance(m, ChatMessage) else dict(m) for m in messages]
+        status, data = (self.post or _post)(
+            f"{self.endpoint}{ROUTER_COMPLETE}",
+            {"task_type": task, "task": _task_text(msgs), "tools": []},
+            max(timeout, ROUTER_MIN_TIMEOUT),
+        )
+        if status != 200 or not (data or {}).get("ok"):
+            if status == 503:
+                _mark_down("BACKS router has no rung that can answer")
+            raise RungResolutionError(
+                f"BACKS router answered nothing for task {task!r}: "
+                f"{(data or {}).get('message') or (data or {}).get('error') or f'HTTP {status}'}")
+        hit = data.get("rung", "?")
+        model_name = next((r.get("model") for r in _CHAINS.get(task, []) if r.get("rung") == hit), None)
+        tried = [f"{a.get('rung')}:{a.get('error_class')}" for a in data.get("attempts") or [] if not a.get("ok")]
+        line = (f"hydra: rung {rung} -> BACKS router task {task} (Kev/Needle order) -> rung {hit} "
+                f"({data.get('tier', '?')}) -> model {model_name or '(per BACKS ladder)'}"
+                + (f"; fell through {', '.join(tried)}" if tried else ""))
+        self.last_receipt = {"x-backs-identity": str(hit), "x-backs-route-tier": task}
+        _LOG.info(line)
+        print(line, file=sys.stderr)
+        answer = str(data.get("answer") or "")
+        return ChatResponse(content=answer, model=str(hit), finish_reason="stop",
+                            prompt_tokens=0, completion_tokens=0, raw=data)
+
+    def _tool_turn(self, messages, *, task: str, rung: str, max_tokens: int, temperature: float,
+                   timeout: float, tools: list[dict]):
+        """Hydra runs its own tools, so this turn goes to the gateway capability for the
+        rung (native tool calls) and the outcome is reported to the router."""
+        cap = _capability_for(rung, _get(f"{self.endpoint}/v1/models", 15.0))
+        if not cap:
+            raise RungResolutionError(f"BACKS has no capability rung named {rung!r}")
+        started = time.monotonic()
+        try:
+            resp = super().chat(messages, model=cap, max_tokens=max_tokens,
+                                temperature=temperature, timeout=timeout, tools=tools)
+        except LlmError as exc:
+            hit = self.last_receipt.get("x-backs-identity")
+            if hit:
+                report_outcome(self.endpoint, {"task_type": task, "rung": hit, "success": False,
+                                               "error_class": "server",
+                                               "latency_s": round(time.monotonic() - started, 3)},
+                               post=self.post)
+            raise
+        hit = self.last_receipt.get("x-backs-identity")
+        if hit:
+            report_outcome(self.endpoint, {"task_type": task, "rung": hit, "success": True,
+                                           "latency_s": round(time.monotonic() - started, 3),
+                                           "tokens_in": resp.prompt_tokens, "tokens_out": resp.completion_tokens},
+                           post=self.post)
+        return resp
+
+    def _read_json(self, req: urllib.request.Request, *, timeout: float) -> dict:
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                receipt = {k.lower(): v for k, v in resp.headers.items() if k.lower().startswith("x-backs-")}
+                raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode("utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                pass
+            raise RungResolutionError(f"HTTP {e.code} from {req.full_url}: {body[:300] or e.reason}") from e
+        except urllib.error.URLError as e:
+            raise RungResolutionError(f"could not reach {req.full_url}: {getattr(e, 'reason', e)}") from e
+        except socket.timeout as e:
+            raise RungResolutionError(f"timed out talking to {req.full_url} after {timeout}s") from e
+        if receipt:
+            self.last_receipt = receipt
+            line = (
+                f"hydra: rung {receipt.get('x-backs-route-tier', '?')} -> Kev/Needle decision "
+                f"{receipt.get('x-backs-decision') or '(tier pick)'} -> rung "
+                f"{receipt.get('x-backs-identity', '?')} -> model {receipt.get('x-backs-model', '?')}"
+            )
+            _LOG.info(line)
+            print(line, file=sys.stderr)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise RungResolutionError(f"non-JSON response from {req.full_url}: {raw[:200]!r}") from e

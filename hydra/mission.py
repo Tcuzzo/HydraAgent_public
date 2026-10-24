@@ -16,7 +16,6 @@ DEFAULT_MISSION_ROOT = Path("evidence/missions")
 VALID_STATUSES = frozenset(
     {"planned", "running", "needs_verification", "proven", "failed", "blocked"}
 )
-DEFAULT_RUNTIME_ROUTE = default_runtime_route()
 
 
 class MissionError(Exception):
@@ -34,7 +33,7 @@ class Mission:
     intent: str
     next_action: str
     status: str = "planned"
-    runtime_route: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_RUNTIME_ROUTE))
+    runtime_route: dict[str, str] = field(default_factory=default_runtime_route)
     evidence: dict[str, str] = field(default_factory=dict)
     schema: str = SCHEMA
     created_at: str = field(default_factory=utc_now)

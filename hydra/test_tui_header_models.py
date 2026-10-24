@@ -2,7 +2,7 @@
 
 RED criteria:
 - test_header_shows_both_chat_and_work_models: the on_mount welcome line in
-  #chat-stream CONTAINS both "llama-3.3-70b" (chat) AND "qwen2.5:72b" (work).
+  #chat-stream CONTAINS both "rung-work" (chat) AND "rung-plan" (work).
   Currently the line only contains the chat model → RED.
 - test_work_model_computed_at_init: app._work_model and app._work_provider are
   set at __init__ time (no turn needed).
@@ -22,8 +22,8 @@ import pytest
 
 # ── shared helpers ─────────────────────────────────────────────────────────
 
-_CHAT_MODEL = "llama-3.3-70b-versatile"
-_CHAT_PROVIDER = "ollama-cloud"
+_CHAT_MODEL = "rung-work"
+_CHAT_PROVIDER = "backs"
 
 
 def _make_app(resolve_work_model_override=None):
@@ -49,7 +49,7 @@ def _run(coro):
 def test_work_model_computed_at_init():
     """_work_model and _work_provider must be set at __init__ (no turn needed).
 
-    resolve_work_model('steering') should return ('ollama-cloud', 'qwen2.5:72b')
+    resolve_work_model('steering') should return ('backs', 'rung-plan')
     (or whatever the routing config has). We verify the attributes exist and are
     non-None strings — and that they equal what resolve_work_model('steering') returns.
     """
@@ -74,8 +74,8 @@ def test_work_model_computed_at_init():
 def test_header_shows_both_chat_and_work_models():
     """The welcome line written to #chat-stream on_mount must show BOTH models.
 
-    chat model: 'llama-3.3-70b-versatile' (from self.model)
-    work model: 'qwen2.5:72b' (from resolve_work_model('steering'))
+    chat model: 'rung-work' (from self.model)
+    work model: 'rung-plan' (from resolve_work_model('steering'))
     Both must appear in the rendered chat-stream text.
     """
     from textual.widgets import RichLog
@@ -87,12 +87,12 @@ def test_header_shows_both_chat_and_work_models():
             chat = app.query_one("#chat-stream", RichLog)
             lines_text = "\n".join(str(line) for line in chat.lines[:6])
             # Chat model must be visible
-            assert "llama-3.3-70b" in lines_text, (
+            assert "rung-work" in lines_text, (
                 f"chat model not found in header; got: {lines_text!r}"
             )
             # Work model must ALSO be visible (this is the RED → GREEN goal)
-            assert "qwen2.5:72b" in lines_text, (
-                f"work model 'qwen2.5:72b' not found in header; got: {lines_text!r}"
+            assert "rung-plan" in lines_text, (
+                f"work model 'rung-plan' not found in header; got: {lines_text!r}"
             )
 
     _run(go())
@@ -119,7 +119,7 @@ def test_header_failsoft_when_no_work_model():
             chat = app.query_one("#chat-stream", RichLog)
             lines_text = "\n".join(str(line) for line in chat.lines[:6])
             # Chat model must still be shown
-            assert "llama-3.3-70b" in lines_text, (
+            assert "rung-work" in lines_text, (
                 f"chat model not found after fail-soft; got: {lines_text!r}"
             )
             # No crash — test reaching here proves it
@@ -132,7 +132,7 @@ def test_active_provider_tracks_work_turn():
 
     We call _run_agent_loop_sync with a stubbed AgentLoop so no real network I/O
     happens. After the call, _active_provider should reflect the work executor's
-    provider (e.g. 'ollama-cloud'), not the initial chat provider.
+    provider (e.g. 'backs'), not the initial chat provider.
     """
     from hydra.work_executor import resolve_work_model
     from hydra.loop import LoopResult
@@ -189,7 +189,7 @@ def test_existing_active_model_banner_behavior_intact():
     app = _make_app()
 
     # Simulate an active work turn
-    app._active_model = "qwen2.5:72b"
+    app._active_model = "rung-plan"
     rendered = str(app._render_stat_bar())
     assert "work:" in rendered, (
         f"stat bar should show 'work:' prefix during work turn; got: {rendered!r}"

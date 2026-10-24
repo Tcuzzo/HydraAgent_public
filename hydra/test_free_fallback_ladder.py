@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch, call
 import pytest
 import yaml
 
-from hydra.model_routing import load_routing, clear_cache, DEFAULT
+from hydra.model_routing import load_routing, clear_cache
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -19,19 +19,19 @@ from hydra.model_routing import load_routing, clear_cache, DEFAULT
 class TestFreeFallbackLoader:
     """model_routing.py parses + exposes free_fallback_models correctly."""
 
-    def _make_minimal_cfg(self, free_fallback_models=None):
-        """Minimal valid model_routing config for loader tests."""
+    def _make_minimal_cfg(self, free_tagged=("cloud-auto",)):
+        """Minimal valid v2 config: roster entries name BACKS rungs only."""
+        def tags(eid, base):
+            return base + (["free"] if eid in free_tagged else [])
         cfg = {
-            "schema": "hydra.model_routing.v1",
+            "schema": "hydra.model_routing.v2",
             "roster": [
-                {"id": "cloud-doer",   "provider": "ollama-cloud", "model": "qwen2.5:32b",
-                 "role_tags": ["chat", "intent"], "base_url": "https://api.ollama.cloud"},
-                {"id": "cloud-planner","provider": "ollama-cloud", "model": "qwen2.5:72b",
-                 "role_tags": ["planner","work","auditor","verifier"],
-                 "base_url": "https://api.ollama.cloud"},
-                {"id": "local-worker", "provider": "ollama",        "model": "qwen2.5-coder:7b",
-                 "role_tags": ["worker","local","router","read"],
-                 "base_url": "http://127.0.0.1:11434"},
+                {"id": "cloud-doer", "rung": "work", "role_tags": tags("cloud-doer", ["chat", "intent"])},
+                {"id": "cloud-planner", "rung": "plan",
+                 "role_tags": tags("cloud-planner", ["planner", "work", "auditor", "verifier"])},
+                {"id": "cloud-auto", "rung": "auto", "role_tags": tags("cloud-auto", ["fallback"])},
+                {"id": "local-worker", "rung": "local_gpu", "local": True,
+                 "role_tags": ["worker", "local", "router", "read"]},
             ],
             "routing": {
                 "chat_profiles": {"auto": "cloud-doer", "cloud": "cloud-planner", "local": "local-worker"},
@@ -43,49 +43,47 @@ class TestFreeFallbackLoader:
                     "auditor": "cloud-planner", "work": "cloud-planner", "intent": "cloud-doer",
                 },
                 "verifier": "cloud-planner",
-                "cloud_fallback_ladder": ["ollama-cloud"],
-                "local_fallback_provider": "ollama",
             },
         }
-        if free_fallback_models is not None:
-            cfg["routing"]["free_fallback_models"] = free_fallback_models
         return cfg
 
-    def test_yaml_free_fallback_models_loaded(self, tmp_path):
-        """routing.free_fallback_models comes from yaml in declared order."""
-        cfg = self._make_minimal_cfg(free_fallback_models=["nemotron-mini", "phi3:mini"])
+    def _load(self, tmp_path, cfg):
         yaml_path = tmp_path / "model_routing.yaml"
         yaml_path.write_text(yaml.dump(cfg))
         clear_cache()
-        routing = load_routing(yaml_path)
-        assert list(routing.free_fallback_models) == ["nemotron-mini", "phi3:mini"]
+        return load_routing(yaml_path)
 
-    def test_yaml_missing_free_fallback_uses_default(self, tmp_path):
-        """When yaml omits free_fallback_models, loader supplies safe default."""
-        cfg = self._make_minimal_cfg()  # free_fallback_models deliberately omitted
-        yaml_path = tmp_path / "model_routing.yaml"
-        yaml_path.write_text(yaml.dump(cfg))
-        clear_cache()
-        routing = load_routing(yaml_path)
-        # Safe default must be non-empty
-        assert len(routing.free_fallback_models) >= 2
+    def test_free_tier_is_the_free_tagged_rungs_in_roster_order(self, tmp_path):
+        """The free tier is whatever the free-tagged cloud rungs resolve to, in order."""
+        routing = self._load(tmp_path, self._make_minimal_cfg(("cloud-doer", "cloud-auto")))
+        assert list(routing.free_fallback_models) == ["rung-work", "rung-auto"]
 
-    def test_frozen_default_has_free_fallback_models(self):
-        """The in-code frozen DEFAULT always provides the free tier."""
-        assert "nemotron-mini" in DEFAULT.free_fallback_models
-        assert "phi3:mini" in DEFAULT.free_fallback_models
+    def test_free_tier_skips_an_unresolvable_rung(self, tmp_path, monkeypatch):
+        """A free rung BACKS can't resolve is skipped, never fatal."""
+        from hydra import model_routing as mr
+        from hydra.rung_resolver import GATEWAY
 
-    def test_frozen_default_order_is_nemotron_first(self):
-        """Ladder order: nemotron-mini before phi3:mini."""
-        ladder = list(DEFAULT.free_fallback_models)
-        assert ladder.index("nemotron-mini") < ladder.index("phi3:mini")
+        def resolver(rung, **_):
+            if rung == "work":
+                raise mr.RungResolutionError("work rung out")
+            return GATEWAY, f"rung-{rung}"
 
-    def test_production_yaml_has_free_fallback_models(self):
-        """The live model_routing.yaml exposes free_fallback_models."""
+        mr.set_resolver(resolver)
+        routing = self._load(tmp_path, self._make_minimal_cfg(("cloud-doer", "cloud-auto")))
+        assert list(routing.free_fallback_models) == ["rung-auto"]
+
+    def test_no_in_code_default_free_tier(self):
+        """No model names live in code: there is no in-code DEFAULT free tier."""
+        import hydra.model_routing as mrc
+        assert not hasattr(mrc, "DEFAULT")
+
+    def test_production_yaml_free_tier_comes_from_free_tagged_rungs(self):
+        """The live model_routing.yaml keeps at least one free-tagged cloud rung."""
         clear_cache()
         routing = load_routing()
-        assert list(routing.free_fallback_models) == ["nemotron-mini", "phi3:mini"]
-
+        free = [e for e in routing.roster if "free" in e.role_tags and not e.local]
+        assert free
+        assert list(routing.free_fallback_models) == [e.model for e in free]
 
 
 from types import SimpleNamespace
