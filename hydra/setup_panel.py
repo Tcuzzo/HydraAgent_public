@@ -3,7 +3,7 @@
 Rendered on the chat surface with Rich; reuses the tested ``hydra.setup`` writers.
 The console, the input/secret prompts, and ``which`` are all injected, so the whole
 flow is unit-testable without a real terminal. ``run_setup_panel`` returns the
-provider name it configured (``"ollama"`` / ``"cloud"`` / ``"codex"``) or ``None``
+provider name it configured (``"ollama"`` / ``"cloud"`` / the CLI transport) or ``None``
 if the person skipped.
 """
 from __future__ import annotations
@@ -11,6 +11,13 @@ from __future__ import annotations
 import shutil
 import urllib.request
 
+from hydra.providers import (
+    CLI_TRANSPORT,
+    CLI_TRANSPORT_INSTALL,
+    CLI_TRANSPORT_LABEL,
+    CLI_TRANSPORT_LOGIN,
+    cli_transport_installed,
+)
 from hydra.setup import setup_cloud_provider, setup_codex_oauth, setup_local_ollama
 
 _LOCAL_ENDPOINT = "http://localhost:11434"
@@ -45,12 +52,7 @@ _CHOICES = {
 }
 _CANCEL = {"q", "quit", "cancel", "exit", "skip", "back", ""}
 
-# Common cloud services: (label, endpoint, sensible default model).
-_CLOUD_SERVICES = {
-    "1": ("OpenAI", "https://api.openai.com/v1", "gpt-4o-mini"),
-    "2": ("Groq", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),
-    "3": ("MiniMax", "https://api.minimax.io", "MiniMax-Text-01"),
-}
+# Hydra ships no cloud presets: the person brings their own endpoint, model and key.
 
 
 def parse_panel_choice(raw: str | None) -> str | None:
@@ -70,14 +72,14 @@ def _render_menu(console) -> None:
         t.add_column(justify="right", style="bold cyan", no_wrap=True)
         t.add_column()
         t.add_row("1", "[bold]Local[/bold]   [dim]Run a model on your own computer. Free & private.[/dim]")
-        t.add_row("2", "[bold]Cloud API key[/bold]    [dim]Paste a key from OpenAI, Groq, MiniMax, etc.[/dim]")
+        t.add_row("2", "[bold]Cloud API key[/bold]    [dim]Any OpenAI-compatible service: endpoint, model, key.[/dim]")
         t.add_row("3", "[bold]Sign in with ChatGPT[/bold]   [dim]Use your ChatGPT subscription. No API key.[/dim]")
         console.print(Panel(t, title="[bold]Connect an AI model[/bold]",
                             subtitle="[dim]pick one to start chatting[/dim]", border_style="cyan"))
     else:  # pragma: no cover
         console.print("Connect an AI model:")
         console.print("  1) Local — a model on your own computer, free & private")
-        console.print("  2) Cloud API key — OpenAI / Groq / MiniMax / ...")
+        console.print("  2) Cloud API key — any OpenAI-compatible service")
         console.print("  3) Sign in with ChatGPT — your subscription, no key")
 
 
@@ -93,13 +95,12 @@ def _do_local(console, env_dir, local_probe) -> str | None:
         console.print(Panel(
             "No local AI model is running on this computer yet.\n"
             "To use Local, start a local model server, then pick Local again.\n"
-            "A free one is Ollama (https://ollama.com): install it, then run\n"
-            "  ollama pull qwen3:8b\n"
+            "A free one is Ollama: install it and pull any model you like.\n"
             "Or choose Cloud or Sign in with ChatGPT to use a model online.",
             title="[bold]Local model[/bold]", border_style="yellow",
         ) if _RICH else
         "No local AI model is running on this computer yet. Start a local model "
-        "server (a free one is Ollama, https://ollama.com), then pick Local again — "
+        "server (a free one is Ollama), then pick Local again — "
         "or choose Cloud or ChatGPT to use a model online.")
         return None
     setup_local_ollama(env_dir=env_dir)
@@ -108,15 +109,11 @@ def _do_local(console, env_dir, local_probe) -> str | None:
 
 
 def _do_cloud(console, ask, secret_ask, env_dir) -> str | None:
-    console.print("Which cloud service?  1) OpenAI   2) Groq   3) MiniMax   4) Other")
-    pick = (ask("  Service (1-4): ") or "").strip()
-    if pick in _CLOUD_SERVICES:
-        label, endpoint, model = _CLOUD_SERVICES[pick]
-    else:
-        label = "custom"
-        endpoint = (ask("  API endpoint (e.g. https://host/v1): ") or "").strip()
-        model = (ask("  Model name: ") or "").strip()
-    key = (secret_ask(f"  Paste your {label} API key (hidden): ") or "").strip()
+    console.print("Connect any OpenAI-compatible service: its endpoint, a model name, and your key.")
+    endpoint = (ask("  API endpoint (e.g. https://host/v1): ") or "").strip()
+    model = (ask("  Model name: ") or "").strip()
+    label = "your service"
+    key = (secret_ask("  Paste your API key (hidden): ") or "").strip()
     try:
         setup_cloud_provider("cloud", endpoint=endpoint, model=model, api_key=key, env_dir=env_dir)
     except Exception as exc:  # missing field — guide, don't crash
@@ -127,22 +124,17 @@ def _do_cloud(console, ask, secret_ask, env_dir) -> str | None:
 
 
 def _do_chatgpt(console, ask, env_dir, which) -> str | None:
-    if which("codex") is None:
+    if not cli_transport_installed(which):
         console.print(Panel(
-            "To use your ChatGPT login you need OpenAI's free Codex CLI:\n"
-            "  1. Install it:  npm install -g @openai/codex\n"
-            "  2. Sign in:     codex login   (opens your browser)\n"
-            "Then run hydra again and pick this option.",
-            title="[bold]Sign in with ChatGPT[/bold]", border_style="yellow",
-        ) if _RICH else
-        "To use your ChatGPT login, install OpenAI's Codex CLI (npm install -g @openai/codex), "
-        "run `codex login`, then run hydra again.")
+            CLI_TRANSPORT_INSTALL,
+            title=f"[bold]{CLI_TRANSPORT_LABEL}[/bold]", border_style="yellow",
+        ) if _RICH else CLI_TRANSPORT_INSTALL)
         return None
-    console.print("If you haven't yet, run `codex login` in another window (it opens your browser).")
-    ask("  Press Enter once you're signed in to ChatGPT… ")
+    console.print(f"If you haven't yet, run `{CLI_TRANSPORT_LOGIN}` in another window (it opens your browser).")
+    ask("  Press Enter once you're signed in… ")
     setup_codex_oauth(env_dir=env_dir)
-    _ok(console, "codex", "signed in with ChatGPT (no API key)")
-    return "codex"
+    _ok(console, CLI_TRANSPORT, "signed in (no API key)")
+    return CLI_TRANSPORT
 
 
 def run_setup_panel(console, *, ask, secret_ask, env_dir=None, which=shutil.which,
