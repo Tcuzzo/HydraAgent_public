@@ -21,7 +21,8 @@ import yaml
 
 from hydra.llm import LlmError, OllamaClient, ChatMessage
 from hydra.providers import ProviderConfig, ProviderError, make_client, list_providers
-from hydra.model_routing import load_routing
+from hydra.model_routing import RungResolutionError, load_routing
+from hydra.providers import is_local_provider
 
 
 # Same lock the local GPU job holds while a GPU job runs
@@ -35,7 +36,7 @@ def _gpu_busy() -> bool:
     cross-process GPU lock.
 
     The single local GPU can only hold one model at a time. When a video job has
-    the GPU, the local-GPU reader (qwen2.5-coder on the GPU) must yield and the
+    the GPU, the local-GPU reader (the local rung) must yield and the
     read/classify call routes to cloud instead of contending (fall back to cloud
     when the GPU is busy). Non-blocking and
     side-effect free: it test-acquires the lock and immediately releases it.
@@ -111,6 +112,17 @@ class RoutingDecision:
     estimated_latency_ms: int
     requires_verifier: bool = True
     requires_human_approval: bool = False
+
+
+def _rung_fallbacks(routing: Any, role: str) -> list[dict[str, str]]:
+    """Call-time fall-through for a role: the next rungs that resolve now, local GPU
+    last. Never-fail: a failing key, quota or outage moves the call down the chain;
+    BACKS Kev/Needle still pick every model."""
+    try:
+        return [{"provider": p, "model": m} for p, m in routing.chain_pairs(role)]
+    except (RungResolutionError, KeyError) as exc:
+        logging.getLogger(__name__).warning("no fall-through rungs for %s: %s", role, exc)
+        return []
 
 
 class ModelRouter:
@@ -194,6 +206,9 @@ class ModelRouter:
                 raise ProviderError(f"role {role_name!r} config must be a mapping")
             provider = role_config.get("provider", worker_provider)
             model = role_config.get("model", worker_model)
+            fallbacks = role_config.get("fallbacks")
+            if fallbacks is None and "provider" not in role_config and "model" not in role_config:
+                fallbacks = _rung_fallbacks(routing, "worker")  # routed by rung -> rung chain
 
             self.models[role_name] = ModelConfig(
                 name=role_name,
@@ -202,7 +217,7 @@ class ModelRouter:
                 base_url=role_config.get("base_url"),
                 api_key_env=role_config.get("api_key_env"),
                 family=role_config.get("family", ""),
-                fallbacks=role_config.get("fallbacks", []),
+                fallbacks=fallbacks or [],
             )
 
         # Add verifier model (auditor role or default — default from the YAML).
@@ -271,6 +286,8 @@ class ModelRouter:
                 temperature=0.0,
             ),
         }
+        for role, cfg in self.models.items():
+            cfg.fallbacks = _rung_fallbacks(routing, role)
     
     def classify_task(self, task_description: str) -> RoutingDecision:
         """Classify task complexity and recommend model."""
@@ -330,7 +347,7 @@ Output JSON exactly:
             response = client.chat(
                 messages,
                 # Use the SUBSTITUTED model name, not the original. _create_client
-                # may have downgraded to a cloud fallback or local ollama; the
+                # may have downgraded to a cloud fallback or the local rung; the
                 # client is for the substituted provider, so it must be asked for
                 # the substituted model (last_substitution["used"]) — not the
                 # original cloud model name (which the downgraded client does not
@@ -401,14 +418,14 @@ Output JSON exactly:
         cfg = self.models.get(role)
         base = (getattr(cfg, "base_url", "") or "") if cfg else ""
         if not base:
-            return bool(cfg and cfg.provider == "ollama")
+            return bool(cfg and is_local_provider(cfg.provider))
         from urllib.parse import urlsplit
 
         return urlsplit(base).hostname in {"127.0.0.1", "localhost", "::1"}
 
     def _cloud_substitute_role(self) -> str:
         """A cloud role to stand in for a local role when the GPU is busy.
-        Prefer the cloud 'doer' (qwen3.5:cloud); else any configured non-local
+        Prefer the cloud 'doer' rung; else any configured non-local
         role; else 'doer' as a last-resort label."""
         for role in ("doer", "planner", "auditor"):
             if role in self.models and not self._role_is_local(role):
@@ -511,7 +528,7 @@ Output JSON exactly:
             changed = route['provider'] != requested or route['model'] != model_config.model
             self.last_substitution = {
                 'requested': requested, 'used': route['model'], 'used_provider': route['provider'],
-                'family': route['family'], 'downgraded_to_local': route['provider'] == 'ollama' and requested != 'ollama',
+                'family': route['family'], 'downgraded_to_local': is_local_provider(route['provider']) and not is_local_provider(requested),
                 'note': 'explicit configured fallback' if changed else '',
             }
             if changed:
@@ -587,7 +604,7 @@ def route_and_execute(
         }
     # Use the SUBSTITUTED model name (router.last_substitution["used"]), not the
     # original selected_model.model — _create_client may have downgraded the client
-    # to a cloud fallback or local ollama, so the agent loop must drive the
+    # to a cloud fallback or the local rung, so the agent loop must drive the
     # substituted model the client actually serves (else 'model not found').
     # getattr fallback: test fakes / minimal routers may not carry last_substitution.
     _substitution = getattr(router, "last_substitution", None) or {}
