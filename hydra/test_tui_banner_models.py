@@ -14,8 +14,8 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Shared fixture — HydraApp with real ollama-cloud-style model names so the work
-# model pair resolves to qwen2.5:72b (via model_routing.yaml).
+# Shared fixture — HydraApp with rung-named placeholder routes so the work
+# model pair resolves to rung-plan (offline rung placeholder).
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -24,8 +24,8 @@ def app():
 
     return HydraApp(
         client=SimpleNamespace(),
-        model="llama-3.3-70b-versatile",
-        cfg=SimpleNamespace(name="ollama-cloud"),
+        model="rung-work",
+        cfg=SimpleNamespace(name="backs"),
         system_prompt="test system prompt",
         tools=[],
     )
@@ -38,20 +38,20 @@ def _run(coro):
 # ---------------------------------------------------------------------------
 # test_persistent_banner_shows_both_models
 # The #header-band Static must contain BOTH the chat model name AND the
-# work model name so the operator can never look up and see only "ollama-cloud".
+# work model name so the operator can never look up and see only "backs".
 # ---------------------------------------------------------------------------
 
 def test_persistent_banner_shows_both_models(app):
-    """Banner shows chat:llama-3.3-70b-versatile AND work:qwen2.5:72b at rest."""
+    """Banner shows chat:rung-work AND work:rung-plan at rest."""
     async def go():
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
             header = app.query_one("#header-band")
             rendered = str(header.render())
-            assert "llama-3.3-70b" in rendered, (
+            assert "rung-work" in rendered, (
                 f"chat model missing from banner; rendered=\n{rendered!r}"
             )
-            assert "qwen2.5:72b" in rendered, (
+            assert "rung-plan" in rendered, (
                 f"work model missing from banner; rendered=\n{rendered!r}"
             )
     _run(go())
@@ -84,7 +84,7 @@ def test_banner_active_work_indicator(app):
                 f"work-active indicator missing; rendered=\n{rendered!r}"
             )
             # Must still show the work model name.
-            assert "qwen2.5:72b" in rendered, (
+            assert "rung-plan" in rendered, (
                 f"work model missing during work turn; rendered=\n{rendered!r}"
             )
     _run(go())
@@ -111,7 +111,7 @@ def test_banner_failsoft_no_work_model(app):
             except Exception as exc:
                 pytest.fail(f"_render_banner() raised with _work_model=None: {exc}")
             # Chat model must still be shown.
-            assert "llama-3.3-70b" in rendered, (
+            assert "rung-work" in rendered, (
                 f"chat model missing from fail-soft banner; rendered=\n{rendered!r}"
             )
     _run(go())

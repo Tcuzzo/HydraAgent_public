@@ -1,7 +1,7 @@
-"""The model roster lives only in hydra/model_routing.yaml — no model IDs in code.
+"""Hydra stores no model IDs: model_routing.yaml names BACKS rungs, resolved per call.
 
-Law: no model IDs in code. When the routing file can't be read, Hydra fails loudly with a
-clear error that names the file; it never swaps in a hidden in-code roster.
+When the routing file itself can't be read, Hydra stops with a clear error that names
+the file; it never swaps in a hidden in-code roster.
 """
 from __future__ import annotations
 
@@ -24,11 +24,12 @@ def _string_constants(path: Path) -> set[str]:
     return {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
 
 
-def _yaml_models() -> set[str]:
+def test_routing_yaml_entries_name_rungs_only():
     doc = yaml.safe_load(_YAML.read_text(encoding="utf-8"))
-    names = {str(e["model"]) for e in doc["roster"]}
-    names |= {str(m) for m in (doc.get("routing") or {}).get("free_fallback_models") or ()}
-    return names
+    for e in doc["roster"]:
+        assert e.get("rung"), f"roster entry {e.get('id')} names no rung"
+        stored = sorted({"model", "provider", "base_url"} & set(e))
+        assert not stored, f"roster entry {e.get('id')} stores {stored}"
 
 
 @pytest.fixture()
@@ -40,7 +41,7 @@ def fresh_cache():
 
 def test_model_routing_code_names_no_model():
     consts = _string_constants(_SRC)
-    leaked = sorted(c for c in consts if c in _yaml_models() or _MODEL_LIKE.match(c))
+    leaked = sorted(c for c in consts if _MODEL_LIKE.match(c))
     assert not leaked, f"model IDs hardcoded in {_SRC.name}: {leaked}"
 
 
@@ -91,8 +92,11 @@ def test_loud_error_is_not_cached(fresh_cache, tmp_path):
 
 def test_free_tier_without_key_comes_from_free_tagged_roster(fresh_cache, tmp_path):
     doc = yaml.safe_load(_YAML.read_text(encoding="utf-8"))
-    doc["routing"].pop("free_fallback_models", None)
     path = tmp_path / "model_routing.yaml"
     path.write_text(yaml.safe_dump(doc), encoding="utf-8")
-    want = tuple(str(e["model"]) for e in doc["roster"] if "free" in (e.get("role_tags") or ()))
+    want = tuple(
+        f"rung-{e['rung']}" for e in doc["roster"]
+        if "free" in (e.get("role_tags") or ()) and not e.get("local")
+    )
+    assert want
     assert mrc.load_routing(path).free_fallback_models == want
