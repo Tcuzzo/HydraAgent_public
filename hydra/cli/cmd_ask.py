@@ -13,7 +13,7 @@ from hydra.inter_agent import use_correlation_id, use_trace_id
 from hydra.llm import LlmError
 from hydra.loop import AgentLoop, LoopError
 from hydra.policy import POLICY_CHOICES
-from hydra.providers import DEFAULT_ENV_DIR, ProviderError
+from hydra.providers import DEFAULT_ENV_DIR, ProviderError, is_local_provider
 from hydra.roles import RoleError, resolve_roles
 from hydra.skill_spine import build_agent_system_prompt, build_routed_skill_context
 from hydra.memory_kernel import assemble_truth_context
@@ -69,7 +69,7 @@ def register_ask_command(
         "--profile",
         choices=("auto", "cloud", "local"),
         default="auto",
-        help="ask runtime profile: auto uses cloud chat plus local worker routing; local uses Ollama",
+        help="ask runtime profile: auto uses cloud chat plus local worker routing; local uses the local GPU rung",
     )
     p_ask.add_argument("--provider", default=None, help="override provider selected by --profile")
     p_ask.add_argument("--model", default=None)
@@ -165,7 +165,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         return 2
     try:
         runtime = _resolve_chat_runtime(args)
-    except (ProviderError, RoleError, ValueError) as e:
+    except (ProviderError, RoleError, ValueError, LlmError) as e:  # LlmError: no rung reachable
         print(f"runtime error: {e}", file=sys.stderr)
         return 2
     args.provider = runtime["provider"]
@@ -269,7 +269,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
             print(f"ask error: {e}", file=sys.stderr)
             return 2
         except LlmError as e:
-            if attempted_local_fallback or args.provider == "ollama":
+            if attempted_local_fallback or is_local_provider(args.provider):
                 print(f"LLM error: {e}", file=sys.stderr)
                 return 1
             fallback = _local_gpu_fallback_client(args)

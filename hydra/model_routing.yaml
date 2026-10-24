@@ -1,78 +1,74 @@
-schema: hydra.model_routing.v1
-# SINGLE SOURCE OF TRUTH for the model roster + routing policy.
-# Read by hydra/model_routing.py (typed loader). Editing a model name here
-# changes the resolved model everywhere — no Python edit. No model is named in
-# code: if this file is missing/invalid the loader raises RoutingConfigError
-# naming the file, so the agent never silently picks a different model.
+schema: hydra.model_routing.v2
+# SINGLE SOURCE OF TRUTH for Hydra's routing policy. Read by hydra/model_routing.py.
+#
+# OPERATOR LAW (2026-10-23): this file names BACKS rungs only. No model, provider or
+# key name lives in Hydra. At call time hydra/rung_resolver.py asks the BACKS rung
+# resolver (Kev/Needle) what each rung means right now; BACKS holds the keys and
+# picks the live model, and each answer logs its route receipt. To change what a
+# role runs on, change the BACKS rungs (fleet_ladder), not this file.
+#
+# Rungs: plan / work / build / auto are BACKS capability rungs (auto = Kev/Needle
+# decide). An entry with `local: true` names the BACKS ladder rung for this host's
+# local GPU; it is the last resort when every cloud rung is out.
+#
 
-# ── ROSTER: every model the agent can route to. id is referenced by rules. ──
 roster:
-  # CHAT / conversation brain — qwen2.5:32b cloud (responsive reasoning).
+  # Conversation brain: drives chat and calls tools.
   - id: cloud-doer
-    provider: ollama-cloud
-    model: qwen2.5:32b
+    rung: work
     role_tags: [chat, conversation, doer, moderate, intent]
-    base_url: https://api.ollama.cloud
-  # CLOUD planner — strongest reasoning. Drives WORK turns + audits + verify.
+  # Strongest reasoning: work turns, audits, verify.
   - id: cloud-planner
-    provider: ollama-cloud
-    model: qwen2.5:72b
+    rung: plan
     role_tags: [planner, complex, critical, auditor, verifier, work]
-    base_url: https://api.ollama.cloud
-  # FREE CLOUD tier — no quota; tried between paid-cloud failures and local.
-  # nemotron-mini: Nvidia open-weight, strong reasoning, zero cost on ollama-cloud.
-  - id: cloud-free-nemotron
-    provider: ollama-cloud
-    model: nemotron-mini
-    role_tags: [free, cloud, fallback]
-    base_url: https://api.ollama.cloud
-  # phi3:mini: compact open-weight, zero cost on ollama-cloud. Second free rung.
-  - id: cloud-free-phi
-    provider: ollama-cloud
-    model: phi3:mini
-    role_tags: [free, cloud, fallback]
-    base_url: https://api.ollama.cloud
-  # LOCAL worker — reads, memory RAG, cheap parallel jobs, skill lookup (free).
+  # Coding / building.
+  - id: cloud-build
+    rung: build
+    role_tags: [cloud, code, build, agentic, verify]
+  # Kev/Needle pick the rung per task; also the emergency tier between cloud
+  # failures and the local GPU.
+  - id: cloud-auto
+    rung: auto
+    role_tags: [free, cloud, fallback, chat, web-context]
+  # This host's local GPU rung: reads, memory RAG, cheap parallel jobs, last resort.
   - id: local-worker
-    provider: ollama
-    model: qwen2.5-coder:7b
+    rung: local_gpu
+    local: true
     role_tags: [worker, local, router, read]
-    base_url: http://127.0.0.1:11434
 
-# ── ROUTING RULES: role -> roster id, with provider-level fallback ladder. ──
+# ── ROUTING RULES: role -> roster id, with a role-owned fallback ladder. ──
 routing:
-  # Chat profiles (consumed by cmd_chat.CHAT_PROFILE_DEFAULTS).
   chat_profiles:
-    auto:  cloud-doer       # qwen2.5:32b cloud — responsive reasoning chat brain
-    cloud: cloud-planner    # qwen2.5:72b — max-capability cloud chat
-    local: local-worker     # forced --local (qwen2.5-coder on local machine)
-  # Complexity->role for ModelRouter._select_model defaults.
+    auto:  cloud-doer
+    cloud: cloud-planner
+    local: local-worker
   complexity:
-    simple:   local-worker  # reads run LOCAL (free)
+    simple:   local-worker  # reads run LOCAL (free) — operator law
     moderate: cloud-doer
     complex:  cloud-planner
     critical: cloud-planner
-  # Named role defaults for ModelRouter._load_defaults / _load_config.
   roles:
     router:   local-worker
     worker:   local-worker
-    doer:     cloud-doer
+    doer:     cloud-build
+    build:    cloud-build
+    coder:    cloud-build
     planner:  cloud-planner
-    auditor:  cloud-planner  # cloud verification
-    # WORK EXECUTOR: tool-capable CLOUD planner.
+    auditor:  cloud-planner
+    research: cloud-planner
+    reasoning: cloud-planner
+    web_context: cloud-planner
     work:     cloud-planner
-    # INTENT: per-turn task-vs-chat classifier, runs in PARALLEL with the chat
-    # draft so its latency is hidden. cloud doer (lighter/faster).
     intent:   cloud-doer
-  # Verifier model for runtime_route.DEFAULT_RUNTIME_ROUTE ("provider/model").
   verifier: cloud-planner
-  # CLOUD-only ladder tried (in order) BEFORE any local downgrade. Providers,
-  # not models — mirrors ModelRouter.CLOUD_FALLBACKS. NEVER silently downgrade
-  # cloud->local; the downgrade is logged at WARNING in _create_client.
-  cloud_fallback_ladder: [ollama-cloud]
-  # Provider used as the local last-resort after the cloud ladder is exhausted.
-  local_fallback_provider: ollama
-  # FREE cloud models tried (in order) BETWEEN paid-cloud failure and local last-resort.
-  # Both run on the ollama-cloud provider (no separate API key, zero quota).
-  # NEVER silently change this order — the ladder is logged at WARNING per step.
-  free_fallback_models: [nemotron-mini, phi3:mini]
+  # Role-owned ordered fallbacks; every entry is a rung, resolved at call time.
+  fallbacks:
+    chat: [cloud-doer, cloud-auto]
+    doer: [cloud-build, cloud-doer, cloud-auto]
+    build: [cloud-build, cloud-doer, cloud-auto]
+    coder: [cloud-build, cloud-doer, cloud-auto]
+    planner: [cloud-planner, cloud-doer, cloud-auto]
+    reasoning: [cloud-planner, cloud-doer, cloud-auto]
+    auditor: [cloud-planner, cloud-build, cloud-doer]
+    research: [cloud-planner, cloud-doer]
+    web_context: [cloud-auto, cloud-planner]

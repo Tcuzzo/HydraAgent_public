@@ -5,12 +5,19 @@ repo (default `~/.hydraAgent/workspace/.env.*`), then hands back a
 configured `OllamaClient` (the generic OpenAI-compat client from
 §10.20/§10.23) pointed at the right endpoint.
 
-Built-in providers:
-  - `ollama` — local, no auth, `http://localhost:11434`. Loads
-    `OLLAMA_API_KEY` from `.env.ollama` if present (hosted Ollama).
-  - `ollama-cloud` — cloud Ollama endpoint, `OLLAMA_CLOUD_API_KEY` from `.env.ollama-cloud`.
+Chat routing does not pick providers here: hydra/model_routing.yaml names BACKS
+rungs, and hydra/rung_resolver.py resolves them through BACKS at call time (the
+`backs` gateway transport, or `local` for this host's GPU). The transports below
+carry no model name; a model always comes from a resolved rung or the operator's
+env file.
+
+Built-in transports:
+  - the keyless local endpoint (`local`), `http://localhost:11434`.
+  - `backs` — the BACKS rung gateway; location from HYDRA_BACKS_URL or `.env.backs`.
   - `needle` — optional local tool-selection SDK; Hydra executes tool calls.
-  - any named OpenAI-compatible endpoint, with an optional API key and model.
+  - the hosted and CLI transports listed in `_BUILTINS`.
+  - any named OpenAI-compatible endpoint whose env file declares `<NAME>_ENDPOINT`
+    (plus an optional key and `<NAME>_MODEL`).
 
 Provider names and model families are unrestricted. A named provider still
 needs the matching transport: native proprietary APIs need a compatible proxy.
@@ -21,7 +28,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
 
@@ -57,23 +64,22 @@ _BUILTINS: dict[str, _ProviderSpec] = {
         name="ollama",
         env_file=".env.ollama",
         endpoint_default="http://localhost:11434",
-        model_default="qwen3:8b",
+        model_default="",
         requires_key=False,
     ),
     "ollama-cloud": _ProviderSpec(
         name="ollama-cloud",
         env_file=".env.ollama-cloud",
         endpoint_default="https://api.ollama.cloud",
-        model_default="qwen2.5:72b",  # SSOT: hydra/model_routing.yaml cloud-planner
+        model_default="",  # the model comes from a resolved BACKS rung
         requires_key=True,
     ),
-    # minimax: OpenAI-compatible big-token cloud workhorse.
-    # Key loaded from MINIMAX_API_KEY env var or workspace .env file.
+    # Hosted OpenAI-compatible transport; key and model from the operator's env file.
     "minimax": _ProviderSpec(
         name="minimax",
         env_file=".env.minimax",
         endpoint_default="https://api.minimax.io",  # client appends /v1/chat/completions
-        model_default="MiniMax-Text-01",
+        model_default="",
         requires_key=True,
     ),
     # codex: the official `codex` CLI ("Sign in with ChatGPT"). NOT an HTTP
@@ -85,12 +91,22 @@ _BUILTINS: dict[str, _ProviderSpec] = {
         name="codex",
         env_file=".env.codex",
         endpoint_default="",
-        model_default="codex",
+        model_default="",
+        requires_key=False,
+    ),
+    # The BACKS rung gateway: Kev/Needle on the BACKS host pick the model per
+    # request and hold the keys, so Hydra sends none.
+    "backs": _ProviderSpec(
+        name="backs",
+        env_file=".env.backs",
+        endpoint_default="",
+        model_default="",
         requires_key=False,
     ),
 }
 
 _PROVIDER_ALIASES: dict[str, str] = {
+    "local": "ollama",
     "ollama_cloud": "ollama-cloud",
 }
 
@@ -138,6 +154,11 @@ def _canonical_provider_name(name: str) -> str:
     return _PROVIDER_ALIASES.get(name, name)
 
 
+def is_local_provider(name: str) -> bool:
+    """True for this host's GPU transport (under any of its names)."""
+    return _canonical_provider_name(str(name or "")) == "ollama"
+
+
 def _lookup_env_value(env: dict[str, str], key: str) -> str | None:
     for candidate in (key, *_ENV_KEY_ALIASES.get(key, ())):
         if candidate in env and env[candidate]:
@@ -153,8 +174,26 @@ def list_providers() -> list[str]:
     return sorted(_BUILTINS)
 
 
+#: Transports whose default model is a resolved BACKS rung (local GPU / gateway).
+_RUNG_TRANSPORTS = {"ollama": True, "backs": False}  # name -> is the local rung
+
+
+def _rung_default_model(transport: str) -> str:
+    """The model a bare transport should use: whatever its rung resolves to now."""
+    from hydra.model_routing import load_routing
+
+    local = _RUNG_TRANSPORTS[transport]
+    try:
+        for entry in load_routing().roster:
+            if entry.local == local:
+                return entry.model
+    except Exception:  # noqa: BLE001 - no rung => caller decides
+        return ""
+    return ""
+
+
 def resolve(
-    name: str, *, env_dir: str | Path | None = None
+    name: str, *, env_dir: str | Path | None = None, rung_model: bool = True
 ) -> ProviderConfig:
     """Resolve a provider name into a ProviderConfig. Raises `ProviderError` on missing required keys
     or unknown unconfigured names."""
@@ -189,6 +228,10 @@ def resolve(
     upper = _env_prefix(spec.name)
     endpoint = _lookup_env_value(env, f"{upper}_ENDPOINT") or spec.endpoint_default
     model = _lookup_env_value(env, f"{upper}_MODEL") or spec.model_default
+    # rung_model=False: the rung resolver only wants the endpoint (asking the rung
+    # for its model from inside rung resolution would recurse).
+    if not model and rung_model and spec.name in _RUNG_TRANSPORTS:
+        model = _rung_default_model(spec.name)
     api_key = _lookup_env_value(env, f"{upper}_API_KEY") or None
 
     if spec.requires_key and not api_key:
@@ -234,6 +277,11 @@ def _make_transport_client(
         # shutil.which), raising the clear install/login error if absent.
         client = CodexClient(**kwargs)
         return client, cfg
+    if cfg.name == "backs":
+        from hydra.rung_resolver import RungGatewayClient, backs_url
+
+        endpoint = cfg.endpoint or backs_url(env_dir)
+        return RungGatewayClient(endpoint=endpoint), replace(cfg, endpoint=endpoint)
     num_ctx = None if cfg.api_key else local_num_ctx(cfg.name, env_dir=env_dir)
     client = OllamaClient(endpoint=cfg.endpoint, api_key=cfg.api_key, num_ctx=num_ctx)
     return client, cfg
