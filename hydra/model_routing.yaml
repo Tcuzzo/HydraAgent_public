@@ -8,28 +8,39 @@ schema: hydra.model_routing.v2
 # role runs on, change the BACKS rungs (fleet_ladder), not this file.
 #
 # Rungs: plan / work / build / auto are BACKS capability rungs (auto = Kev/Needle
-# decide). An entry with `local: true` names the BACKS ladder rung for this host's
-# local GPU; it is the last resort when every cloud rung is out.
+# decide). `task` names the BACKS router task (backs.router.v1) the entry asks for:
+# BACKS returns the live rung chain for it, walks it on failure, and learns from each
+# outcome. An entry with `local: true` names the BACKS ladder rung for this host's
+# local GPU; it is the last resort when BACKS itself is out.
 #
 
 roster:
   # Conversation brain: drives chat and calls tools.
   - id: cloud-doer
     rung: work
+    task: answer
     role_tags: [chat, conversation, doer, moderate, intent]
   # Strongest reasoning: work turns, audits, verify.
   - id: cloud-planner
     rung: plan
+    task: plan
     role_tags: [planner, complex, critical, auditor, verifier, work]
   # Coding / building.
   - id: cloud-build
     rung: build
+    task: code
     role_tags: [cloud, code, build, agentic, verify]
   # Kev/Needle pick the rung per task; also the emergency tier between cloud
   # failures and the local GPU.
   - id: cloud-auto
     rung: auto
+    task: default
     role_tags: [free, cloud, fallback, chat, web-context]
+  # Independent grader: audits work it did not write (router task `grade`).
+  - id: cloud-grader
+    rung: auto
+    task: grade
+    role_tags: [auditor, grader, independent]
   # This host's local GPU rung: reads, memory RAG, cheap parallel jobs, last resort.
   - id: local-worker
     rung: local_gpu
@@ -60,6 +71,7 @@ routing:
     web_context: cloud-planner
     work:     cloud-planner
     intent:   cloud-doer
+    independent_auditor: cloud-grader
   verifier: cloud-planner
   # Role-owned ordered fallbacks; every entry is a rung, resolved at call time.
   fallbacks:
@@ -70,5 +82,6 @@ routing:
     planner: [cloud-planner, cloud-doer, cloud-auto]
     reasoning: [cloud-planner, cloud-doer, cloud-auto]
     auditor: [cloud-planner, cloud-build, cloud-doer]
+    independent_auditor: [cloud-grader, cloud-auto, cloud-doer]
     research: [cloud-planner, cloud-doer]
     web_context: [cloud-auto, cloud-planner]
