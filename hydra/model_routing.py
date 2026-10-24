@@ -45,10 +45,10 @@ DEFAULT_ROUTING_PATH = Path(__file__).resolve().parent / "model_routing.yaml"
 
 
 # Rung -> (transport, route) resolved this process; never written anywhere.
-_RESOLVED: dict[tuple[str, bool], tuple[str, str]] = {}
+_RESOLVED: dict[tuple[str, bool, str], tuple[str, str]] = {}
 # Rung -> (when, why) it last failed to resolve. A dead rung is skipped for a short
 # while instead of being re-asked on every hop of one turn; it is retried after.
-_FAILED: dict[tuple[str, bool], tuple[float, str]] = {}
+_FAILED: dict[tuple[str, bool, str], tuple[float, str]] = {}
 FAILED_RETRY_SECONDS = 60.0
 _RESOLVER: Callable[..., tuple[str, str]] | None = None
 
@@ -61,8 +61,8 @@ def set_resolver(fn: Callable[..., tuple[str, str]] | None) -> None:
     _FAILED.clear()
 
 
-def resolve_rung(rung: str, local: bool = False) -> tuple[str, str]:
-    key = (rung, local)
+def resolve_rung(rung: str, local: bool = False, task: str = "") -> tuple[str, str]:
+    key = (rung, local, task)
     if key in _RESOLVED:
         return _RESOLVED[key]
     failed = _FAILED.get(key)
@@ -70,7 +70,7 @@ def resolve_rung(rung: str, local: bool = False) -> tuple[str, str]:
         raise RungResolutionError(f"{failed[1]} (skipped; retrying in under {FAILED_RETRY_SECONDS:.0f}s)")
     fn = _RESOLVER or rung_resolver.resolve
     try:
-        _RESOLVED[key] = fn(rung, local=local)
+        _RESOLVED[key] = fn(rung, local=local, task=task or None) if task else fn(rung, local=local)
     except RungResolutionError as exc:
         _FAILED[key] = (time.monotonic(), str(exc))
         raise
@@ -86,9 +86,11 @@ class RosterEntry:
     rung: str
     local: bool = False
     role_tags: tuple[str, ...] = ()
+    #: BACKS router task (backs.router.v1 ``task_type``) this cloud rung asks for.
+    task: str = ""
 
     def as_pair(self) -> tuple[str, str]:
-        return resolve_rung(self.rung, self.local)
+        return resolve_rung(self.rung, self.local, self.task)
 
     @property
     def provider(self) -> str:
@@ -258,6 +260,7 @@ def _build(data: dict[str, Any], source_path: str) -> ModelRouting:
                 rung=str(item["rung"]),
                 local=bool(item.get("local", False)),
                 role_tags=tuple(str(t) for t in (item.get("role_tags") or ())),
+                task=str(item.get("task") or ""),
             )
         )
     routing = data.get("routing") or {}
