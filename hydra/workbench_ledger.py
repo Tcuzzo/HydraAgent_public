@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from hydra.file_lock import locked_path
+from hydra.providers import CLI_TRANSPORT
 
 
 LEDGER_SCHEMA = "hydra.work_ledger.v1"
@@ -26,7 +27,7 @@ STATUSES = (
     "superseded",
 )
 
-OWNER_LANES = ("codex", "local_worker", "cloud_model", "human")
+OWNER_LANES = (CLI_TRANSPORT, "local_worker", "cloud_model", "human")
 
 ALLOWED_TRANSITIONS = {
     "planned": {"running", "blocked", "superseded"},

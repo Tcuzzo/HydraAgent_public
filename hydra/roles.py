@@ -1,22 +1,38 @@
-"""hydra.roles — config-driven planner / doer / auditor resolution."""
+"""hydra.roles — config-driven planner / doer / auditor resolution.
+
+Roles name BACKS routing roles (``hydra/model_routing.yaml``), never a model, tag or
+vendor family. A routed role resolves to its rung's transport and route at call time;
+Kev/Needle on BACKS pick the live model.
+"""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
 from core.config import ConfigError, load
-from hydra.providers import ProviderError, resolve
+from hydra.providers import (
+    CLI_VENDOR_FAMILIES,
+    ProviderError,
+    cli_transport_status,
+    is_cli_transport,
+    is_local_provider,
+    resolve,
+)
 
+_LOG = logging.getLogger(__name__)
 
 ROLE_NAMES = ("planner", "doer", "auditor")
+#: Legacy selector names -> the routing role (model_routing.yaml ``roles``) they mean.
 SELECTOR_DEFAULTS = {
-    "highest_reasoner": ("ollama", "qwen3:14b", "local-ollama-reasoner"),
-    "best_coder_tool_caller": ("ollama", "qwen3-coder:8b", "local-ollama-coder"),
-    "cloud_qa_evaluator": ("ollama-cloud", "llama-3.3-70b-versatile", "cloud-ollama-llama-70b"),
+    "highest_reasoner": "planner",
+    "best_coder_tool_caller": "doer",
+    "cloud_qa_evaluator": "independent_auditor",
 }
-OPENAI_FAMILIES = frozenset({"openai", "openai-codex", "codex"})
+#: Family prefix for routed roles: ``route:<local|router task|rung>``.
+ROUTE_FAMILY = "route:"
 
 
 class RoleError(Exception):
@@ -39,19 +55,55 @@ class RoleSet:
     auditor: RoleSpec
 
 
+def _role_from_route(role: str, route: str, selector: str | None = None) -> RoleSpec:
+    """Resolve a routing role to (transport, route) without asking BACKS.
+
+    Cloud entries carry a BACKS router task, so the route is known up front and the
+    gateway walks its live chain per request. The local rung leaves the model empty:
+    the local transport asks its rung at call time. Only a cloud entry without a task
+    needs BACKS now; if no rung answers, that is a RoleError.
+    """
+    from hydra import rung_resolver
+    from hydra.model_routing import RoutingConfigError, load_routing
+    from hydra.rung_resolver import RungResolutionError
+
+    try:
+        routing = load_routing()
+    except RoutingConfigError as e:
+        raise RoleError(f"role {role!r}: routing config unavailable: {e}") from e
+    if route not in routing.roles:
+        raise RoleError(f"role {role!r}: unknown routing role {route!r}")
+    entry = routing.role_entry(route)
+    if entry.local:
+        provider, model, tag = rung_resolver.LOCAL, "", "local"
+    elif entry.task:
+        provider, model, tag = rung_resolver.GATEWAY, rung_resolver.route_for(entry.task, entry.rung), entry.task
+    else:
+        try:
+            provider, model = routing.role_pair(route)
+        except RungResolutionError as e:
+            raise RoleError(f"role {role!r}: no rung reachable for {route!r}: {e}") from e
+        tag = entry.rung
+    return RoleSpec(role=role, provider=str(provider), model=str(model),
+                    family=ROUTE_FAMILY + tag, selector=selector)
+
+
 def _role_from_config(role: str, data: dict) -> RoleSpec:
     selector = data.get("selector")
+    route = data.get("route")
     provider = data.get("provider")
     model = data.get("model")
     family = data.get("family")
+    if route:
+        return _role_from_route(role, str(route), str(selector) if selector else None)
     if selector and (not provider or not model or not family):
         if selector not in SELECTOR_DEFAULTS:
             raise RoleError(f"unknown role selector {selector!r} for {role}")
-        provider, model, family = SELECTOR_DEFAULTS[selector]
+        return _role_from_route(role, SELECTOR_DEFAULTS[selector], str(selector))
     if not provider or not model or not family:
         raise RoleError(
-            f"role {role!r} requires provider, model, and family "
-            f"or a known selector"
+            f"role {role!r} requires a route, a known selector, "
+            f"or provider, model, and family"
         )
     return RoleSpec(
         role=role,
@@ -81,15 +133,22 @@ def resolve_roles_from_dict(config: dict) -> RoleSet:
     # different families and a single-model installation remains usable.
     for name in (("planner", "doer") if agentic.get("require_independent_auditor", False) else ()):
         role = resolved[name]
+        routed = role.family.startswith(ROUTE_FAMILY) and auditor.family.startswith(ROUTE_FAMILY)
         if role.family.casefold() == auditor.family.casefold():
+            if routed:
+                # Both ask BACKS for the same rung task; BACKS may still pick
+                # different models, but independence is not guaranteed. Never fail.
+                _LOG.warning("degraded auditor: %s and auditor share routing %s",
+                             name, role.family)
+                continue
             raise RoleError(
                 f"PROVIDER_COLLISION: {name} family {role.family!r} "
                 f"matches auditor family {auditor.family!r}"
             )
-        if role.family.lower() in OPENAI_FAMILIES and auditor.family.lower() in OPENAI_FAMILIES:
+        if role.family.lower() in CLI_VENDOR_FAMILIES and auditor.family.lower() in CLI_VENDOR_FAMILIES:
             raise RoleError(
                 f"PROVIDER_COLLISION: {name} family {role.family!r} "
-                "is OpenAI/Codex-family and cannot be graded by Codex"
+                "shares the CLI transport vendor with the auditor"
             )
     return RoleSet(
         planner=resolved["planner"],
@@ -130,18 +189,10 @@ def _load_hydra_yaml_roles(config_path: Path, original_error: ConfigError) -> di
 
 
 def provider_available(role: RoleSpec, *, env_dir: str | Path | None = None) -> tuple[bool, str]:
-    if role.provider == "codex":
-        # The codex provider shells the official `codex` CLI ("Sign in with
-        # ChatGPT"). It is callable iff the binary resolves on PATH (or via
-        # HYDRA_CODEX_BIN). The user must also have run `codex login` once; the
-        # CLI itself reports a clear error at call time if not signed in.
-        try:
-            from hydra.codex_client import resolve_codex_bin
-
-            bin_path = resolve_codex_bin()
-        except Exception as e:  # noqa: BLE001
-            return False, f"EVALUATOR_UNAVAILABLE: {e}"
-        return True, f"available (codex CLI: {bin_path})"
+    if is_cli_transport(role.provider):
+        # The CLI transport is callable iff its binary resolves; the CLI itself
+        # reports a clear error at call time if the user has not signed in.
+        return cli_transport_status()
     try:
         client_cfg = resolve(role.provider, env_dir=env_dir)
     except ProviderError as e:
@@ -159,9 +210,9 @@ def provider_available(role: RoleSpec, *, env_dir: str | Path | None = None) -> 
     # is NOT in the catalog is INCONCLUSIVE (the live query may have returned
     # an incomplete list, or the provider may not list every valid model) —
     # we FAIL OPEN (admit it) and let any real unavailability surface loudly
-    # at chat time, rather than falsely gating off valid newer models
-    # (gpt-4.1, o4-mini, ...) off a stale/frozen list. This closes the
-    # "stale hardcoded catalog used as a denylist" flaw class at its seam.
+    # at chat time, rather than falsely gating off valid newer models off a
+    # stale/frozen list. This closes the "stale hardcoded catalog used as a
+    # denylist" flaw class at its seam.
     if wanted and wanted not in names:
         return True, (
             f"available (admitting {wanted!r}: not in live catalog of "
@@ -172,14 +223,14 @@ def provider_available(role: RoleSpec, *, env_dir: str | Path | None = None) -> 
 
 def should_unload_between_roles(first: RoleSpec, second: RoleSpec) -> bool:
     """Return True when two consecutive roles would keep different local
-    Ollama models resident on the same GPU.
+    models resident on the same GPU.
 
     Cloud/API roles do not consume local VRAM, and identical local model
     names can be reused without unloading.
     """
-    return (
-        first.provider == "ollama"
-        and second.provider == "ollama"
+    return bool(
+        is_local_provider(first.provider)
+        and is_local_provider(second.provider)
         and first.model
         and second.model
         and first.model != second.model

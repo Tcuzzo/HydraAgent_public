@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from hydra.providers import CLI_TRANSPORT
 from hydra.setup import (
     AUTOMATION_POLICIES,
     SUDO_POLICIES,
@@ -20,15 +21,15 @@ from hydra.setup import (
 def register_setup_commands(sub: argparse._SubParsersAction, *, default_env_dir: object) -> None:
     p_setup = sub.add_parser(
         "setup",
-        help="configure local Ollama, cloud/API providers, and Codex OAuth path",
+        help="configure the local rung, cloud/API providers, and the CLI transport sign-in path",
         description=(
-            "Configure HydraAgent outside the repo. Supports local Ollama, "
-            "cloud/OpenAI-compatible API providers, and Codex evaluator OAuth path."
+            "Configure HydraAgent outside the repo. Supports the local rung, "
+            "cloud/OpenAI-compatible API providers, and the CLI transport sign-in path."
         ),
     )
     p_setup.add_argument(
         "--mode",
-        choices=("interactive", "local", "cloud", "codex"),
+        choices=("interactive", "local", "cloud", CLI_TRANSPORT),
         default="interactive",
     )
     p_setup.add_argument("--provider", default="ollama")
@@ -90,7 +91,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
                 ),
                 setup_local_ollama(
                     endpoint=args.endpoint or "http://localhost:11434",
-                    model=args.model or "qwen3:8b",
+                    model=args.model or "",
                     api_key=args.api_key,
                     env_dir=args.env_dir,
                 ),
@@ -113,7 +114,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
                     env_dir=args.env_dir,
                 ),
             ]
-        elif args.mode == "codex":
+        elif args.mode == CLI_TRANSPORT:
             results = [
                 setup_operator_policy(
                     has_local_gpu=_gpu_arg(args.gpu),
@@ -129,7 +130,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
                 ),
             ]
         else:
-            raise SetupError("--mode must be interactive, local, cloud, or codex")
+            raise SetupError(f"--mode must be interactive, local, cloud, or {CLI_TRANSPORT}")
     except SetupError as e:
         print(f"setup error: {e}", file=sys.stderr)
         return 2

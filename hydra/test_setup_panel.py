@@ -69,15 +69,17 @@ def test_local_path_when_no_model_running_guides_not_fake_green(tmp_path):
     assert "local model" in con.text().lower()  # told them how to get one
 
 
-def test_cloud_path_openai_writes_key(tmp_path):
+def test_cloud_path_writes_operator_endpoint_model_and_key(tmp_path):
     con = FakeConsole()
-    # choose Cloud -> choose OpenAI service -> (key via secret prompt)
-    ask, secret = _scripted(["2", "1"], secrets=["sk-test-abc"])
+    # choose Cloud -> the person supplies endpoint and model -> key via secret prompt.
+    # Hydra ships no provider presets, so nothing is filled in for them.
+    ask, secret = _scripted(["2", "https://host.example/v1", "my-model"], secrets=["sk-test-abc"])
     prov = run_setup_panel(con, ask=ask, secret_ask=secret, env_dir=tmp_path)
     assert prov == "cloud"
     env = (tmp_path / ".env.cloud").read_text()
     assert "CLOUD_API_KEY=sk-test-abc" in env
-    assert "openai.com" in env.lower()
+    assert "CLOUD_ENDPOINT=https://host.example/v1" in env
+    assert "CLOUD_MODEL=my-model" in env
 
 
 def test_chatgpt_path_when_codex_present(tmp_path):
