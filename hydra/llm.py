@@ -358,7 +358,7 @@ class OllamaClient:
 
         The old behavior returned hardcoded stale catalogs for "openai.com" /
         "anthropic.com" endpoints, which `provider_available` then used as a
-        DENYLIST to gate off valid models (gpt-4.1, o4-mini, ...). That was
+        DENYLIST to gate off valid, newer models. That was
         the bug; the live query + raise-on-failure closes the class at the
         shared seam.
         """

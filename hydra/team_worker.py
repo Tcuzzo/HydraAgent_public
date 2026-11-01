@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import time
 
+from hydra.providers import is_cli_transport
 from hydra.specialists import READ_TOOLS, WRITERS, read_json, system_prompt, canonical_path
 
 
@@ -55,15 +56,15 @@ def execute(request: dict, run_dir: Path) -> dict:
     tools = bind_tools(root, approval_policy=policy, read_only_mcp=role not in WRITERS)
     if role not in WRITERS:
         tools = [t for t in tools if t.name in READ_TOOLS or t.name in {'mcp_servers', 'mcp_tools', 'mcp_call'}]
-    native = cfg.name == 'codex'
+    native = is_cli_transport(cfg.name)
     client.cd = str(root)
     client.sandbox = 'workspace-write' if role in WRITERS and policy == 'allow' else 'read-only'
-    if any((row['provider'] == 'codex') != native for row in request.get('fallbacks', [])):
+    if any(is_cli_transport(row['provider']) != native for row in request.get('fallbacks', [])):
         raise ValueError('team fallbacks must keep the same native or Hydra tool runtime')
     if native:
         client.cd = str(root)
         client.sandbox = 'workspace-write' if role in WRITERS and policy == 'allow' else 'read-only'
-        tools = []  # Codex uses its own tools, not Hydra's schema dispatch.
+        tools = []  # The CLI transport uses its own tools, not Hydra's schema dispatch.
     images = task.get('images', [])
     if images and native:
         raise ValueError('image inputs require an OpenAI-compatible multimodal provider in this worker')

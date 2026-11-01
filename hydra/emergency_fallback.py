@@ -17,7 +17,7 @@ FALLBACK_CHAIN = []  # Legacy embedding hook; no implicit model/provider guesses
 
 # Legacy identifiers retained for injected-client callers, not default routing.
 LIFE_SUPPORT_PROVIDER = "ollama"
-LIFE_SUPPORT_MODEL = "qwen2.5-coder:7b"
+LIFE_SUPPORT_MODEL = "local_gpu"  # the local rung label; the transport serves its own model
 LIFE_SUPPORT_ENDPOINT = "http://localhost:11434"
 
 # S6 checkpoint filename, relative to evidence/{mission_id}/.
@@ -66,12 +66,12 @@ def classify_provider_error(error: BaseException) -> str:
 def probe_model(provider: str, model: str, timeout: float = 5.0) -> bool:
     """Quick liveness probe: is the provider's catalog endpoint reachable?
 
-    Probes the ACTUAL provider the client is configured for — local Ollama
+    Probes the ACTUAL provider the client is configured for — the local rung
     (``/api/tags``), cloud OpenAI-compatible endpoints (``/models`` with the
-    bearer key), or the Codex CLI (binary present) — not just ``ollama``.
+    bearer key), or the signed-in CLI transport (binary present).
     ``model`` is accepted for call-site compatibility; the probe is a catalog
     reachability check, not a per-model lookup. Returns True when the endpoint
-    answers HTTP 200 / the Codex binary is present; False on any failure
+    answers HTTP 200 / the CLI transport binary is present; False on any failure
     (unconfigured, unreachable, auth, timeout) — never raises, never
     blanket-swallows a programming error (the old bare ``except:``).
     """
@@ -86,10 +86,11 @@ def probe_model(provider: str, model: str, timeout: float = 5.0) -> bool:
         # Unknown / unconfigured provider (e.g. a cloud provider whose key
         # is missing) is "not available right now" — not a programming error.
         return False
-    # Codex is a local CLI provider, not an HTTP endpoint — probe the binary.
+    # The CLI transport is a local binary, not an HTTP endpoint — probe the binary.
     if not cfg.endpoint:
-        binary = os.environ.get("HYDRA_CODEX_BIN") or shutil.which("codex")
-        return bool(binary)
+        from hydra.providers import cli_transport_installed
+
+        return cli_transport_installed(shutil.which)
     headers: dict[str, str] = {"User-Agent": "HydraAgent/probe"}
     if cfg.api_key:
         headers["Authorization"] = f"Bearer {cfg.api_key}"

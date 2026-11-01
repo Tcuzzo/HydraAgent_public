@@ -141,7 +141,7 @@ def register_ops_commands(sub: argparse._SubParsersAction) -> None:
         help="compare Hydra against current agent runtime patterns",
         description=(
             "Score Hydra's promoted operator-runtime capabilities against "
-            "current Codex, Claude Code, OpenAI Agents SDK, and LangGraph patterns."
+            "current agent-runtime and orchestration-framework patterns."
         ),
     )
     p_competitive.add_argument("--repo-root", default=str(REPO_ROOT), help="repo root to score")

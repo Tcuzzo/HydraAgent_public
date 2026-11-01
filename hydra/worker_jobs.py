@@ -137,7 +137,8 @@ def _build_default_repair_fn(
             entry = mr.role_entry("planner")
             model_name = entry.model
         except Exception:  # noqa: BLE001
-            model_name = "qwen2.5:72b"  # fallback to cloud planner default
+            from hydra.rung_resolver import route_for  # noqa: PLC0415
+            model_name = route_for("plan", "auto")  # routing unreadable: let the router pick a rung
 
         try:
             resp = _client.chat(

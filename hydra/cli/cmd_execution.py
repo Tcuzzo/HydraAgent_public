@@ -7,12 +7,11 @@ import math
 import subprocess
 import sys
 from pathlib import Path
-from typing import Literal
 
 from hydra.cli.tool_binding import bind_tools, root_arg
 from hydra.llm import LlmError
 from hydra.loop import AgentLoop
-from hydra.providers import ProviderError, make_client
+from hydra.providers import CLI_TRANSPORT, ProviderError, is_cli_transport, make_client
 from hydra.roles import (
     RoleError,
     RoleSpec,
@@ -74,10 +73,11 @@ def register_execution_commands(sub: argparse._SubParsersAction, *, policy_choic
     )
     p_execute.add_argument(
         "--audit-mode",
-        choices=("auto", "configured", "codex", "local", "none"),
+        choices=("auto", "configured", CLI_TRANSPORT, "local", "none"),
         default="auto",
         help=(
-            "auto/configured runs the configured auditor; codex requires a configured Codex auditor; "
+            f"auto/configured runs the configured auditor; {CLI_TRANSPORT} requires the auditor "
+            "to run on the signed-in CLI transport; "
             "local explicitly uses the planner for self-review; none skips review"
         ),
     )
@@ -90,7 +90,7 @@ def register_execution_commands(sub: argparse._SubParsersAction, *, policy_choic
     )
     p_execute.add_argument(
         "--unload-between-roles", action="store_true",
-        help="explicitly unload the preceding local Ollama model; coordinate with other GPU users",
+        help="explicitly unload the preceding local model; coordinate with other GPU users",
     )
 
     # SEAM CUT: surgery and surgery-loop subcommands removed (hydra.surgery is stripped).
@@ -110,7 +110,7 @@ def _resolved_roles_or_exit(args: argparse.Namespace):
 def _client_for_role(role: RoleSpec, env_dir: str | None = None):
     client, cfg = make_client(role.provider, env_dir=env_dir)
     client.runtime_family = role.family
-    if role.provider == "codex":
+    if is_cli_transport(role.provider):
         client.sandbox = "read-only"
     return client, role.model or cfg.model
 
@@ -124,7 +124,7 @@ def _unload_ollama_model(model: str, *, env_dir=None) -> None:
         print(f"warning: optional model unload failed: {safe_message(str(exc))}", file=sys.stderr)
 
 
-AuditMode = Literal["auto", "configured", "codex", "local", "none"]
+AUDIT_MODES = ("auto", "configured", CLI_TRANSPORT, "local", "none")
 
 
 def _resolve_audit_mode(
@@ -136,7 +136,7 @@ def _resolve_audit_mode(
         return "none", "audit disabled by operator"
     if requested == "local":
         return "local", "operator selected local fallback audit"
-    if requested in {"auto", "configured", "codex"}:
+    if requested in {"auto", "configured", CLI_TRANSPORT}:
         if auditor_available:
             return "configured", "configured auditor selected"
         return "blocked", "configured auditor unavailable; no implicit review fallback"
@@ -182,7 +182,7 @@ def cmd_execute(args: argparse.Namespace) -> int:
         return 2
     requested = 'none' if args.no_audit else args.audit_mode
     audit_mode, audit_detail = _resolve_audit_mode(requested, auditor_available=True)
-    if audit_mode == 'blocked' or (requested == 'codex' and roles.auditor.provider != 'codex'):
+    if audit_mode == 'blocked' or (requested == CLI_TRANSPORT and not is_cli_transport(roles.auditor.provider)):
         print('requested audit mode is unavailable for the configured auditor', file=sys.stderr)
         return 2
     review_role = roles.planner if audit_mode == 'local' else roles.auditor
@@ -196,9 +196,9 @@ def cmd_execute(args: argparse.Namespace) -> int:
             review_floor = system_prompt('code_reviewer')
             review_client, review_model = _client_for_role(review_role, args.env_dir)
         for client, role in ((planner_client, roles.planner), (doer_client, roles.doer), (review_client, review_role)):
-            if client is not None and role.provider == 'codex':
+            if client is not None and is_cli_transport(role.provider):
                 client.cd = str(root)
-                # Native Codex tools do not pass through Hydra's per-tool gate.
+                # The CLI transport's native tools do not pass through Hydra's per-tool gate.
                 # Write access requires the same explicit blanket allow policy.
                 client.sandbox = ('workspace-write' if role is roles.doer and
                                   args.approval_policy in {'allow', 'yolo'} else 'read-only')

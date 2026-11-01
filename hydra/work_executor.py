@@ -58,26 +58,35 @@ SELF_AUDIT_LOG_PATH: str = str(
 _ollama_base_url: str = "http://127.0.0.1:11434"
 
 
-# ── Qwen tool-capability probe ───────────────────────────────────────────────
+# ── Local-rung tool-capability probe ─────────────────────────────────────────
 
 @dataclass
-class QwenProbeResult:
-    """Result of probing whether the local qwen2.5-coder is reachable + tool-capable."""
+class LocalToolProbeResult:
+    """Result of probing whether the local rung's model is reachable + tool-capable."""
     reachable: bool
     tool_capable: bool
-    model: str = "qwen2.5-coder:7b"
+    model: str = ""
     note: str = ""
 
 
-def probe_qwen_tool_support(
-    model: str = "qwen2.5-coder:7b",
+def probe_local_tool_support(
+    model: str = "",
     base_url: str | None = None,
-) -> QwenProbeResult:
-    """Probe whether the local qwen2.5-coder:7b is reachable and tool-capable.
+) -> LocalToolProbeResult:
+    """Probe whether the local rung's model is reachable and tool-capable.
 
-    Uses the ollama /api/show endpoint (offline-safe: just checks capabilities,
-    no actual inference call needed). Degrades gracefully on any error.
+    An empty ``model`` means "whatever the local rung serves" (read from the
+    routing worker entry); Hydra never hard-codes a model name. Uses the local
+    transport's /api/show endpoint (offline-safe: just checks capabilities, no
+    inference call). Degrades gracefully on any error.
     """
+    if not model:
+        try:
+            from hydra.model_routing import load_routing
+
+            model = load_routing().role_entry("worker").as_pair()[1] or ""
+        except Exception:  # routing unreadable: probe reports unreachable below
+            model = ""
     import urllib.request
     import urllib.error
 
@@ -96,12 +105,12 @@ def probe_qwen_tool_support(
         tool_capable = "tools" in capabilities
         if not tool_capable:
             _LOG.warning(
-                "qwen probe: %r does not report 'tools' capability (got %r). "
+                "local probe: %r does not report 'tools' capability (got %r). "
                 "Work turns may fall back to chat loop if tool calls fail.",
                 model,
                 capabilities,
             )
-        return QwenProbeResult(
+        return LocalToolProbeResult(
             reachable=True,
             tool_capable=tool_capable,
             model=model,
@@ -109,18 +118,23 @@ def probe_qwen_tool_support(
         )
     except Exception as exc:
         _LOG.warning(
-            "qwen probe: could not reach ollama at %s for model %r (%s). "
+            "local probe: could not reach the local rung at %s for model %r (%s). "
             "Work turns will fall back to the chat loop (guarded against confabulation).",
             url,
             model,
             exc,
         )
-        return QwenProbeResult(
+        return LocalToolProbeResult(
             reachable=False,
             tool_capable=False,
             model=model,
             note=str(exc),
         )
+
+
+# Back-compat names for callers of the old probe.
+QwenProbeResult = LocalToolProbeResult
+probe_qwen_tool_support = probe_local_tool_support
 
 
 # ── Work-turn classification (declarative: a profile with an executor is work) ──
@@ -129,7 +143,7 @@ def is_work_kind(kind: str) -> bool:
     """True when this intake kind is a WORK turn (has an executor in its profile).
 
     Convo has no executor → False (it stays on the chat model and just talks).
-    Steering/collab declare ``executor: codex-build`` → True.
+    Steering/collab declare an executor roster id → True.
     """
     try:
         prof = load_turn_profile(kind)
