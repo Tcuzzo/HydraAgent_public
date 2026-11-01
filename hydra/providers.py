@@ -159,6 +159,51 @@ def is_local_provider(name: str) -> bool:
     return _canonical_provider_name(str(name or "")) == "ollama"
 
 
+#: The one transport that shells the user's own signed-in vendor CLI (registry entry
+#: above) instead of an HTTP endpoint. Other modules ask the registry; they never
+#: spell the name.
+CLI_TRANSPORT = "codex"
+#: The family a CLI-transport setup records for itself.
+CLI_TRANSPORT_FAMILY = "openai-codex"
+#: Families the CLI transport's own vendor would be grading itself on.
+CLI_VENDOR_FAMILIES: frozenset[str] = frozenset({"openai", CLI_TRANSPORT_FAMILY, CLI_TRANSPORT})
+#: What setup tells a person about the CLI transport (label, how to get it, sign-in).
+CLI_TRANSPORT_LABEL = "Sign in with ChatGPT"
+CLI_TRANSPORT_LOGIN = "codex login"
+CLI_TRANSPORT_INSTALL = (
+    "To use your ChatGPT login you need OpenAI's free Codex CLI:\n"
+    "  1. Install it:  npm install -g @openai/codex\n"
+    "  2. Sign in:     codex login   (opens your browser)\n"
+    "Then run hydra again and pick this option."
+)
+
+
+def is_cli_transport(name: str) -> bool:
+    """True for the signed-in vendor CLI transport (under any of its names)."""
+    return _canonical_provider_name(str(name or "")) == CLI_TRANSPORT
+
+
+def cli_transport_status() -> tuple[bool, str]:
+    """Whether the CLI transport's binary resolves here (PATH or its env override)."""
+    try:
+        from hydra.codex_client import resolve_codex_bin
+
+        bin_path = resolve_codex_bin()
+    except Exception as e:  # noqa: BLE001
+        return False, f"EVALUATOR_UNAVAILABLE: {e}"
+    return True, f"available (CLI transport: {bin_path})"
+
+
+CLI_TRANSPORT_BIN_ENV = f"HYDRA_{CLI_TRANSPORT.upper()}_BIN"
+
+
+def cli_transport_installed(which) -> bool:
+    """True when the binary override is set or ``which`` finds the CLI transport."""
+    if os.environ.get(CLI_TRANSPORT_BIN_ENV, "").strip():
+        return True
+    return which(CLI_TRANSPORT) is not None
+
+
 def _lookup_env_value(env: dict[str, str], key: str) -> str | None:
     for candidate in (key, *_ENV_KEY_ALIASES.get(key, ())):
         if candidate in env and env[candidate]:

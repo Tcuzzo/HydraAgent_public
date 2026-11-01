@@ -2,7 +2,7 @@
 
 HydraAgent keeps provider secrets outside the repo. This module writes
 small `.env.<provider>` files into the operator env directory so local,
-cloud/API, and Codex OAuth based setups all use the same shape.
+cloud/API, and CLI-transport sign-in setups all use the same shape.
 """
 from __future__ import annotations
 
@@ -15,7 +15,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from hydra.providers import DEFAULT_ENV_DIR
+from hydra.providers import (
+    CLI_TRANSPORT,
+    CLI_TRANSPORT_FAMILY,
+    CLI_TRANSPORT_INSTALL,
+    CLI_TRANSPORT_LABEL,
+    DEFAULT_ENV_DIR,
+)
 
 
 class SetupError(Exception):
@@ -46,14 +52,9 @@ class CommissioningReport:
 
 AUTOMATION_POLICIES = frozenset({"ask", "auto", "yolo"})
 SUDO_POLICIES = frozenset({"ask", "never", "yolo"})
-# SSOT: hydra/model_routing.yaml (unified 2026-06-11). The ollama-cloud host is
-# https://api.ollama.cloud everywhere (was spelled ollama.com here, which 403s).
-SETUP_LINKS = {
-    "codex": "https://platform.openai.com/docs",
-    "ollama": "https://api.ollama.cloud",
-    "ollama_cloud": "https://api.ollama.cloud",
-    "openrouter": "https://openrouter.ai",
-}
+# Hydra names no model provider: setup links are only for hosts the operator
+# brings. Routing lives in hydra/model_routing.yaml as BACKS rung names.
+SETUP_LINKS: dict[str, str] = {}
 
 
 def env_prefix(provider: str) -> str:
@@ -183,16 +184,16 @@ def write_setup_evidence(report: CommissioningReport) -> Path:
 def setup_local_ollama(
     *,
     endpoint: str = "http://localhost:11434",
-    model: str = "qwen3:8b",
+    model: str = "",
     api_key: str | None = None,
     env_dir: str | Path | None = None,
 ) -> SetupResult:
-    values = {
-        "OLLAMA_ENDPOINT": endpoint,
-        "OLLAMA_MODEL": model,
-    }
+    """Point Hydra at the local rung. An empty model lets the rung pick its own."""
     if api_key:
-        values["OLLAMA_API_KEY"] = api_key
+        raise SetupError("the local rung takes no key; cloud keys are held by BACKS (Needle)")
+    values = {"OLLAMA_ENDPOINT": endpoint}
+    if model:
+        values["OLLAMA_MODEL"] = model
     return write_env_file("ollama", values, env_dir=env_dir)
 
 
@@ -225,13 +226,14 @@ def setup_codex_oauth(
     oauth_path: str | None = None,
     env_dir: str | Path | None = None,
 ) -> SetupResult:
-    # Generic "Sign in with ChatGPT" flow: the OAuth lives in the user's own Codex
-    # CLI (they run `codex login`), so no path is needed here — we just mark the
-    # provider selected. A path is still accepted for non-default CLI installs.
-    values = {"CODEX_PROVIDER_FAMILY": "openai-codex"}
+    # Generic CLI-transport sign-in: the OAuth lives in the user's own CLI (they
+    # run its login command), so no path is needed here — we just mark the
+    # transport selected. A path is still accepted for non-default CLI installs.
+    prefix = env_prefix(CLI_TRANSPORT)
+    values = {f"{prefix}_PROVIDER_FAMILY": CLI_TRANSPORT_FAMILY}
     if oauth_path:
-        values["CODEX_OAUTH_PATH"] = oauth_path
-    return write_env_file("codex", values, env_dir=env_dir)
+        values[f"{prefix}_OAUTH_PATH"] = oauth_path
+    return write_env_file(CLI_TRANSPORT, values, env_dir=env_dir)
 
 
 def setup_operator_policy(
@@ -319,13 +321,12 @@ def prompt_setup(
 
     local = _yes_no(input_fn, "Configure local Ollama?", default=True)
     if local:
-        links.append(SETUP_LINKS["ollama"])
         endpoint = input_fn("Ollama endpoint [http://localhost:11434] ").strip()
-        model = input_fn("Ollama model [qwen3:8b] ").strip()
+        model = input_fn("Ollama model [blank = the rung's own default] ").strip()
         results.append(
             setup_local_ollama(
                 endpoint=endpoint or "http://localhost:11434",
-                model=model or "qwen3:8b",
+                model=model,
                 env_dir=env_dir,
             )
         )
@@ -334,7 +335,6 @@ def prompt_setup(
 
     ollama_cloud = _yes_no(input_fn, "Configure Ollama Cloud/OpenAI-compatible endpoint?", default=False)
     if ollama_cloud:
-        links.append(SETUP_LINKS["ollama_cloud"])
         endpoint = input_fn("Ollama Cloud endpoint ").strip()
         model = input_fn("Ollama Cloud model ").strip()
         api_key = secret_fn("Ollama Cloud API key (hidden) ").strip()
@@ -352,9 +352,9 @@ def prompt_setup(
 
     cloud = _yes_no(input_fn, "Configure other API providers?", default=False)
     if cloud:
-        print("Known provider examples: openrouter. Claude/Anthropic is forbidden.")
+        print("Any OpenAI-compatible endpoint works; you supply its endpoint, model and key.")
         provider_names = _split_provider_names(
-            input_fn("Provider names, comma-separated (example: openrouter) ").strip()
+            input_fn("Provider names, comma-separated (example: my-gateway) ").strip()
         )
         if not provider_names:
             raise SetupError("at least one provider name is required")
@@ -378,14 +378,14 @@ def prompt_setup(
     else:
         skipped.append("api_providers")
 
-    codex = _yes_no(
+    cli_signin = _yes_no(
         input_fn,
-        "Sign in with ChatGPT? (use your ChatGPT subscription via the Codex CLI — no API key)",
+        f"{CLI_TRANSPORT_LABEL}? (signed-in CLI transport — no API key)",
         default=False,
     )
-    if codex:
-        print("Install OpenAI's Codex CLI, then run `codex login` (it opens your browser).")
-        print("Once logged in, Hydra runs on your ChatGPT subscription via `--provider codex` — no API key needed.")
+    if cli_signin:
+        print(CLI_TRANSPORT_INSTALL)
+        print(f"Once signed in, Hydra runs it via `--provider {CLI_TRANSPORT}` — no API key needed.")
         results.append(setup_codex_oauth(env_dir=env_dir))
     else:
         skipped.append("codex_oauth")
@@ -436,18 +436,18 @@ def prompt_legacy_provider_setup(
     local = input_fn("Configure local Ollama? [Y/n] ").strip().lower()
     if local in {"", "y", "yes"}:
         endpoint = input_fn("Ollama endpoint [http://localhost:11434] ").strip()
-        model = input_fn("Ollama model [qwen3:8b] ").strip()
+        model = input_fn("Ollama model [blank = the rung's own default] ").strip()
         results.append(
             setup_local_ollama(
                 endpoint=endpoint or "http://localhost:11434",
-                model=model or "qwen3:8b",
+                model=model,
                 env_dir=env_dir,
             )
         )
 
     cloud = input_fn("Configure cloud/OpenAI-compatible API provider? [y/N] ").strip().lower()
     if cloud in {"y", "yes"}:
-        provider = input_fn("Provider name (example: openrouter) ").strip()
+        provider = input_fn("Provider name (example: my-gateway) ").strip()
         endpoint = input_fn("Provider endpoint ").strip()
         model = input_fn("Provider model ").strip()
         api_key = secret_fn("Provider API key (hidden) ").strip()
@@ -461,8 +461,8 @@ def prompt_legacy_provider_setup(
             )
         )
 
-    codex = input_fn("Configure Codex evaluator OAuth path? [y/N] ").strip().lower()
-    if codex in {"y", "yes"}:
-        oauth_path = input_fn("Codex OAuth path ").strip()
+    cli_signin = input_fn("Configure the CLI transport's sign-in path? [y/N] ").strip().lower()
+    if cli_signin in {"y", "yes"}:
+        oauth_path = input_fn("CLI transport sign-in path ").strip()
         results.append(setup_codex_oauth(oauth_path=oauth_path, env_dir=env_dir))
     return results
