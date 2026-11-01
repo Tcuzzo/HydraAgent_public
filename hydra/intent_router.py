@@ -1,11 +1,11 @@
 """hydra.intent_router — model-based per-turn intent (task vs chat), fail-safe to task.
 
 Fans out two threads per turn:
-  1. intent check  — cloud qwen3.5 classifies the message as 'task' or 'chat'
+  1. intent check  — the intent rung classifies the message as 'task' or 'chat'
   2. chat draft    — speculative chat reply (side-effect-free, tools=[])
 
 chat  → emit the ready draft (zero added latency)
-task  → discard the draft, run the cloud-qwen executor + guard_work_turn
+task  → discard the draft, run the executor rung + guard_work_turn
 
 The classifier ALWAYS fails safe to 'task' on model error/timeout/unrecognized
 response — it never silently routes a work request to the chat path.

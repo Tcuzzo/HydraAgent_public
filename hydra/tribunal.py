@@ -14,7 +14,7 @@ from pathlib import Path
 
 from hydra.atomic_write import atomic_write_bytes
 from hydra.llm import ChatMessage, LlmError
-from hydra.providers import make_runtime_client
+from hydra.providers import is_cli_transport, make_runtime_client
 from hydra.provider_health import safe_message
 from hydra.specialists import canonical_path, reject_links, system_prompt
 
@@ -130,7 +130,7 @@ def run_tribunal(plan: dict, *, root: Path, output_root: Path, private_root: Pat
                     raise LlmError('Tribunal deadline exhausted before this judge', kind='timeout')
                 client, cfg = make_runtime_client(judge['provider'], model=judge['model'], family=judge['family'],
                     env_dir=env_dir, health_path=health_path or root / '.hydra' / 'model-health.json', fallbacks=judge.get('fallbacks', []))
-                if cfg.name == 'codex' or any(r['provider'] == 'codex' for r in judge.get('fallbacks', [])):
+                if is_cli_transport(cfg.name) or any(is_cli_transport(r['provider']) for r in judge.get('fallbacks', [])):
                     raise LlmError('Blind judging requires a text-only transport; native CLI tools can inspect author metadata', kind='capability')
                 # Every seat starts fresh; no author identity, build transcript,
                 # route labels, or prior verdict is included in these messages.

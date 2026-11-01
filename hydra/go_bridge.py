@@ -237,8 +237,6 @@ def _parse_env_file(path: Path) -> dict[str, str]:
 
 def _apply_provider_aliases(env: dict[str, str]) -> None:
     aliases = {
-        "OLLAMA_CLOUD_API_KEY": "OLLAMA_API_KEY",
-        "OLLAMA_API_KEY": "OLLAMA_CLOUD_API_KEY",
         "OLLAMA_CLOUD_BASE_URL": "OLLAMA_CLOUD_ENDPOINT",
         "OLLAMA_CLOUD_ENDPOINT": "OLLAMA_CLOUD_BASE_URL",
     }

@@ -188,7 +188,7 @@ def should_run_qwen_tool_bridge(head: dict[str, Any] | None = None) -> bool:
         return False
     if text.startswith("HYDRA_SUPPRESSED"):
         return False
-    if text.startswith("qwen-tool-bridge:"):
+    if re.match(r"[a-z0-9.]+-tool-bridge:", text):  # harness bridge status line
         return False
     logs = _coerce_logs(head.get("logs"))
     if any(re.search(r"\btool:start\b", line, re.IGNORECASE) for line in logs):

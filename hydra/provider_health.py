@@ -359,7 +359,8 @@ class RoutedClient:
             for name in ('cd', 'sandbox'):
                 if name in self.__dict__:
                     setattr(client, name, self.__dict__[name])
-            if cfg.name == 'codex' and 'sandbox' not in self.__dict__ and self._cfg.name != 'codex':
+            from hydra.providers import is_cli_transport  # lazy: providers imports this module
+            if is_cli_transport(cfg.name) and 'sandbox' not in self.__dict__ and not is_cli_transport(self._cfg.name):
                 last = LlmError('Native fallback requires an explicit sandbox policy', kind='configuration')
                 self.attempts.append({'route': route.public(), 'status': 'configuration_error', 'error': last.to_dict()})
                 continue

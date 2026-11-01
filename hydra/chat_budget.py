@@ -1,7 +1,7 @@
 """hydra.chat_budget — a small per-sender daily budget for *real chat*.
 
 Policy: each sender gets a budget for conversational turns; once they pass the budget,
-the agent keeps talking on the cheap LOCAL model (qwen2.5-coder) instead of spending
+the agent keeps talking on the cost-free LOCAL rung instead of spending
 more cloud. The budget resets every day. Work turns are billed separately — this is
 just the "don't burn money just chatting" guardrail.
 
@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-CHEAP_MODEL = "ollama"  # local qwen2.5-coder — the cost-free fallback for over-budget senders
+CHEAP_MODEL = "ollama"  # the local rung — the cost-free fallback for over-budget senders
 
 
 def _day(now: datetime | None) -> str:
