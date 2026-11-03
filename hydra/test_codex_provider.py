@@ -14,7 +14,6 @@ No test invokes the real `codex` binary or any network/account.
 """
 from __future__ import annotations
 
-import os
 
 import pytest
 

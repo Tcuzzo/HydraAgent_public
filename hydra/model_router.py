@@ -20,7 +20,7 @@ from typing import Any
 import yaml
 
 from hydra.llm import LlmError, OllamaClient, ChatMessage
-from hydra.providers import ProviderConfig, ProviderError, make_client, list_providers
+from hydra.providers import ProviderConfig, ProviderError, make_client
 from hydra.model_routing import RungResolutionError, load_routing
 from hydra.providers import is_local_provider
 
@@ -569,9 +569,10 @@ def route_and_execute(
     tools: list,
     router: ModelRouter | None = None,
 ) -> dict[str, Any]:
-    """Route task to appropriate model and execute with verification.
-    
-    This is the main entry point for Phase 4 + Phase 3 integration.
+    """Route a task to a model and build the agent loop that should run it.
+
+    The loop is returned as ``agent_loop`` for the caller to run; this function
+    does not run it, and verification is reported honestly as not implemented.
     """
     router = router or ModelRouter()
     
@@ -636,4 +637,5 @@ def route_and_execute(
         "requires_human_approval": decision.requires_human_approval,
         "verified": verified,
         "verification": verification,
+        "agent_loop": agent_loop,
     }

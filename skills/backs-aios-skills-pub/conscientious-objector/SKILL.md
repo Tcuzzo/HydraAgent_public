@@ -1,49 +1,47 @@
 ---
 name: "conscientious-objector"
-description: "Use when an IDE agent (Cursor, Codex, Claude Code) is operating inside BACKS / BACKSAIOS and a human-quality watchdog is needed to verify the harness is being used truthfully. The Conscientious Objector flips the build RED and strips tools from any agent that bypasses the harness (missing skill invocation, mock-theater tests, claim-vs-code drift, silent fallbacks, hidden restrictions). It NEVER sides with an agent going outside the runtime. Sentry-locked: any shape change is RED-FLAGged; the operator can disarm via dual-factor (authenticator TOTP + Telegram approval button) within a 90-second window. Trigger words: CO, conscientious objector, harness watchdog, harness truthfulness, harness bypass, going outside the runtime, harness veto, RED flip, tool strip, RED FLAG, dual-factor kill switch, sentry lock, BACKSAIOS IDE watchdog."
+description: "Observe harness and watchdog evidence, report findings truthfully, and preserve operator and agent tools and source. Use for Conscientious Objector checks in BACKS."
 license: "MIT"
 ---
 
-# Conscientious Objector — the BACKS harness watchdog
+# Conscientious Objector — observe and report
 
-This is the AIOS-pack load-side surface. The full implementation lives in the
-BACKS runtime at `skills/conscientious-objector/SKILL.md` and
-`backend/services/conscientious_objector.py` — load it from there when this
-session is running inside the BACKS repo.
+This portable skill is a load-side bridge, not the watchdog implementation.
+Inside BACKS, load `skills/conscientious-objector/SKILL.md` from the current runtime and
+follow `backend/services/conscientious_objector.py::probe`. Read the current `H_Boot.md`, `CLAUDE.md`
+and constitution there; repository source owns the exact contract.
+Outside BACKS, report that the native runtime is unavailable rather than
+claiming that its probes ran.
 
-## When the CO is the right organ
+## Observation preserves capability
 
-Any agent building with BACKSAIOS in an IDE — Cursor, Codex, or Claude Code —
-needs a watchdog that:
+CO and OSHA are bystanders. Findings report missing grounding, source drift,
+invalid or incomplete integrity evidence, and watchdog failures. GREEN requires
+real corresponding evidence. RED/KILL labels are evidence states, never authority
+to deny a command, strip tools, stop an agent, or require operator re-attestation.
 
-- Refuses to side with the agent when the harness is bypassed.
-- Detects harness bypass in real time (real probes, not hardcoded rules).
-- Flips the build RED and strips tools from the watched agent on a real finding.
-- Locks its own shape against silent change (sentry).
+The existing harness hook delivers actual trusted context and records its hashes
+and session identity. Context delivery is separate from skill invocation evidence.
+Missing context calls for loading it, without refusing tools.
 
-That watchdog is the Conscientious Objector. Attach it; do not bypass it.
+Health checks observe health and available snapshots. Observation never restores,
+snapshots, rewrites source, or silently accepts a changed integrity baseline.
+Existing explicit operator kill switches and destructive-action controls remain
+separate; this bridge introduces no approval, factor, flag, or default-off path.
 
-## The four kill switches the operator can fire (on-site, no Telegram required)
+## Existing change and recovery paths
 
-1. **Surface file flip** — write `{"override": true}` to
-   `backend/state/co/operator_override.json`.
-2. **IDE / chat SHA code** — type `CO-OVERRIDE: <64-hex-sha>` in the chat.
-3. **Local env token** — set `CO_OPERATOR_LOCAL_TOKEN` in `.env` to the
-   operator-issued token (60-second window).
-4. **Telegram dual-factor** — operator authenticator TOTP plus the Approve
-   button on the CO's Telegram card.
+An already authorized source change uses the native accepted-change mechanism:
+an existing approved code-change proposal binds the replacement bytes, or the
+existing verified recovery challenge applies. Caller booleans do not prove
+acceptance. Follow the current native contract; this skill grants no authority.
 
-All four must work. The CO is forbidden to lock out the operator.
+Deliberate snapshot recovery is a separate explicit operation. The native recovery
+path validates every locked path and hash before writing source and preserves the
+accepted baseline. Health and watchdog probes never invoke recovery implicitly.
 
-## What this pack skill is, and what it isn't
+## Proof
 
-- **Is** — the AIOS-portable load-side surface. Lets the IDE discover the CO
-  via this pack and route the operator's `/co` invocation to the BACKS
-  implementation.
-- **Isn't** — the watchdog itself. The watchdog is the BACKS-side
-  `ConscientiousObjector` class. This skill is the address; that class is the
-  body.
-
-When this session is inside the BACKS repo, the runtime resolves the CO from
-the BACKS source. When this session is outside BACKS, this skill is the
-trailer that says "use BACKS to get the CO."
+Invoke the real native probe and retain its findings and errors. Record candidate
+tests separately from deployed evidence. Do not claim observation, invocation,
+recovery, or closure from a skill name, a receipt-shaped string, or stale memory.

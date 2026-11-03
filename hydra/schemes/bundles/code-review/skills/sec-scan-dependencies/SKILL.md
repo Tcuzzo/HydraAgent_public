@@ -1,6 +1,6 @@
 ---
 name: sec-scan-dependencies
-description: Scan project dependencies for known vulnerabilities using multiple databases (NVD, GitHub Advisory, Snyk, OSV) and provide actionable remediation guidance
+description: Scan project dependencies for known vulnerabilities using multiple databases (NVD, GitHub Advisory, Snyk, OSV) and provide actionable remediation guidance. Use when reviewing a change that adds or bumps dependencies, or before a release.
 ---
 
 # Dependency Vulnerability Scanning
@@ -203,23 +203,23 @@ eval:
 
 ---
 
-## Proven Results
+## Target Results (not yet measured)
 
 | Metric | Target | Achieved | Test Date |
 |--------|--------|----------|-----------|
-| Detection Rate | 98% | 98.6% | 2026-05-27 |
-| False Positive Rate | 3% | 2.1% | 2026-05-27 |
-| Actionable Guidance | 95% | 96.8% | 2026-05-27 |
-| Avg Latency | 8000ms | 7200ms | 2026-05-27 |
-| User Satisfaction | 4.5/5 | 4.7/5 | 2026-05-27 |
+| Detection Rate | 98% | not measured | — |
+| False Positive Rate | 3% | not measured | — |
+| Actionable Guidance | 95% | not measured | — |
+| Avg Latency | 8000ms | not measured | — |
+| User Satisfaction | 4.5/5 | not measured | — |
 
 ---
 
 ## Related Skills
 
-- [sec-scan-container](../skills/sec-scan-container/SKILL.md)
-- [sec-scan-secrets](../skills/sec-scan-secrets/SKILL.md)
-- [gha-workflow-create](../../ci-cd/skills/gha-workflow-create/SKILL.md)
+- `sec-scan-container`: backlog entry in the code-review bundle catalog (`hydra/schemes/bundles/code-review/SKILL.md`); not written yet
+- `sec-scan-secrets`: backlog entry in the code-review bundle catalog (`hydra/schemes/bundles/code-review/SKILL.md`); not written yet
+- `gha-workflow-create`: backlog entry in the ci-cd bundle catalog (`hydra/schemes/bundles/ci-cd/SKILL.md`); not written yet
 
 ---
 

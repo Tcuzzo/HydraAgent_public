@@ -1,3 +1,8 @@
+---
+name: ci-cd
+description: "Scaffolded backlog of CI/CD skill ideas (pipelines, build automation, deployment, releases, environments). Use when planning CI/CD work in Hydra; entries are a catalog, and only sample-backed skill docs are implemented."
+---
+
 # Hydra CI/CD Bundle - Scaffolded Backlog
 
 **Bundle ID:** hydra-ci-cd

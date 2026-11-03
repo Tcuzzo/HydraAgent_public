@@ -7,18 +7,13 @@ This module provides a unified interface to all of HydraAgent's memory systems:
 """
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, List, Dict, Optional, Tuple
+from typing import Any, List, Dict, Optional
 
 from hydra.session_memory import (
     create_session as create_session_memory,
     add_message as add_session_message,
     get_session_messages,
-    session_exists as session_memory_exists,
-    delete_session as delete_session_memory,
-    list_sessions as list_session_memories
+    session_exists as session_memory_exists
 )
 
 from hydra.working_memory import (
@@ -28,13 +23,9 @@ from hydra.working_memory import (
     get_recent_entries as get_recent_working_memory,
     add_entity as add_working_memory_entity,
     get_entity as get_working_memory_entity,
-    get_entities_by_type as get_working_memory_entities_by_type,
     add_entity_relation as add_working_memory_relation,
     get_memory_stats as get_working_memory_stats,
-    memory_exists as working_memory_exists,
-    delete_memory as delete_working_memory,
-    list_memories as list_working_memories,
-    create_default_memory
+    memory_exists as working_memory_exists
 )
 
 from hydra.local_memory import build_local_memory_context

@@ -325,7 +325,7 @@ class RungGatewayClient(OllamaClient):
         try:
             resp = super().chat(messages, model=cap, max_tokens=max_tokens,
                                 temperature=temperature, timeout=timeout, tools=tools)
-        except LlmError as exc:
+        except LlmError:
             hit = self.last_receipt.get("x-backs-identity")
             if hit:
                 report_outcome(self.endpoint, {"task_type": task, "rung": hit, "success": False,

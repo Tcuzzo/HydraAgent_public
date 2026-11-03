@@ -1,9 +1,8 @@
 import json
-from pathlib import Path
 
 import pytest
 
-from hydra.embeddings import config, embed, identity, memory_path
+from hydra.embeddings import embed, memory_path
 
 
 def test_embedding_identity_separates_equal_dimensions(tmp_path, monkeypatch):

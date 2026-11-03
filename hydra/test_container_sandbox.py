@@ -10,8 +10,7 @@ Coverage:
 from __future__ import annotations
 
 import subprocess
-from unittest import mock
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 

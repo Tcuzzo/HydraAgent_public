@@ -5,7 +5,7 @@ license: "MIT"
 ---
 
 # LEAP Protocol
-**Effort:** heavy — parallel builders in isolated worktrees plus blind cross-family reviewers per ball; spend it only on seams too big for one builder, where the fan-out pays back the wall-clock a single lane would burn serially. Removes: builders colliding on shared files, and the one giant unreviewable diff nobody can roll back.
+**Effort:** heavy — parallel builders in isolated worktrees plus blind, capability-resolved reviewers per ball; spend it only on seams too big for one builder, where the fan-out pays back the wall-clock a single lane would burn serially. Removes: builders colliding on shared files, and the one giant unreviewable diff nobody can roll back.
 
 LEAP is a bounded stateless-handoff method. You split a seam into **balls**. Each
 ball goes to one fresh builder that carries no hidden context. The builder runs a
@@ -82,9 +82,14 @@ The builder never grades its own ball. Before any `1`:
 2. **Keep-or-revert** — compare candidate vs champion on the ball's declared metric,
    in declared field order. A tie or a regression loses. See
    [blind-eval](../blind-eval/SKILL.md).
-3. **Blind cross-family review** — at least two reviewers from model families different
-   from the builder's, each seeing the same candidate hash and the same author-redacted
-   envelope. A reviewer that ANSWERED badly (garbage, non-JSON, refusal text) is a
+3. **Independent reviewer panel** — at least two reviewers whose authoring
+   execution did not build the ball, each seeing the same candidate hash and the
+   same author-redacted envelope. The authoring execution that built is
+   recorded as provenance and disqualified; a same model, rung, or family
+   reviewer in a fresh, author-disjoint session is permitted where the
+   configured runtime allows. Reviewers are chosen live by capability and
+   availability from the configured rung matrix; model identity is provenance, not
+   authority. A reviewer that ANSWERED badly (garbage, non-JSON, refusal text) is a
    valid refusal: `-1`. A reviewer that NEVER answered (transport failure, unreachable)
    is `0`: hold and re-seat via the fleet ladder, never a faked pass. See
    [blind-tribunal](../blind-tribunal/SKILL.md).

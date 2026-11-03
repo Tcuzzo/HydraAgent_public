@@ -19,11 +19,10 @@ with no network round-trip.
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from hydra.rubric_judge import (
     RULE_KINDS as BASE_RULE_KINDS,
-    RubricJudgeError,
     Rule,
     judge as deterministic_judge,
 )

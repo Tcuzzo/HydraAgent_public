@@ -8,7 +8,6 @@ import json
 import os
 import re
 import time
-import urllib.error
 from pathlib import Path
 from typing import Any, Callable
 
@@ -133,7 +132,7 @@ def with_emergency_fallback(func: Callable, preferred_model: str | None = None):
         
         try:
             return func(*args, **kwargs)
-        except Exception as e:
+        except Exception:
             if model_config["used_fallback"]:
                 # Already using fallback, re-raise
                 raise

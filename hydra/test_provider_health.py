@@ -4,7 +4,6 @@ import io
 import json
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor
-from types import SimpleNamespace
 
 import pytest
 

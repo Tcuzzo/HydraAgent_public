@@ -1,3 +1,8 @@
+---
+name: code-review
+description: "Scaffolded backlog of code-review skill ideas (static analysis, security scanning, performance, style, architecture review). Use when planning review work in Hydra; entries are a catalog, and only sample-backed skill docs are implemented."
+---
+
 # Hydra Code Review Bundle - Scaffolded Backlog
 
 **Bundle ID:** hydra-code-review

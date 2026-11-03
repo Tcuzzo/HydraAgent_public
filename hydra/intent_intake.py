@@ -17,7 +17,7 @@ Guarantees:
 """
 from __future__ import annotations
 
-from hydra.intake import COLLAB, CONVO, STEERING, Classification
+from hydra.intake import CONVO, STEERING, Classification
 from hydra.intake import classify as keyword_classify
 
 _INTENT_PROMPT = (

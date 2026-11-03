@@ -23,7 +23,7 @@ import os
 import re
 import subprocess
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from threading import Lock, Thread
 from typing import Any
 
@@ -211,7 +211,7 @@ def render_text(report: dict[str, Any]) -> str:
         f"Hydra subagent dispatch: {report['task_count']} tasks",
         f"max_concurrency: {report['max_concurrency']}  peak_active: {report['peak_active']}",
         f"wall_seconds: {report['wall_seconds']}",
-        f"by_status: " + ", ".join(f"{k}={v}" for k, v in sorted(report['by_status'].items())),
+        "by_status: " + ", ".join(f"{k}={v}" for k, v in sorted(report['by_status'].items())),
         "results:",
     ]
     for row in report["results"]:
@@ -228,7 +228,7 @@ def render_graph_text(report: dict[str, Any]) -> str:
         f"Hydra subagent graph: {report['task_count']} tasks",
         f"verdict: {report['verdict']}  phases: {report['phase_count']}",
         f"max_concurrency: {report['max_concurrency']}",
-        f"by_status: " + ", ".join(f"{k}={v}" for k, v in sorted(report['by_status'].items())),
+        "by_status: " + ", ".join(f"{k}={v}" for k, v in sorted(report['by_status'].items())),
         "phases:",
     ]
     for phase in report["phases"]:

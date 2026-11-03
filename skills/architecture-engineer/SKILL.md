@@ -6,8 +6,9 @@ description: >-
   boundary-changing proposals, and write architecture decision records when an
   architecture review or ADR is requested. Cites local rules, never borrowed
   numeric targets from other repos.
-trigger_summary: architecture, ADR, drift, boundary, design review, structure, dependency direction
 license: MIT
+metadata:
+  trigger_summary: "architecture, ADR, drift, boundary, design review, structure, dependency direction"
 ---
 
 # Architecture Engineer

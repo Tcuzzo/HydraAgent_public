@@ -5,7 +5,7 @@ license: "MIT"
 ---
 
 # Blind Eval
-**Effort:** light — one blind judge run: several shuffled readings of the frozen pair by a model that authored neither. Removes: self-graded "it's better" landings — taste regressions the author would wave through.
+**Effort:** light — one blind judge run: several shuffled readings of the frozen pair by a fresh reviewing execution that authored neither. Removes: self-graded "it's better" landings — taste regressions the author would wave through.
 
 A keep-or-revert quality gate for calls a test cannot decide — prose quality, UI
 copy, a refactor's readability, a prompt's output, a design's feel. Judge the
@@ -28,8 +28,12 @@ reverts. Only proven uplift lands.
 3. **Strip authorship.** Label them A and B, shuffle the order, drop every name,
    model id, and the author's reasoning. The judge sees only the artifacts and
    the rubric.
-4. **Seat a judge that authored neither** — a model from a different family, or a
-   human. The author never grades its own work.
+4. **Seat a judge that authored neither** — a non-builder grader, chosen live by
+   capability and availability from the configured rung matrix (the authoring
+   execution that built is recorded as provenance and disqualified; a same
+   model, rung, or family judge in a fresh, author-disjoint session is permitted
+   where the configured runtime allows), or a human. The author never grades
+   its own work.
 5. **Judge on merits.** Score each rubric axis. Cite evidence from the artifact
    for every score — a verdict without evidence is a guess.
 6. **KEEP only if the candidate clears the bar AND strictly beats the baseline.**
@@ -54,9 +58,11 @@ reverts. Only proven uplift lands.
   and the repeats kill noise, in one move. If the real improvement is smaller
   than the judge's run-to-run swing, the gate cannot tell signal from luck —
   add readings or pick a steadier measure.
-- **Solo rig.** No second model family available? A fresh blind session that
-  never saw the author's conversation judges — and the report names the
-  weakened gate ("judged same-family-blind, not cross-family").
+- **Solo rig.** Only one configured rung available? A fresh, author-disjoint
+  session that never saw the author's conversation judges — and the report
+  records the single-rung configuration as provenance ("judged on a single
+  configured rung"), not as a weakened gate: the separation is the session,
+  not the model name.
 - **No trusted bar? Use dominance.** When the baseline level is unknown or noisy,
   drop the absolute bar and keep only what strictly beats the current champion.
   A regression can never dominate, so no floor is needed.
