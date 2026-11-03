@@ -36,7 +36,7 @@ from typing import Any, Callable
 
 from hydra.apply_patch import apply_patch, create_file, PatchFailure
 from hydra.worker_memory import build_worker_memory_context
-from hydra.resolution_gate import gate_from_job, make_subprocess_test_runner, subprocess_test_runner
+from hydra.resolution_gate import gate_from_job, make_subprocess_test_runner
 from hydra.exec_backend import run_sandboxed_shell
 from hydra.event_log import EventLog
 # auto_fix_loop is imported lazily inside run_worker_job to avoid circular imports:
@@ -104,7 +104,7 @@ def _build_default_repair_fn(
         if _client is None:
             try:
                 from hydra.model_routing import load_routing           # noqa: PLC0415
-                from hydra.providers import make_client, ProviderError  # noqa: PLC0415
+                from hydra.providers import make_client  # noqa: PLC0415
                 mr = load_routing()
                 # 'planner' = cloud-planner (most capable / highest complexity slot).
                 entry = mr.role_entry("planner")
@@ -642,16 +642,12 @@ def _parse_unified_diff(patch: str) -> list[tuple[str, str, str]]:
                 i += 1
             continue
 
-        # Check for new-file creation: src is /dev/null
-        src_name = src_line[4:]
-        if src_name.startswith("a/"):
-            src_name = src_name[2:]
-        is_new_file = src_name.strip() in ("/dev/null", "dev/null")
+        # New-file creation (src is /dev/null) is detected at apply time from the
+        # target's absence; see _apply_unified_patch.
 
         # Collect hunks for this file
         while i < n and lines[i].startswith("@@ "):
-            hunk_header = lines[i]
-            i += 1
+            i += 1  # skip the hunk header; blocks are exact-matched, not line-numbered
             old_lines: list[str] = []
             new_lines: list[str] = []
             while i < n and not lines[i].startswith(("@@", "--- ", "\\ No newline")):

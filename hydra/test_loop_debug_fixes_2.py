@@ -5,17 +5,12 @@ PASSES after the minimal root-cause fix. No fake-green.
 """
 from __future__ import annotations
 
-import logging
-import subprocess
-import time
-from pathlib import Path
-from typing import Any
 
 # ---------------------------------------------------------------------------
 # Shared fake LLM plumbing (mirrors test_loop_bridge.py style)
 # ---------------------------------------------------------------------------
 from hydra.llm import ChatResponse
-from hydra.loop import AgentLoop, LoopResult
+from hydra.loop import AgentLoop
 
 
 class _SimpleFakeClient:

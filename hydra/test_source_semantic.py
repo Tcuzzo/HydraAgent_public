@@ -1,4 +1,3 @@
-import json
 import pytest
 from hydra.source_index import SourceIndex
 from hydra import source_semantic as semantic

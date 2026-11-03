@@ -30,7 +30,6 @@ import os
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Iterable
 
 from hydra.llm import LlmError, OllamaClient
 

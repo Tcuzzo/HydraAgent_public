@@ -7,9 +7,8 @@ multiturn collaborative runtime build/builds. Everything else proceeds.
 """
 from __future__ import annotations
 
-import pytest
 
-from hydra.mission_gate import MissionGate, classify_mission
+from hydra.mission_gate import classify_mission
 
 
 def test_normal_mission_is_not_gated():

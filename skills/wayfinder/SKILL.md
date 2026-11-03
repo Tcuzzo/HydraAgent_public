@@ -5,8 +5,9 @@ description: >-
   decide what to work on next. Charts a decision map to the destination instead
   of parking a question on the human. Plan and don't do — each ticket resolves
   a decision, not a slice of build work. Never run lost.
-trigger_summary: wayfinder, the path, chart the route, map the work, what next, lost, fog of war, decision map, frontier
 license: MIT
+metadata:
+  trigger_summary: "wayfinder, the path, chart the route, map the work, what next, lost, fog of war, decision map, frontier"
 ---
 
 # Wayfinder

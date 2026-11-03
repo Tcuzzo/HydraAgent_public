@@ -25,7 +25,6 @@ import asyncio
 import ast
 import pathlib
 
-import pytest
 from textual.app import ScreenStackError
 from unittest.mock import MagicMock, patch
 
@@ -87,7 +86,6 @@ def test_post_chat_line_does_not_raise_when_query_one_raises_screenstackerror():
 
 def test_set_code_prompt_does_not_raise_when_query_one_raises_screenstackerror():
     app = _make_app()
-    initial_yolo = app._awaiting_yolo_code
     with patch.object(app, "query_one", side_effect=ScreenStackError("no screen")):
         app._set_code_prompt(True)  # MUST NOT raise
     assert app._awaiting_yolo_code is True  # state mutation survived
@@ -151,7 +149,7 @@ def test_post_log_survives_real_mount_unmount_cycle():
     app = _make_app()
 
     async def _drive():
-        async with app.run_test() as pilot:
+        async with app.run_test():
             pass  # Mounted; nothing to assert; just exercise the lifecycle.
         # Snapshot state BEFORE the post-unmount call — the in-memory
         # record should be unchanged because the widget write is the only
@@ -169,7 +167,7 @@ def test_update_stat_bar_survives_real_mount_unmount_cycle():
     app = _make_app()
 
     async def _drive():
-        async with app.run_test() as pilot:
+        async with app.run_test():
             pass
         snapshot = (
             app._stat_iterations,
@@ -188,7 +186,7 @@ def test_post_chat_line_survives_real_mount_unmount_cycle():
     app = _make_app()
 
     async def _drive():
-        async with app.run_test() as pilot:
+        async with app.run_test():
             pass
         initial_len = len(app._chat_lines)
         app._post_chat_line("hydra", "after real unmount")  # MUST NOT raise

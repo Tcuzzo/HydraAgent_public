@@ -1,6 +1,6 @@
 ---
 name: pdf-extract-tables
-description: Extract tables from PDF files with structure preservation, handling multi-page tables, merged cells, and complex layouts
+description: Extract tables from PDF files with structure preservation, handling multi-page tables, merged cells, and complex layouts. Use when tabular data must be pulled out of a PDF.
 ---
 
 # PDF Table Extraction
@@ -178,23 +178,23 @@ eval:
 
 ---
 
-## Proven Results
+## Target Results (not yet measured)
 
 | Metric | Target | Achieved | Test Date |
 |--------|--------|----------|-----------|
-| Cell Accuracy | 97% | 97.8% | 2026-05-27 |
-| Structure Preservation | 95% | 96.2% | 2026-05-27 |
-| Multi-Page Merge | 95% | 97.1% | 2026-05-27 |
-| Avg Latency | 1500ms | 1320ms | 2026-05-27 |
-| User Satisfaction | 4.5/5 | 4.7/5 | 2026-05-27 |
+| Cell Accuracy | 97% | not measured | — |
+| Structure Preservation | 95% | not measured | — |
+| Multi-Page Merge | 95% | not measured | — |
+| Avg Latency | 1500ms | not measured | — |
+| User Satisfaction | 4.5/5 | not measured | — |
 
 ---
 
 ## Related Skills
 
-- [pdf-extract-text](../skills/pdf-extract-text/SKILL.md)
-- [xlsx-write](../skills/xlsx-write/SKILL.md)
-- [csv-data-summarizer](../skills/csv-data-summarizer/SKILL.md)
+- `pdf-extract-text`: backlog entry in the document-processing bundle catalog (`hydra/schemes/bundles/document-processing/SKILL.md`); not written yet
+- `xlsx-write`: backlog entry in the document-processing bundle catalog (`hydra/schemes/bundles/document-processing/SKILL.md`); not written yet
+- `csv-data-summarizer`: not in any Hydra bundle catalog yet; proposed, not written
 
 ---
 

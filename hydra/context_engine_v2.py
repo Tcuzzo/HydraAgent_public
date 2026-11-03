@@ -11,7 +11,6 @@ What makes this better:
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -22,7 +21,6 @@ from hydra.local_memory import build_local_memory_context
 # Wiki memory functions - use directly from module
 import hydra.wiki_memory as wiki_memory
 # Failure clusters - use module functions
-import hydra.failure_clusters as failure_clusters
 # Repo-map ranked localization (slice 10) — replaces substring stub
 from hydra.repo_map import build_repo_map_context
 

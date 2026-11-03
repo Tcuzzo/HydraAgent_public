@@ -63,8 +63,6 @@ from hydra.cli.cmd_code import cmd_code, register_code_command  # noqa: E402
 from hydra.cli.cmd_chat import (  # noqa: E402
     DEFAULT_MEMORY_ROOT,
     LOCAL_MEMORY_MAX_CHARS,
-    _handle_chat_operator_intent,
-    _handle_chat_terminal_control,
     cmd_chat,
     register_chat_commands,
 )
@@ -114,7 +112,6 @@ from hydra.cli.cmd_workbench import (  # noqa: E402
     register_workbench_commands,
 )
 from hydra.cli.cmd_undo import cmd_undo, register_undo_command  # noqa: E402
-from hydra.cli.tool_binding import bind_tools as _bind_tools  # noqa: E402
 from hydra.cli.cmd_personal import register_personal_commands, cmd_personal  # noqa: E402
 
 

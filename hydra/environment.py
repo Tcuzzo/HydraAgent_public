@@ -166,11 +166,13 @@ def _is_ip_allowed(host: str) -> tuple[bool, str | None]:
     
     Returns (True, None) if all resolved IPs are public.
     Returns (False, reason) if any IP is private/internal.
+    Raises EnvironmentError if the host cannot be resolved (fail closed).
     """
     try:
         addr_info = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except socket.gaierror as e:
-        return False, f"DNS resolution failed: {e}"
+        # Fail closed, but say why: an unresolvable host is not a private address.
+        raise EnvironmentError(f"could not resolve host {host!r}: {e}") from e
     
     for family, _, _, _, sockaddr in addr_info:
         ip_str = sockaddr[0]

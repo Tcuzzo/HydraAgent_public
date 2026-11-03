@@ -247,7 +247,7 @@ def build_local_memory_context(
     report_lines = [
         "Hydra local memory import",
         f"root: {resolved}",
-        f"status: OK",
+        "status: OK",
         f"files indexed: {indexed_count}",
         f"context chars: {len(context)}",
     ]

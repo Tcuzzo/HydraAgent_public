@@ -18,7 +18,7 @@ from typing import Callable
 from hydra.autonomy import SAFE_BASH_COMMANDS, classify_tool_call
 from hydra.emergency_fallback import (
     LIFE_SUPPORT_PROVIDER,
-    S6_CHECKPOINT_NAME,
+    S6_CHECKPOINT_NAME as S6_CHECKPOINT_NAME,  # re-exported for callers of hydra.continuation
     probe_model,
 )
 from hydra.orchestrate import SubagentTask, dispatch

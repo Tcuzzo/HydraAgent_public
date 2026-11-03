@@ -12,7 +12,6 @@ import inspect
 import socketserver
 import threading
 import http.server
-from pathlib import Path
 
 import pytest
 

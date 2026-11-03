@@ -12,8 +12,6 @@ These tests were RED before the deepseek-v4-flash drift was fixed (slice-audit-0
 """
 from __future__ import annotations
 
-import inspect
-import re
 from pathlib import Path
 
 import pytest

@@ -1,43 +1,47 @@
 ---
 name: "osha-bot"
-description: "Use when a watchdog or quality gate (CO, Sentry, Tribunal, doctor CLI, capability-graph compiler) is in play and an adversarial observer is needed to watch the WATCHDOGS. OSHA Bot is a watchdog-of-watchdogs: it calls out constitution violations, philosophy drift, anti-patterns, mock theater, and default-off capabilities in the watchdogs themselves. Adversarial — never a guardrail, never a gate on the operator. When a watchdog goes out of line, OSHA kills its tools until the operator re-commits to safe building. The operator can always disarm OSHA via the CO dual-factor kill switch. Trigger words: OSHA, osha-bot, watchdog of watchdogs, adversarial watchdog, constitution watchdog, philosophy watchdog, quality watchdog, bullshit detector, kill watchdog tools, bot pack safety, bot foreman, harness equals safety."
+description: "Observe harness and watchdog evidence, report findings truthfully, and preserve operator and agent tools and source. Use for OSHA Bot checks in BACKS."
 license: "MIT"
 ---
 
-# OSHA Bot — watchdog of watchdogs
+# OSHA Bot — observe and report
 
-This is the AIOS-pack load-side surface. The full implementation lives in
-the BACKS runtime at `skills/osha-bot/SKILL.md` and
-`backend/services/osha_bot.py`.
+This portable skill is a load-side bridge, not the watchdog implementation.
+Inside BACKS, load `skills/osha-bot/SKILL.md` from the current runtime and
+follow `backend/services/osha_bot.py::probe`. Read the current `H_Boot.md`, `CLAUDE.md`
+and constitution there; repository source owns the exact contract.
+Outside BACKS, report that the native runtime is unavailable rather than
+claiming that its probes ran.
 
-## Why this skill exists
+## Observation preserves capability
 
-Every watchdog degrades if no one watches it. The CO can drift to "always
-approve." The Tribunal can drift to "always pass." The Sentry can drift to
-"never trip." A watchdog with no observer is a rubber stamp after enough
-pressure.
+CO and OSHA are bystanders. Findings report missing grounding, source drift,
+invalid or incomplete integrity evidence, and watchdog failures. GREEN requires
+real corresponding evidence. RED/KILL labels are evidence states, never authority
+to deny a command, strip tools, stop an agent, or require operator re-attestation.
 
-OSHA Bot is the adversarial observer. It does not approve work. It does not
-gate the operator. It OBSERVES and FAILS LOUDLY when a watchdog violates its
-own constitution.
+The existing harness hook delivers actual trusted context and records its hashes
+and session identity. Context delivery is separate from skill invocation evidence.
+Missing context calls for loading it, without refusing tools.
 
-## What OSHA is allowed to do
+Health checks observe health and available snapshots. Observation never restores,
+snapshots, rewrites source, or silently accepts a changed integrity baseline.
+Existing explicit operator kill switches and destructive-action controls remain
+separate; this bridge introduces no approval, factor, flag, or default-off path.
 
-- **Kill a watchdog's tools.** When the CO goes out of line, OSHA strips its
-  tools until the operator re-commits.
-- **Force re-commit to safe building.** The watchdog must re-attest to its
-  constitution before its tools return.
-- **File loud failures.** No silent downgrades, no swallowed exceptions, no
-  `except: pass` fallbacks in watchdog code.
+## Existing change and recovery paths
 
-## What OSHA is NOT allowed to do
+An already authorized source change uses the native accepted-change mechanism:
+an existing approved code-change proposal binds the replacement bytes, or the
+existing verified recovery challenge applies. Caller booleans do not prove
+acceptance. Follow the current native contract; this skill grants no authority.
 
-- **Gate the operator.** OSHA has no input into operator workflows.
-- **Lock the operator out.** The CO dual-factor kill switch always works.
-- **Edit the watchdogs.** OSHA observes; it does not patch.
+Deliberate snapshot recovery is a separate explicit operation. The native recovery
+path validates every locked path and hash before writing source and preserves the
+accepted baseline. Health and watchdog probes never invoke recovery implicitly.
 
-## When to invoke
+## Proof
 
-When a watchdog's verdict feels off. When the watchdog's behavior drifts from
-its constitution. When "GREEN" feels like a rubber stamp. Run `/osha` and
-let the adversarial pass find what the in-house pass missed.
+Invoke the real native probe and retain its findings and errors. Record candidate
+tests separately from deployed evidence. Do not claim observation, invocation,
+recovery, or closure from a skill name, a receipt-shaped string, or stale memory.

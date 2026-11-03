@@ -1,0 +1,4 @@
+interface:
+  display_name: "BACKS Session Rollover"
+  short_description: "Rotate coder sessions at 125k without losing build state"
+  default_prompt: "Use $backs-session-rollover to wire automatic 125k context handoff into my existing BACKS build loops and verify fresh-session continuation."

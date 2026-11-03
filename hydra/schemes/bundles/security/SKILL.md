@@ -1,3 +1,8 @@
+---
+name: security
+description: "Scaffolded backlog of security skill ideas (vulnerability scanning, compliance audits, secret detection, network analysis). Use when planning security work in Hydra; entries are a catalog, and only sample-backed skill docs are implemented."
+---
+
 # Hydra Security Bundle - Scaffolded Backlog
 
 **Bundle ID:** hydra-security

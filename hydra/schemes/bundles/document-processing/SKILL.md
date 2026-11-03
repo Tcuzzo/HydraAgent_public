@@ -1,3 +1,8 @@
+---
+name: document-processing
+description: "Scaffolded backlog of document-processing skill ideas (DOCX, PDF, XLSX, PPTX, EPUB). Use when planning document work in Hydra; entries are a catalog, and only sample-backed skill docs are implemented."
+---
+
 # Hydra Document Processing Bundle - Scaffolded Backlog
 
 **Bundle ID:** hydra-document-processing

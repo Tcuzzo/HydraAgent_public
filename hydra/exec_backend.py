@@ -25,7 +25,6 @@ agent-issued test/verify commands run confined BY DEFAULT.
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 import subprocess
 import sys

@@ -1,3 +1,8 @@
+---
+name: research
+description: "Scaffolded backlog of research skill ideas (deep research, literature review, market and competitive analysis). Use when planning research work in Hydra; entries are a catalog, and only sample-backed skill docs are implemented."
+---
+
 # Hydra Research Bundle - Scaffolded Backlog
 
 **Bundle ID:** hydra-research

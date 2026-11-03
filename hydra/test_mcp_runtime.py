@@ -1,8 +1,5 @@
 """Real protocol/process tests: no mocked MCP client, server or filesystem."""
-import asyncio
 import json
-import os
-from pathlib import Path
 import sys
 import time
 

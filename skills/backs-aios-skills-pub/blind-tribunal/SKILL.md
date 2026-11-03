@@ -1,11 +1,11 @@
 ---
 name: "blind-tribunal"
-description: "Use when an autonomous change needs an independent grade before landing and no human is in the loop. Convenes eight blind, cross-family jurors (one lens each — defect, proportion, operator consequence, reversibility, state continuity, resource economy, boundary condition, telemetry), each routed by tier to the cheapest model family that is sufficient, over an author-redacted envelope of whole files; every finding becomes a new failing test; loop until every juror passes. Trigger words: blind tribunal, grill tribunal, tribunal, jurors, eight lenses, cross-family grade, convene, blind grade, independent grade, grade before landing."
+description: "Use when an autonomous change needs an independent grade before landing and no human is in the loop. Convenes eight blind, capability-resolved jurors (one lens each — defect, proportion, operator consequence, reversibility, state continuity, resource economy, boundary condition, telemetry), each routed by tier to the cheapest sufficient rung from the configured matrix, over an author-redacted envelope of whole files; every finding becomes a new failing test; loop until every juror passes. Trigger words: blind tribunal, grill tribunal, tribunal, jurors, eight lenses, independent grade, convene, blind grade, independent grade, grade before landing."
 license: "MIT"
 ---
 
 # Blind Tribunal
-**Effort:** heavy — eight juror seats, one lens each, routed by tier to the cheapest sufficient model family and re-convened on fresh envelopes every round until unanimous; spend it on autonomous changes that land with no human review. Removes: rogue landings gated by nothing but the builder's own word.
+**Effort:** heavy — eight juror seats, one lens each, routed by tier to the cheapest sufficient route and re-convened on fresh envelopes every round until unanimous; spend it on autonomous changes that land with no human review. Removes: rogue landings gated by nothing but the builder's own word.
 
 The grading loop that lets the human walk away without the agent going rogue.
 A panel of jurors reviews the change blind, with authorship stripped. Every
@@ -20,8 +20,11 @@ Nothing lands on the builder's word alone.
 
 ## The seats
 
-Eight jurors, one lens each. Each is a model from a DIFFERENT family than the builder
-(same vendor = same family). A juror asked to check everything checks nothing well.
+Eight jurors, one lens each. Each is picked live from a rung that carries the
+lens's required capability. Exclude the authoring execution (recorded as
+provenance where the runner supports it) and any session that inherited the
+builder's conversation or context; each reviewer uses a fresh, author-disjoint session.
+A juror asked to check everything checks nothing well.
 
 | Juror | Lens id | Tier | The question it asks |
 | --- | --- | --- | --- |
@@ -44,64 +47,66 @@ Route each tier to what the lens needs, not to the biggest model you own:
   named tests. Run harness jurors read-only (`codex exec --sandbox read-only`; a
   read-only tool catalog on a claude harness) and void any verdict whose dispatch
   changed repository bytes, naming the paths. Header: *trace every state change across the whole workflow before you judge.*
-- **fast structural** (boundary_condition, resource_economy): the cheapest fast route —
-  a free local GPU model first, **fused with a cheap cloud verifier** that judges the
-  same prompt: the lens passes only when BOTH pass; the verifier never re-seats the
-  primary's model; when every cloud rung is down the local verdict stands, flagged
-  **UNVERIFIED** in the review and the summary — never silently "verified". A local
-  model must see the WHOLE artifact or it does not judge: size the request's context
-  window to the prompt (`num_ctx` on Ollama — the server default is 4096 tokens and it
-  truncates silently; measured 2026-09-04, a 16B juror "passed" a 124 KB diff it never
-  saw, citing a file that does not exist) and refuse, before sending, a prompt the rung
-  cannot hold. The verifier never comes from the primary's FAMILY (same vendor =
-  same family), and an UNVERIFIED seat is a HOLD — never unanimity, never a pack
-  pass. After every local call read the node's own numbers: cap the answer
-  (`num_predict`), refuse an answer whose prompt filled the window
-  (`prompt_eval_count` + answer budget ≥ `num_ctx` is a measured truncation), and
-  check residency (`size_vram == size` on `/api/ps`) — a model spilled to system RAM
-  is unloaded and its answer discarded. Header: *work fast and literal from the code
-  in front of you.*
+- **fast structural** (boundary_condition, resource_economy): the cheapest measured
+  sufficient configured route that meets the lens's needs. A local model must see the WHOLE artifact or it does
+  not judge: size the request's context window to the prompt (`num_ctx` on Ollama — the
+  server default is 4096 tokens and it truncates silently; measured 2026-09-04, a
+  16B juror "passed" a 124 KB diff it never saw, citing a file that does not exist)
+  and refuse, before sending, a prompt the rung cannot hold. When an optional verifier
+  is fused with the primary it judges the same prompt and the local primary verdict
+  stands on its own evidence when the verifier is unavailable (no cloud rung live),
+  flagged **UNVERIFIED** in the review and the summary — never silently "verified"
+  (see *The verdict* for when a missing verifier is a HOLD). Local judges obey the
+  same evidence floor as cloud judges. After every local
+  call read the node's own numbers: cap the answer (`num_predict`), refuse an answer
+  whose prompt filled the window (`prompt_eval_count` + answer budget ≥ `num_ctx`
+  is a measured truncation), and check residency (`size_vram == size` on `/api/ps`) —
+  a model spilled to system RAM is unloaded and its answer discarded. Header:
+  *work fast and literal from the code in front of you.*
 - **operator safety** (operator_consequence, telemetry): your strongest coder with
   safety grounding. Header: *think as the human who runs this on their own machine.*
 - **generalist** (defect, proportion): a reliable large generalist. Header: *precise
   findings, no invented context.*
 
-Every tier's ladder ends on a local survival rung, so the tribunal still convenes with
-zero cloud. The premium accounts an IDE session holds (Claude Opus/Sonnet, Codex) are an
-IDE-only lane for the deep-state seats: render the prompt files, pipe them in, drop the
-verdicts into the same shape.
+Every tier's ladder keeps enough eligible configured routes to carry the artifact, so
+the tribunal still convenes when cloud is unavailable. Local and IDE-resident rungs
+participate by configured eligibility — measured capacity, residency, and the
+operator's live config decide availability; there is no fixed physical-location order.
 
-**Solo rig.** When only one model family is available, degrade EXPLICITLY: a
-fresh context or session that never saw the author's conversation acts as the
-blind grader, or the human reviews the redacted envelope. The report must name
-the weakened gate ("graded same-family-blind, not cross-family"), never
-silently pretend the cross-family gate held.
+**Solo rig.** When only one configured rung is available, independence still
+comes from a fresh, author-disjoint context or session that never saw the
+author's conversation. That session, with the author-redacted envelope and
+frozen evidence bytes, IS the blind grader — the same capable model in a fresh
+session is permitted, where the configured runtime allows. The report records
+the single-rung configuration as provenance, not as a weakened gate: the
+separation is the session, not the model name. A legacy identity filter on
+top of this policy is an unresolved runtime mismatch — surface it, never
+silently assert it fixed, never bypass.
 
-## The builder is declared, and the exclusion is structural
+## The builder is declared, and the exclusion is recorded session isolation
 
-"Different family than the builder" was a rule jurors were asked to remember. In the
-tribunal's own dogfood the operator-safety seat led with the very model that had built
-the candidate, and nothing recorded or excluded it — the author graded its own work for
-two rounds and every builder-is-not-grader claim on those rounds was unfounded. So:
+Require RECORDED session-context evidence for every review. A model label alone
+cannot establish whether a reviewer inherited the authoring context, and the public
+pack does not fabricate this evidence. What follows depends on the runner actually used.
 
-- **Convene with the builder named** (`--builder <model-or-family>`). The run record
-  carries `builder_family`. Every rung of that family is refused out loud, before any
-  dispatch, on every ladder. A lens left with no rung HOLDS — it never falls back to the
-  builder because the builder was the only seat left.
-- **Same vendor = same family** (`gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.5` are one family).
-  One declaration excludes the vendor.
-- **Prove it on the live ladder, not in a test:** after the first convene with the builder
-  declared, the routing table must show the builder's seats fell through to another
-  family. If it did not, the exclusion is decoration.
+- **Convene with the authoring execution recorded**, where the runner supports it.
+  Exclude that execution and any session that inherited its conversation or
+  context before dispatch. If a lens has no eligible rung, it holds and never
+  falls back to the authoring execution; report the gap.
+- **Prove session isolation with recorded evidence:** the receipt must show a
+  fresh author-disjoint reviewer session that did not inherit the author's
+  conversation or context, bound to the frozen, author-redacted envelope.
+  Record the actual model, provider, transport, host, and fallback reason.
+  The public pack ships no Fleet resolver; surface missing runtime support.
 
-## The footer names the lens, a rejected rung keeps its words, and the floor is three rungs deep
+## The footer names the lens, a rejected rung keeps its words, and the receipt is exact
 
 Round 4 held two lenses with zero refusals, and every link was on the record. Three laws came out of it:
 
 - **State the answer shape next to the answer.** The protocol footer carries the literal lens name (`"lens": "defect"`), never the `<your lens>` placeholder. A juror asked to recall the lens from 350 KB earlier, inside an artifact that names all eight lenses, answered the wrong lens three times in two rounds. Fill the placeholder at render time.
 - **A rejected rung leaves its words on the record.** A wrong-lens answer or a voided verdict carries a bounded `raw_tail` on the rejected entry, so the next round reads the cause instead of inferring it.
-- **Two cloud rungs is not a floor.** Every tier holds at least three rungs with no declared `context_tokens` (they can carry a 120k-token artifact) before its local tail. One wrong lens plus one void must never hold a lens.
-- **A structured verdict never shares its budget with thinking.** A reasoning model asked for a bare JSON verdict spent its whole 65536-token budget thinking about a 131k-token artifact and emitted nothing (`finish_reason=length`); the role's time ceiling then killed the next rung mid-walk. Every cloud rung that asks for a JSON-object verdict runs with its reasoning channel off (`reasoning_effort: none`), and the verifier ladder keeps a plain-HTTP third family behind it.
+- **Route depth is a measured capacity, not a magic floor.** Every tier should hold enough capability-sufficient rungs to absorb the expected failures; the configured ladder decides depth, not a universal "three cloud rungs" count. (Size it with `context_tokens` / `num_ctx`, as above.) One wrong lens plus one void must never hold a lens.
+- **A structured verdict never shares its budget with thinking.** A reasoning model asked for a bare JSON verdict spent its whole 65536-token budget thinking about a 131k-token artifact and emitted nothing (`finish_reason=length`); the role's time ceiling then killed the next rung mid-walk. Reasoning channel and budget controls follow the route and the output shape — some clouds disable reasoning for JSON, others keep medium; recorded as a measured incident, not a universal rule. (`reasoning_effort: none` on clouds that let the channel be disabled; `finish_reason=length` on a structured verdict is a verdict rejection, not a slow pass.)
 - **Nothing else writes into the tribunal's repo while it convenes.** A concurrent grader's status file inside the checkout changed bytes under a seat, and the organ voided that verdict honestly: it cannot attribute a change. Serialize writers, or convene on a separate worktree of the same commit.
 
 ## The envelope
@@ -176,8 +181,10 @@ Strict machine-parseable JSON, one object, no prose:
 - A fused seat records both verdicts: the primary's and the verifier's, with the
   verifier's findings prefixed `[verifier:<model>]`, plus `verified: true|false`.
   Count the unverified seats in the summary and print them on the console line.
-- An UNVERIFIED seat is a hold, not a pass: it never makes unanimity, its pack seat
-  refuses, and the command exits as a hold — never zero.
+  An UNVERIFIED optional verifier is provenance, not automatic HOLD: the local
+  primary verdict stands on its own evidence when the task contract does not
+  require the verifier. Only a verifier the task contract actually requires is
+  HOLD when absent — never zero, never a silent pass on a missing required vote.
 - **The out directory is owned before it is swept.** A filename shape (`summary.json`,
   `verdict_*.json`) is not ownership. The organ stamps a directory it claims; a directory
   holding those shapes WITHOUT the stamp is refused — the files and the remedy named,
@@ -209,9 +216,10 @@ Strict machine-parseable JSON, one object, no prose:
    that commit. The builder may not touch the test ([red-first](../red-first/SKILL.md)).
 2. Build to green.
 3. Build the envelope from the CURRENT files.
-4. Seat the eight jurors by tier — different families than the builder
-   ([fleet-ladder](../fleet-ladder/SKILL.md) resolves what is live). Seat them in
-   parallel; local cards serialize themselves.
+4. Seat the eight jurors by tier in fresh author-disjoint sessions
+   ([fleet-ladder](../fleet-ladder/SKILL.md) resolves what is live; the authoring
+   execution is recorded as provenance and excluded). Seat them in parallel;
+   local cards serialize themselves.
 5. The deep-state jurors also verify, not just read: the new tests pass; the regression
    suite is no worse than baseline; and a fake-green check — a test that SHOULD fail
    (the bug re-introduced) does fail. A fake green is a refuse.
@@ -226,9 +234,12 @@ Strict machine-parseable JSON, one object, no prose:
 
 ## Hard rules — any one broken voids the grade
 
-- The builder never grades its own work: not the same instance, not the same family.
-- The verifier never comes from the primary seat's family; a verifier that would be
-  the same family holds instead.
+- The builder never grades its own work: not the same authoring execution, not
+  the same session that saw the builder's conversation, not the same context
+  that inherited it. A fresh, author-disjoint session is the floor.
+- The verifier, when one is fused with a primary, follows the configured runtime
+  policy for author-execution continuity; a verifier that violates that policy,
+  when one is set, holds instead.
 - **A juror refusal is only as good as the envelope.** Before writing a test from
   a finding, verify the finding against the actual files. A finding about code the
   envelope never carried means fix the envelope, not the code.
@@ -256,5 +267,5 @@ Strict machine-parseable JSON, one object, no prose:
 - [blind-eval](../blind-eval/SKILL.md) — the lighter keep-or-revert gate when the question is taste, not defects.
 
 > Scaffold credit: Matt Pocock, grill-me / grilling (mattpocock/skills, MIT). The
-> cross-family blind adversarial tribunal design, the eight lenses, and the per-lens
+> blind author-disjoint tribunal design, the eight lenses, and the per-lens
 > routing are BACKS AIOS.
