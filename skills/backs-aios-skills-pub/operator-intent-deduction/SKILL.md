@@ -1,8 +1,9 @@
 ---
-skill_id: operator-intent-deduction
 name: operator-intent-deduction
 description: Use when an agent faces an unresolved implementation choice, tradeoff, or proposed question for the operator, and current intent, project evidence, or operator context may already support a decision.
 license: MIT
+metadata:
+  skill_id: "operator-intent-deduction"
 ---
 
 # Deduce the Decision from Current Evidence

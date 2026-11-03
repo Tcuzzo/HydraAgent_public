@@ -161,7 +161,7 @@ meet a budget; partition the work and keep the complete scope indexed.
 
 Run the bundled regression suites, then test the actual launcher and control
 surface in an isolated authorized worktree. Fixtures prove controller behavior;
-they do not prove a Claude or Codex integration.
+they do not prove a live host-harness integration.
 
 Require a trace showing the threshold event, complete checkpoint digest,
 different provider session ID with empty history, loaded instruction hashes,
