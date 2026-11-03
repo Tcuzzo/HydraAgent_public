@@ -118,7 +118,8 @@ def test_tool_turn_uses_the_gateway_and_reports_the_outcome(monkeypatch):
     client.post = lambda url, body, timeout: (reported.append((url, body)) or (200, {"ok": True}))
     client.chat([ChatMessage("user", "read a file")], model="router/answer/work",
                 tools=[{"type": "function", "function": {"name": "read", "parameters": {}}}])
-    url, body = reported[0]
+    # The client asks the router for the task's chain first (none here), then reports.
+    url, body = next(r for r in reported if r[0].endswith("/api/router/outcome"))
     assert url == BASE + "/api/router/outcome"
     assert body["task_type"] == "answer" and body["rung"] == "rung-b" and body["success"] is True
     assert body["source"] == "hydra"

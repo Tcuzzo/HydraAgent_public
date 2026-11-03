@@ -14,7 +14,8 @@ from hydra.inter_agent import use_correlation_id, use_trace_id
 from hydra.llm import LlmError
 from hydra.loop import AgentLoop, LoopError
 from hydra.policy import POLICY_CHOICES
-from hydra.providers import DEFAULT_ENV_DIR, ProviderError, is_local_provider
+from hydra.providers import DEFAULT_ENV_DIR, ProviderError, is_local_provider, make_client
+from hydra.model_routing import RoutingConfigError, load_routing
 from hydra.roles import RoleError, resolve_roles
 from hydra.skill_spine import build_agent_system_prompt, build_routed_skill_context
 from hydra.memory_kernel import assemble_truth_context
@@ -61,6 +62,49 @@ def _auth_rejection_message(provider: str, error: LlmError) -> str | None:
 def _budgeted(client, provider: str, model: str, prompt: str) -> AnswerBudgetClient:
     """Never print a reply cut off at its output budget: retry bigger, learn each rung's allowance."""
     return AnswerBudgetClient([Rung(str(provider), str(model), client=client)], question=prompt)
+
+
+def _one_line(exc: BaseException) -> str:
+    text = " ".join(str(exc).split())
+    return text[:400] or type(exc).__name__
+
+
+def _fallback_rungs(args, role: str, tried: set, failures: list[str]):
+    """Next rungs for a failed ask, in order: the role's fallbacks from model_routing.yaml,
+    then the local GPU rung -- each only when it resolves to a real model. A rung that
+    can't be built is recorded in ``failures`` (it lands in the final error line)."""
+    env_dir = getattr(args, "env_dir", None)
+    try:
+        pairs = load_routing().fallback_pairs(role)
+    except RoutingConfigError as exc:
+        failures.append(f"{role} fallbacks [{_one_line(exc)}]")
+        pairs = ()
+    for provider, route in pairs:
+        if (str(provider), str(route)) in tried or not route:
+            continue
+        tried.add((str(provider), str(route)))
+        try:
+            client, cfg = make_client(provider, env_dir=env_dir)
+        except (ProviderError, LlmError) as exc:
+            failures.append(f"{provider}/{route} [{_one_line(exc)}]")
+            continue
+        yield client, cfg, route
+    if is_local_provider(getattr(args, "provider", None)):
+        return
+    local = _local_gpu_fallback_client(args)
+    if local is None:
+        failures.append("local GPU rung [not available]")
+        return
+    client, cfg = local
+    if not cfg.model:
+        failures.append(f"local GPU rung {cfg.name} [no model configured]")
+        return
+    if (str(cfg.name), str(cfg.model)) in tried:
+        return
+    tried.add((str(cfg.name), str(cfg.model)))
+    yield client, cfg, cfg.model
+
+
 HYDRA_ASK_MAX_ITERATIONS_ENV = "HYDRA_ASK_MAX_ITERATIONS"
 
 
@@ -270,7 +314,10 @@ def cmd_ask(args: argparse.Namespace) -> int:
     )
     if context_proof_lines:
         print("  context: " + "; ".join(context_proof_lines[:3]), file=sys.stderr)
-    attempted_local_fallback = False
+    fallback_role = auto_route_report["role"] if auto_route_report is not None else "chat"
+    tried = {(str(cfg.name), str(model))}
+    failures: list[str] = []
+    next_rungs = _fallback_rungs(args, fallback_role, tried, failures)
     while True:
         try:
             with use_trace_id(os.environ.get("HYDRA_TRACE_ID")), use_correlation_id(
@@ -291,35 +338,21 @@ def cmd_ask(args: argparse.Namespace) -> int:
             if auth_message:
                 print(auth_message, file=sys.stderr)
                 return 1
-            if attempted_local_fallback or is_local_provider(args.provider):
-                print(f"LLM error: {e}", file=sys.stderr)
+            failures.append(f"{cfg.name}/{model} [{_one_line(e)}]")
+            if is_local_provider(args.provider):
+                print(f"ask error: no rung answered: {'; '.join(failures)}", file=sys.stderr)
                 return 1
-            fallback = _local_gpu_fallback_client(args)
-            if fallback is None:
-                print(f"LLM error: {e}", file=sys.stderr)
+            nxt = next(next_rungs, None)
+            if nxt is None:
+                print(f"ask error: no rung answered: {'; '.join(failures)}", file=sys.stderr)
                 return 1
-            client, cfg = fallback
-            failed_provider = args.provider
-            args.provider = cfg.name
-            # The local server answers with its own model. Never reuse an empty
-            # or cloud model name.
-            model = str(getattr(cfg, "model", "") or "").strip()
-            if not model:
-                print(
-                    f"API failure on {failed_provider}. Local fallback has no model configured, "
-                    "so Hydra will not call an empty model.",
-                    file=sys.stderr,
-                )
-                return 1
-            args.model = model
-            reason = str(e).splitlines()[0][:160] if str(e) else type(e).__name__
-            print(
-                f"API failure on {failed_provider} ({reason}). Falling back to local GPU provider {cfg.name}/{model}.",
-                file=sys.stderr,
-            )
+            failed_route = f"{cfg.name}/{model}"
+            client, cfg, model = nxt
+            args.provider, args.model = cfg.name, model
+            print(f"hydra: {failed_route} failed ({_one_line(e)[:160]}); "
+                  f"trying {fallback_role} fallback rung {cfg.name}/{model}", file=sys.stderr)
             loop = AgentLoop(_budgeted(client, cfg.name, model, args.prompt), model=model,
                              system_prompt=system_prompt)
-            attempted_local_fallback = True
             continue
 
     print(result.final_response)

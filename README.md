@@ -17,6 +17,24 @@ Python 3.11+ · Linux, macOS, Windows · [MIT](LICENSE.md)
 
 A useful answer depends on the model you select and the tools installed on the machine. Hydra does not ship API keys.
 
+## How it works
+
+```mermaid
+flowchart LR
+    You(["You: a goal in plain words"]) --> H["Hydra reads your folder,<br/>asks before edits and commands"]
+    H --> R{"Model source"}
+    R -->|"Your computer"| L["Local model (Ollama)"]
+    R -->|"Your key"| C["Cloud model"]
+    R -->|"Optional"| B["BACKS decision service:<br/>rung chain, best first"]
+    B -->|"A rung fails (401/403/429/5xx)"| N["Next rung, then role fallbacks,<br/>then local GPU if configured"]
+    L --> A(["Answer"])
+    C --> A
+    B --> A
+    N --> A
+```
+
+New to this? [How Hydra works, in plain English](docs/HOW_HYDRA_WORKS.md) explains what Hydra needs, what each placeholder such as `<backs-host>` means and where to set it, and what happens when a model fails, with flow charts.
+
 ## Install
 
 Install the CLI with [pipx](https://pipx.pypa.io/):
@@ -118,6 +136,7 @@ Model ids, key signup, and the local decision models are in [Quickstart](QUICKST
 
 | Need | Start here |
 |---|---|
+| What Hydra needs and how it works, in plain English | [How Hydra works](docs/HOW_HYDRA_WORKS.md) |
 | Install, first task, and optional setup | [Quickstart](QUICKSTART.md) |
 | Commands | [Command reference](docs/CLI-REFERENCE.md) |
 | Providers, Needle, and Laya | [Models](docs/MODELS.md) |
