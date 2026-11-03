@@ -10,11 +10,11 @@ license: MIT
 
 **Compose:** load `secure-delivery` + `live-research` with this skill. Absorb foreign homelab-network behaviors *into* BACKS only — do **not** install foreign skill packs.
 
-**Status:** worktree prototype only. Do **not** `install.sh` into live agent homes. Do **not** `wolf_pack_land`.
+**Status:** worktree prototype only. Do **not** `install.sh` into live agent homes. Do **not** run the production pack-land step.
 
 ## Paired serving code (prove before green claims)
 
-Live deploy tree: `<BACKS_DEPLOY_ROOT>`
+Live deploy tree: `<BACKS_DEPLOY_ROOT>` (your own BACKS deploy checkout; set it in your environment, never in this file)
 
 | Symbol | Path | Role |
 |--------|------|------|
@@ -24,19 +24,24 @@ Live deploy tree: `<BACKS_DEPLOY_ROOT>`
 | cameras API | `GET /api/security/cameras` | Inventory rows: `id`, `host`, `mac`/`mac_address`, snapshot honesty fields |
 | snapshot | `GET /api/security/cameras/{id}/snapshot` | Picture path = **serving tree**, never `[candidate-tree-root]/...` |
 | wifi-scan | `POST /api/security/wifi-scan` | Via `BACKS_AI_WIFI_SCAN_IFACE` / router host only — honest error if unset |
-| FE chrome | `frontend/components/security/camera-grid.tsx` | **AMBER** — Secure eye 2026-09-19: API missing-mac is honest; FE does **not** yet emit `data-camera-mac` / `data-camera-mac-missing` (skill doc was ahead of chrome) |
+| FE chrome | `frontend/components/security/camera-grid.tsx` | **AMBER** until the FE emits `data-camera-mac` / `data-camera-mac-missing` (the API's missing-mac answer is honest) |
 
-**Tip pairing (LOCKED — Security refine 2026-09-19):**
-- Proven / Secure #3 tip: `<proven-tip-sha>` (full tip SHA when resolved on deploy: `<proven-tip-sha>`)
-- Deploy HEAD sticky helpers: `<deploy-head-sha>` (prove on live `HEAD` / `refs/backs/proven/production`)
+**Tip pairing:** pin two commits from your own deploy before any green claim.
+- `<proven-tip-sha>`: the reviewed commit that added the sticky helpers.
+- `<deploy-head-sha>`: the commit your live deploy runs (its `HEAD`, or your proven-production ref).
 - Prove with:
-  - `git -C <BACKS_DEPLOY_ROOT> merge-base --is-ancestor <proven-tip-sha> HEAD`
-  - `git -C ... rev-parse --short=12 HEAD` starts with `<deploy-head-sha>` **or** is descendant that still contains sticky helpers
+  - `git -C "<BACKS_DEPLOY_ROOT>" merge-base --is-ancestor <proven-tip-sha> HEAD`
+  - `git -C "<BACKS_DEPLOY_ROOT>" rev-parse --short=12 HEAD` equals `<deploy-head-sha>` **or** is a descendant that still contains the sticky helpers
   - `rg -n 'apply_host_remap_for_mac|resolve_camera_sticky|_normalize_mac' backend/services/camera_streams.py`
 
 Stream attach / Sentry wrap is a **separate** seam — out of scope for this skill's red contract.
 
 ## Fixture table (API MAC must match red contract — no invent)
+
+Fill this table from your own cameras' live API rows. The values below are placeholders,
+not real devices: `<camera-mac-N>` is the camera's hardware (MAC) address and
+`<camera-lan-host-N>` is its address on your home network. Never commit real values to a
+public copy of this skill.
 
 | id | MAC | host (LAN) |
 |----|-----|------------|
@@ -64,15 +69,15 @@ Sticky law: after host remap, **same MAC → same camera id** via `apply_host_re
 
 ## Agent steps (prototype)
 
-1. `live-research`: read live `camera_streams.py` sticky helpers + cameras API JSON; pin SHAs (`6e33` tip + `<deploy-head-sha>` HEAD).
+1. `live-research`: read live `camera_streams.py` sticky helpers + cameras API JSON; pin SHAs (`<proven-tip-sha>` + `<deploy-head-sha>`).
 2. Diff API macs vs fixture table — board mismatches; do not invent.
 3. Exercise red cases as **contracts** (prove red or prove serving already green with evidence).
 4. `secure-delivery`: no secrets in observe; report-only; no install/land.
-5. Observe board under `grokbot-bridge/observe/`; **ping Security** for Secure eye on red cases before any pack land.
+5. Post results to your coordination board; **ask your security reviewer** to check the red cases before any pack land.
 
 ## Non-goals
 
-Foreign skill install; production pack land; wolf_pack_land; MFA/Act-fold; inventing RTSP green; hardcoding model IDs.
+Foreign skill install; production pack land; MFA/Act-fold; inventing RTSP green; hardcoding model IDs.
 
-## Secure eye (2026-09-19)
-**CLEARED** — five red cases PASS (R2 FE attrs AMBER). Receipt: `observe/<review-receipt>.md`. No install/land from Secure.
+## Security review
+Record your reviewer's verdict on the five red cases (the FE attribute case stays AMBER until the FE emits it). No install or land from the review step.
