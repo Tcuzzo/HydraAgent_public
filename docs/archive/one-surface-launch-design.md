@@ -1,5 +1,7 @@
 # Design — one surface: `hydra` launches the chat, with working setup
 
+Historical design note from 2026-06-19. It is not a setup guide. Current usage is in the [command reference](../CLI-REFERENCE.md) and [Quickstart](../QUICKSTART.md).
+
 2026-06-19
 
 ## Problem
