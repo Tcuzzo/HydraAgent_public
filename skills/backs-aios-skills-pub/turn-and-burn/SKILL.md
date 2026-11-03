@@ -40,8 +40,8 @@ isn't repeated.
    for UI. The play's `injected_block` IS the baseline — zero baseline pre-
    prompting, ever.
 4. **Quick tribunal on plan + design.** Before any builder runs, blind-tribunal
-   the plan and the design with at least 2 cross-family seats. Builder ≠
-   grader. A plan that passes blind review is the only plan that gets built.
+   the plan and the design with at least 2 independent jurors in fresh,
+   author-disjoint sessions. Builder ≠ grader. A plan that passes blind review is the only plan that gets built.
 5. **Three-questions interrog.** Ask: (a) what could fail silently here?
    (b) what is the cheapest sufficient route? (c) what is the operator's
    surface — does this prove on it? These three questions cut the
@@ -68,12 +68,12 @@ lanes (inv 0: organize, never delete).
 - **Do not start building without a quick tribunal.** A blind review of the
   plan catches more defects than the build itself; skipping it means the
   defects land.
-- **Do not park decisions in a file.** The operator's 3-laws gate (taste,
+- **Do not park decisions in a file.** The existing decision bar (taste,
   vision, destructive risk) is the only reason to ask. Anything below the
   bar EXECUTES from invariants + memory + intent.
 - **Do not bench a model for a single 429.** The dispatch doctrine says
-  ollama sparse → local fleet. Swap to a cross-family LAN pair (qwen +
-  deepseek) when cloud is hammered.
+  ollama sparse → local fleet. Swap to another configured, live-preflighted rung only when it is sufficient
+  for the task; preserve the checkpoint and bounded backoff when cloud is hammered.
 
 ## Cross-references
 

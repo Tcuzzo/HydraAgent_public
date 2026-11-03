@@ -1,6 +1,5 @@
 """Real packet/routing/verdict behavior with only the paid transport replaced."""
 import json
-from types import SimpleNamespace
 
 import pytest
 

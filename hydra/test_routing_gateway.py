@@ -1,5 +1,5 @@
 from hydra.gateway_config import GatewayConfig
-from hydra.routing_gateway import RoutingGateway, RouteDecision
+from hydra.routing_gateway import RoutingGateway
 from hydra.complexity_classifier import Classification
 from hydra.host_telemetry import AcceptDecision, CapacitySnapshot
 from hydra.model_router import TaskComplexity

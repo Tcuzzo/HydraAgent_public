@@ -9,7 +9,6 @@ Provides serverless execution via Modal.com with:
 """
 
 import base64
-import hashlib
 import json
 import logging
 import os

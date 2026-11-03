@@ -10,11 +10,9 @@ No real container engine is required — all subprocess calls are mocked.
 """
 from __future__ import annotations
 
-import subprocess
 from typing import List
 from unittest import mock
 
-import pytest
 
 from hydra.backends.base import BackendConfig
 from hydra.backends.docker import DockerBackend

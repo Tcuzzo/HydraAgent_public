@@ -1,6 +1,6 @@
 ---
 name: tribunal
-description: Use when convening an author-blind cross-family tribunal on a change and looping on every blocking finding until all jurors pass.
+description: Use when convening an author-blind, capability-resolved tribunal on a change and looping on every blocking finding until all jurors pass.
 ---
 
 # Tribunal Command
@@ -11,4 +11,4 @@ on the current diff or the user's supplied scope, using the
 a copied portable install, load
 `~/.local/share/backs-aios/current/skills/blind-tribunal/SKILL.md` and
 `~/.local/share/backs-aios/current/plays/grading-verification.md` instead. Preserve
-author redaction, cross-family independence, and the repair/reconvene loop.
+author redaction, non-author independence, and the repair/reconvene loop.

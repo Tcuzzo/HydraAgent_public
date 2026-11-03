@@ -1,13 +1,10 @@
 ---
 name: subagent-driven-development
-description: Split independent implementation slices across subagents and review their outputs. Fan-out parallel work, collect results, reconcile.
+description: Split independent implementation slices across subagents and review their outputs. Fan-out parallel work, collect results, reconcile. Use when a task splits into independent slices that can run in parallel.
 license: MIT
-version: "1.0"
-allowed-tools:
-  - fs_read
-  - list_directory
-  - grep
-  - spawn_subagent
+allowed-tools: fs_read list_directory grep spawn_subagent
+metadata:
+  version: "1.0"
 ---
 # Subagent-Driven Development
 

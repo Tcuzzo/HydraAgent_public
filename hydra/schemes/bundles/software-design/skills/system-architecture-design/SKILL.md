@@ -1,3 +1,8 @@
+---
+name: system-architecture-design
+description: "Design a software system's architecture: components, data and control flow, stack choices, scalability, security, and deployment topology. Use when asked to architect a new system or a major change."
+---
+
 # System Architecture Design Skill
 
 **Skill ID:** software-design/system-architecture-design  

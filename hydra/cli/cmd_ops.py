@@ -1186,7 +1186,7 @@ def cmd_ops(args: argparse.Namespace) -> int:
             print(f"run_dir: {result['run_dir']}")
             print(f"command outcomes: {outcomes_str}")
             print(f"rot signals matched: {result['rot_signals_matched']}")
-            print(f"permission_policy: operator-selected-later")
+            print("permission_policy: operator-selected-later")
             if judge_result is not None:
                 jr = judge_result["judge_report"]
                 print(

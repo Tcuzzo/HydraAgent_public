@@ -15,7 +15,6 @@ session.  This limitation is the Claude Code safe-edit contract.
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 def register_undo_command(sub: argparse._SubParsersAction) -> None:

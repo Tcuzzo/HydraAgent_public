@@ -49,7 +49,7 @@ Sticky law: after host remap, **same MAC → same camera id** via `apply_host_re
 ## Laws (LO5 + inventory honesty)
 
 1. **LO5:** inventory ready ≠ picture. `snapshot_available` / `snapshot_status` win over "camera listed".
-2. **Never invent** MAC, SSID, or `wlan0` success on operator-host.
+2. **Never invent** MAC, SSID, or `wlan0` success on the camera host.
 3. **Wi-Fi only** through `BACKS_AI_WIFI_SCAN_IFACE` / router-host path — missing iface → loud honest error (AMBER/RED), not fake AP list.
 4. **Snapshot path** from serving-tree deploy, not `[candidate-tree-root]/...`.
 5. **API mac fixtures** above are the contract — mismatch vs live `GET /api/security/cameras` is RED until serving matches (do not patch skill fixtures to paper over drift).

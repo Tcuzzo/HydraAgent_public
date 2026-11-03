@@ -14,13 +14,11 @@ All tests inject a failing client — no real network, fully deterministic.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
 from hydra.emergency_fallback import (
     LIFE_SUPPORT_MODEL,
-    LIFE_SUPPORT_PROVIDER,
     classify_provider_error,
     engage_life_support_fallback,
 )

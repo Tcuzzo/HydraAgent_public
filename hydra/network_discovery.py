@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path  # noqa: F401  (kept for symmetry with other ops modules)
 from typing import Any
 
-from hydra.ops_packs import OpsPackError, TargetSpec, parse_target
+from hydra.ops_packs import OpsPackError, parse_target
 
 
 SCHEMA = "hydra.network_discovery_plan.v1"
@@ -114,7 +114,7 @@ def plan_discovery(
         f"total_hosts={len(hosts)}",
         f"preview_hosts={len(preview)}",
         f"command_templates={len(command_plan)}",
-        f"executed=false",
+        "executed=false",
     ]
 
     return {
@@ -152,7 +152,7 @@ def render_text(plan: dict[str, Any]) -> str:
         f"risk_tier: {plan['risk_tier']}  execution_policy: {plan['execution_policy']}",
         f"network: {network['cidr']} ipv{network['version']} prefix=/{network['prefixlen']} "
         f"total_addresses={network['num_addresses']} hosts={network['num_hosts']}",
-        f"classification: " + ", ".join(
+        "classification: " + ", ".join(
             f"{k}={v}" for k, v in sorted(plan["classification"].items())
         ),
         f"hosts: first={host_summary['first_host']} last={host_summary['last_host']} "

@@ -347,8 +347,12 @@ modal token new
 
 ### Disk Space Issues
 ```bash
-# Clean up worktrees
-rm -rf /tmp/hydra-worktrees
+# Clean up worktrees: list them, remove the ones you no longer need,
+# then prune stale metadata. git refuses to remove a worktree with
+# uncommitted changes unless you pass --force.
+git worktree list
+git worktree remove <path>
+git worktree prune
 
 # Increase disk limit
 config = BackendConfig(max_disk_mb=10240)  # 10GB

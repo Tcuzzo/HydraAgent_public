@@ -4,8 +4,10 @@ description: >-
   The default diagnostic planner. Design -> Plan -> Build -> Test -> Ship, each
   stage validated by the live understanding organs. Drain-refute honesty: an
   organ that can only confirm is an echo, not understanding. The refute path is
-  the honesty proof.
-trigger_summary: build plan, design plan, understanding, drain refute, falsify, stage gate, elite build
+  the honesty proof. Use when planning or gating a build through design, plan,
+  build, test, and ship stages.
+metadata:
+  trigger_summary: "build plan, design plan, understanding, drain refute, falsify, stage gate, elite build"
 ---
 
 # Elite Build Understanding — the stage-gated planner

@@ -17,7 +17,7 @@ from typing import Any
 
 from hydra.loop import AgentLoop, Tool, LoopResult
 from hydra.model_router import ModelRouter, ModelConfig
-from hydra.llm import OllamaClient, ChatMessage
+from hydra.llm import ChatMessage
 
 
 @dataclass

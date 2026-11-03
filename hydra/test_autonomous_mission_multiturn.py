@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 from hydra import autonomous_mission as am
 from hydra.autonomous_mission import compose_multiturn_goal, run_autonomous_mission_v2

@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import subprocess
 import sys
 from pathlib import Path
 
@@ -15,7 +14,7 @@ from hydra.providers import CLI_TRANSPORT, ProviderError, is_cli_transport, make
 from hydra.roles import (
     RoleError,
     RoleSpec,
-    provider_available,
+    provider_available as provider_available,  # seam: tests patch it to prove no unrequested probe
     resolve_roles,
     should_unload_between_roles,
 )

@@ -12,7 +12,6 @@ from typing import Any
 
 from hydra.inter_agent import redact_text
 from hydra.llm import LlmError
-from hydra.loop import AgentLoop
 from hydra.policy import POLICY_CHOICES
 from hydra.providers import (
     DEFAULT_ENV_DIR,
@@ -22,7 +21,6 @@ from hydra.providers import (
     resolve,
 )
 from hydra.identity import build_identity, render_identity_text, render_runtime_text
-from hydra.roles import RoleError, resolve_roles
 # SEAM CUT: a stripped remote-audit module is stripped; remote-audit intent handler removed below.
 from hydra.skill_spine import (
     build_agent_system_prompt,
@@ -42,7 +40,7 @@ from hydra.local_memory import (
 )
 from hydra.semantic_recall import build_semantic_memory_context
 from hydra.memory_kernel import assemble_truth_context
-from hydra.rubric_judge import RubricJudgeError, judge as rubric_judge
+from hydra.rubric_judge import judge as rubric_judge
 from hydra.prompt_builder import PromptBuilderError, compose_operator_prompt
 from hydra.runtime_route import default_runtime_route, route_string
 from hydra.model_routing import RungResolutionError, load_routing
@@ -50,7 +48,6 @@ from hydra.providers import is_local_provider
 from hydra.rung_resolver import LOCAL as LOCAL_TRANSPORT
 from hydra.session_memory import (
     DEFAULT_STARTUP_HISTORY_LIMIT,
-    add_message,
     compact_session,
     create_session,
     get_session_messages,
@@ -570,7 +567,8 @@ def _handle_chat_operator_intent(stripped_prompt: str, runtime: dict[str, str], 
         "what needs repair",
         "what is the repo status",
     }:
-        print(render_self_check_text(build_self_check(REPO_ROOT)), end="")
+        # The self_diagnosis module is not part of the lean-core build (see `hydra ops self-check`).
+        print("self-check: self_diagnosis module removed in lean-core build.", file=sys.stderr)
         return True
     return False
 
@@ -659,13 +657,11 @@ def cmd_chat(args: argparse.Namespace) -> int:
             create_session(session_id, "HydraAgent persistent chat session started")
         except Exception as e:
             print(f"Warning: Could not create persistent session: {e}", file=sys.stderr)
-    loop: AgentLoop | None = None
     runtime = _resolve_chat_runtime(args)
     provider_name = runtime["provider"]
     model = runtime["model"]
     args.provider = provider_name
     current_mission_id: str | None = None
-    mission_system_message: dict | None = None
     last_audit_target: str | None = None
     last_locate_target: str | None = None
     default_chat_prompt = build_agent_system_prompt(DEFAULT_SYSTEM_PROMPT)

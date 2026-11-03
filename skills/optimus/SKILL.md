@@ -5,7 +5,8 @@ description: >-
   any design or edit. No code and no job without loading the harness first. The
   invocation that yokes the agent to the dev-mode floor and turns it
   hallucination-resistant.
-trigger_summary: dev mode, harness first, optimus, boot the loop, load invariants, repair loop
+metadata:
+  trigger_summary: "dev mode, harness first, optimus, boot the loop, load invariants, repair loop"
 ---
 
 # Optimus — harness-first dev-mode boot

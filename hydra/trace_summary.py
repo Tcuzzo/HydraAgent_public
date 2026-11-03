@@ -82,7 +82,7 @@ def render_text(report: dict[str, Any]) -> str:
         f"total tool calls={s['total_tool_calls']}  "
         f"tool errors={s['tool_errors']}  "
         f"total tool wall_ms={s['total_tool_wall_ms']}",
-        f"halted reasons: " + ", ".join(
+        "halted reasons: " + ", ".join(
             f"{k}={v}" for k, v in sorted(s["halted_reasons"].items())
         ) if s["halted_reasons"] else "halted reasons: (none recorded)",
     ]

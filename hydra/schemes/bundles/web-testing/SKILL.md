@@ -1,3 +1,8 @@
+---
+name: web-testing
+description: "Scaffolded backlog of web-testing skill ideas (browser automation, end-to-end, visual regression, performance, accessibility). Use when planning web testing in Hydra; entries are a catalog, and only sample-backed skill docs are implemented."
+---
+
 # Hydra Web Testing Bundle - Scaffolded Backlog
 
 **Bundle ID:** hydra-web-testing

@@ -138,7 +138,7 @@ def assemble_context(
 
 def render_text(report: dict[str, Any]) -> str:
     lines = [
-        f"Hydra context bundle",
+        "Hydra context bundle",
         f"budget_bytes={report['budget_bytes']}  "
         f"selected_bytes={report['selected_bytes']}  "
         f"truncated={report['truncated']}",

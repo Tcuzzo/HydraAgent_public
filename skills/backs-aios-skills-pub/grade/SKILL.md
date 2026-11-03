@@ -1,6 +1,6 @@
 ---
 name: grade
-description: Use when adversarially grading a change for red proof, real behavior, cross-family independence, and live capability before shipping.
+description: Use when adversarially grading a change for red proof, real behavior, non-author independence, and live capability before shipping.
 ---
 
 # Grade Command

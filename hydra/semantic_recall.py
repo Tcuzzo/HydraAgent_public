@@ -30,7 +30,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from hydra.local_memory import (
-    DEFAULT_MEMORY_ROOT,
     MEMORY_CANDIDATES,
     LocalMemoryResult,
     _claude_project_memory_candidates,

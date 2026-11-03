@@ -1,31 +1,55 @@
 # Fleet ladder — EXAMPLE. Copy beside your code (e.g. ladder.yaml) and swap
 # every placeholder for a model your providers actually serve.
-# Per role: ordered candidates, strongest first, ending in a local survival
-# tail (whatever runs on your own hardware when every cloud provider is dark).
+# Per role: ordered candidates, chosen by TASK FIT — strongest SUITABLE reasoning
+# for planning / spec work, cheapest SUFFICIENT measured bounded implementation
+# for worker work — and ordered by live config + measured cost / availability
+# (no universal cloud-first / local-last preference). Local GPU rungs stay on
+# the ladder and obey the GPU dispatch law.
+# Independence requires a fresh, author-disjoint execution with recorded
+# session provenance.
 # To change or add a model, edit THIS file — never the code.
 
 builder:                        # implements and repairs
-  - strong-cloud-model          # best quality; first choice when it is up
-  - mid-cloud-model             # solid and cheaper; the usual fallback
-  - local-coder-model           # survival tail: your own hardware
+  - planning-fit-model          # strongest SUITABLE reasoning for the planning / spec / heavy-lift rung — picked by capability fit
+  - mid-fit-model               # mid-range capable rung; the usual fallback when planning-fit is down
+  - local-coder-model           # local GPU survival — your own hardware; honored by config
 
-grader:                         # independent review — never the model that built
-  - other-family-strong-model   # a DIFFERENT family from the builder rungs
-  - other-family-mid-model
+grader:                         # independent review in a fresh author-disjoint session
+  - independent-strong-model    # a SEPARATE, author-disjoint execution from the builder rungs
+  - independent-mid-model
   - local-review-model
 
 worker:                         # bounded, well-specified jobs; cheap rungs fine
   - fast-cheap-model
   - local-small-model
 
-# --- Solo variant: only one model family available -------------------------
-# Builder and grader still must not resolve to the SAME model for the same
-# change. Split within the family (different model or size) and say so in
-# the dispatch log — it is the weakest legal separation, not the ideal.
+# --- Solo variant: only one configured execution available ---------------
+# Builder and grader must run in DIFFERENT, author-disjoint EXECUTION
+# (the authoring execution that built cannot approve its own work, and any
+# session that inherited the builder's conversation or context is disqualified).
+# When the same capable model is the only configured execution, run the
+# builder and the grader in two FRESH, author-disjoint sessions and record
+# the session isolation in the dispatch log; that is the weakest available
+# separation required here. The ordering, capability
+# fit, and provider choice must come from your live config and measured cost —
+# not this example.
 #
 # builder:
-#   - family-large-model
+#   - only-configured-model     # recorded as the authoring execution
 # grader:
-#   - family-small-model        # same family, different model — log it
+#   - only-configured-model     # same model, in a fresh, author-disjoint session — session isolation IS the separation
 # worker:
-#   - family-small-model
+#   - only-configured-model
+#
+# --- Same model, two fresh sessions example (illustrative) ---------------
+# When one capable model is the only execution available, independence comes
+# from session / context isolation, not from picking a different model name:
+#
+# builder:
+#   - capable-model              # session A: authors the candidate
+# grader:
+#   - capable-model              # session B: same model, fresh context, no inherited conversation
+# worker:
+#   - capable-model              # a third fresh session for bounded work
+#
+# Review requires a fresh author-disjoint execution, recorded as such.

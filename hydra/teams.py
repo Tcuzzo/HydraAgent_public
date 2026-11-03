@@ -90,7 +90,6 @@ def validate_plan(plan: dict) -> dict:
         if not reviewers:
             raise ValueError('independent review requires a reviewer task')
         for reviewer in reviewers:
-            rf = reviewer.get('family', plan.get('family'))
             for builder in builders:
                 if builder['id'] not in ancestors[reviewer['id']]:
                     raise ValueError('independent reviewer must depend on every builder')

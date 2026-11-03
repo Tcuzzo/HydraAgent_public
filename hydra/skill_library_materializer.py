@@ -111,12 +111,7 @@ bundle: {entry.bundle}
 source_catalog: {entry.source_path.as_posix()}
 status: materialized
 license: MIT
-allowed-tools:
-  - fs_read
-  - grep
-  - glob
-  - list_directory
-  - bash
+allowed-tools: fs_read grep glob list_directory bash
 ---
 
 # {title}

@@ -1,0 +1,10 @@
+schema_version: "1.1"
+name: promote-lane-with-variants
+expected_outcome: |
+  The agent uses the bundled ledger tool to import the lane file. Blocks written with
+  formatting variants (a qualifier on evidence, a merged surface-and-evidence field,
+  bold keys, pipe separators) are imported, not refused. The positive finding is
+  recorded as ADJUDICATED-NOT-A-BUG with its evidence. The one block with no evidence
+  is refused and named. ledger check passes and STATUS.md is rendered.
+context:
+  scaffold_script: place-files.sh

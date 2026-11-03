@@ -8,11 +8,9 @@ All tests stub clients + resolve_work_model so NO network is needed.
 """
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 
 # ── Shared fixture ────────────────────────────────────────────────────────────

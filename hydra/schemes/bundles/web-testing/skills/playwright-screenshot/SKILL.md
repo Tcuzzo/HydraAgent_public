@@ -1,6 +1,6 @@
 ---
 name: playwright-screenshot
-description: Capture full-page and element screenshots using Playwright with proper handling of lazy-loaded content, sticky headers, and responsive layouts
+description: Capture full-page and element screenshots using Playwright with proper handling of lazy-loaded content, sticky headers, and responsive layouts. Use when a page or element needs a reliable visual capture for tests or review.
 ---
 
 # Playwright Screenshot
@@ -178,23 +178,23 @@ eval:
 
 ---
 
-## Proven Results
+## Target Results (not yet measured)
 
 | Metric | Target | Achieved | Test Date |
 |--------|--------|----------|-----------|
-| Completeness | 99% | 99.4% | 2026-05-27 |
-| Image Quality | 95% | 97.2% | 2026-05-27 |
-| Mobile Accuracy | 98% | 98.8% | 2026-05-27 |
-| Avg Latency | 3500ms | 3100ms | 2026-05-27 |
-| User Satisfaction | 4.5/5 | 4.8/5 | 2026-05-27 |
+| Completeness | 99% | not measured | — |
+| Image Quality | 95% | not measured | — |
+| Mobile Accuracy | 98% | not measured | — |
+| Avg Latency | 3500ms | not measured | — |
+| User Satisfaction | 4.5/5 | not measured | — |
 
 ---
 
 ## Related Skills
 
-- [playwright-video](../skills/playwright-video/SKILL.md)
-- [visual-base-capture](../skills/visual-base-capture/SKILL.md)
-- [playwright-navigate](../skills/playwright-navigate/SKILL.md)
+- `playwright-video`: backlog entry in the web-testing bundle catalog (`hydra/schemes/bundles/web-testing/SKILL.md`); not written yet
+- `visual-base-capture`: backlog entry in the web-testing bundle catalog (`hydra/schemes/bundles/web-testing/SKILL.md`); not written yet
+- `playwright-navigate`: backlog entry in the web-testing bundle catalog (`hydra/schemes/bundles/web-testing/SKILL.md`); not written yet
 
 ---
 
