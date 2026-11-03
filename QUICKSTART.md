@@ -165,6 +165,26 @@ The example file itself is not loaded. In a source checkout the constant `HYDRA_
 
 `OllamaClient._read_json` (not the gateway override) classifies the status in `hydra/provider_health.http_failure`. 401 is kind `authentication`. 403 is kind `permission`. The message is `HTTP <status>: <body>`. A 402 is kind `budget` when the body matches a credit or budget phrase, kind `rate_limit` when the error metadata names an in-flight budget limit, and otherwise kind `request`. The gateway override does not call that classifier, so its `RungResolutionError` keeps kind `unknown`. `classify_provider_error` then treats a message that contains `401` or `403` as `auth`. A 402 stays `other` unless the message also says unauthorized, forbidden, or authentication. If the chat health wrapper sees budget or retirement phrases in that text, it promotes the kind to `budget` or `retired`.
 
+### Jev typed decisions (optional)
+
+Hydra asks the decision service for a live rung. Plain turns go to `POST /api/router/complete`. This repository has no Jev client. `hydra/model_routing.yaml` names rungs. `hydra/rung_resolver.py` reads the service origin and sends no provider key. The `backs` transport is built with `requires_key=False` (`hydra/providers.py`). `hydra setup` has no `backs` mode.
+
+Get an OpenRouter API key. The funded Jev rung takes that key from `OPENROUTER_API_KEY` in the decision service's environment: that name is the ladder row's `env_key`, and the service reads it when the rung is selected. The model is the Jev model on OpenRouter, chosen by your ladder/env. Keep the value uncommitted. `.gitignore` ignores `.env` and `.env.*` except `.env.example`, and ignores `.hydraAgent/workspace/`. Hydra's reader for this route is `HYDRA_BACKS_URL` (`hydra/rung_resolver.py`). When that variable is empty, `backs_url()` reads `BACKS_ENDPOINT` from `~/.hydraAgent/workspace/.env.backs`. Those two settings name the service. They are not the OpenRouter key, and a key stored only in a Hydra env file is not forwarded.
+
+A local Kev decision rung is preferred when the ladder lists one, and that rung is free. The funded Jev rung is the paid fallback under it. `hydra/model_routing.yaml` does not encode that order. The service returns the chain from `POST /api/router/resolve` and walks it on `POST /api/router/complete`. Hydra logs the head rung.
+
+Jev rejects a bare prompt. Every call that reaches it has to include an `instructions` field. The local typed-decision API in this repo is a different program: `LayaDecisionClient` in `hydra/decision_models.py` reads `HYDRA_LAYA_MODEL` and `HYDRA_LAYA_DEVICE`, and it accepts a question when `type` is `choice`, `score`, or `noul`. The question objects in [Models](docs/MODELS.md) include `instructions` for that local API.
+
+If an error body reaches `hydra/provider_health.http_failure` with metadata `limit_source` equal to `openrouter_in_flight_budget`, the kind is `rate_limit`. The gateway path raises `RungResolutionError` and leaves that classifier unused. The status text is in the section above.
+
+Check:
+
+```bash
+python -c "from hydra.rung_resolver import backs_url; print(backs_url())"
+```
+
+That prints the origin, or raises `RungResolutionError` with `BACKS rung resolver location is not set`. It does not place a paid call. `python -m pytest -q hydra/test_backs_router_client.py` checks this client offline, with no key and no model name.
+
 ### Sandbox (Bubblewrap)
 
 Worker verification runs commands through `hydra.exec_backend.run_sandboxed`. On Linux it uses `bwrap` when `bwrap` is on `PATH` and the probe succeeds: unprivileged user namespaces are allowed, and a no-op sandbox run works. There is no environment variable that enables Bubblewrap. If confinement is unavailable, the command is not executed. The result is return code 126 and the text `bwrap sandbox unavailable; command not executed.`
