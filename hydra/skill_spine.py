@@ -125,6 +125,12 @@ SKILL_ROUTE_KEYWORDS = {
     "webapp-testing": ("webapp testing", "browser proof", "browser testing"),
     "differential-review": ("differential review", "security review", "security diff"),
     "variant-analysis": ("variant analysis", "bug variants", "same root cause"),
+    "reflex-seam": (
+        "reflex seam",
+        "reflex rung",
+        "gauntlet hook",
+        "reflex-bench",
+    ),
 }
 
 
