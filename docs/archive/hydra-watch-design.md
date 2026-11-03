@@ -1,5 +1,7 @@
 # Design — `hydra watch` (recurring / triggered runs)
 
+Historical design note from 2026-06-17. It is not a setup guide. Current usage is in the [command reference](../CLI-REFERENCE.md#watch--recurring--triggered-runs).
+
 2026-06-17
 
 ## Purpose
