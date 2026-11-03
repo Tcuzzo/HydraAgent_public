@@ -83,3 +83,13 @@ skills:
       - grep
       - skill_route
       - skill_show
+  - skill_id: reflex-seam
+    name: Reflex Seam
+    path: skills/reflex-seam/SKILL.md
+    description: Use when a turn might be settled before the full model loop, or when a file edit should face the sniper, lint, and mutation gauntlet.
+    trigger_summary: reflex seam, reflex rung, gauntlet hook, reflex-bench
+    allowed_tools:
+      - fs_read
+      - list_directory
+      - grep
+      - shell
