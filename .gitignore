@@ -16,12 +16,15 @@ auth/
 .hydra/
 .hydra-memory/
 .hydra-sessions/
-# ship the declarative catalog under .hydraAgent/{tools,policies,skills,ux};
-# ignore only operator runtime state:
+# ship the declarative catalog under .hydraAgent/{tools,policies,skills,ux,playbooks};
+# ignore operator runtime state and the operator's local model config
+# (copy .hydraAgent/hydra.example.yaml). Loaders do not read hydra.local.yaml.
 .hydraAgent/memory/
 .hydraAgent/sessions/
 .hydraAgent/workspace/
 .hydraAgent/current_mission
+.hydraAgent/hydra.yaml
+/hydra.yaml
 current_mission
 
 # Python
