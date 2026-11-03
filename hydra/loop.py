@@ -39,6 +39,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from hydra.llm import LlmError, OllamaClient, ToolCall  # noqa: E402
 from hydra.inter_agent import current_trace_id, new_trace_id, use_trace_id  # noqa: E402
+from hydra.reflex_gauntlet import guard_invoke  # noqa: E402
+from hydra.reflex_seam import maybe_handle  # noqa: E402
 from hydra.tool_bridge import extract_bridged_tool_call, scrub_public_fake_output_preview  # noqa: E402
 
 
@@ -252,6 +254,18 @@ class AgentLoop:
         halted_reason = "max_iterations"
         last_iteration = 0
         phantom_tool_recovery = False
+        gauntlet_stop = False
+        handled = maybe_handle(user_prompt, tools, root=repo_root)
+        if handled is not None:
+            return LoopResult(
+                steps=[],
+                final_response=str(handled.get("response") or ""),
+                iterations=0,
+                tool_calls_made=int(handled.get("tool_calls") or 0),
+                halted_reason=str(handled.get("halted_reason") or "reflex"),
+                messages=messages,
+                trace_id=run_trace_id,
+            )
 
         def record_step(step: LoopStep) -> None:
             steps.append(step)
@@ -490,11 +504,20 @@ class AgentLoop:
                 tool_started = time.time()
                 try:
                     with use_trace_id(run_trace_id):
-                        result = tool.invoke(**tc.arguments)
+                        result, verdict = guard_invoke(
+                            tc.name,
+                            tc.arguments,
+                            lambda: tool.invoke(**tc.arguments),
+                            root=repo_root,
+                        )
                     # Serialization is part of dispatch: nested unsupported
                     # values and circular containers must follow the same
                     # recoverable error path as an exception from the tool.
-                    payload = _serialize_tool_result(result)
+                    if verdict and verdict.get("reject"):
+                        payload = json.dumps(verdict)
+                        gauntlet_stop = True
+                    else:
+                        payload = _serialize_tool_result(result)
                 except Exception as e:  # noqa: BLE001
                     err = f"{type(e).__name__}: {e}"
                     payload = json.dumps({"error": err})
@@ -542,6 +565,13 @@ class AgentLoop:
                         "content": payload,
                     }
                 )
+                if gauntlet_stop:
+                    final_response = payload
+                    halted_reason = "gauntlet_reject"
+                    break
+
+            if gauntlet_stop:
+                break
 
         if halted_reason == "max_iterations":
             # final_response = last assistant content we saw, if any.

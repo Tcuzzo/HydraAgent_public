@@ -12,6 +12,10 @@ schema: hydra.model_routing.v2
 # outcome. An entry with `local: true` names the BACKS ladder rung for this host's
 # local GPU; it is the last resort when BACKS itself is out.
 #
+# Decision seam. Not a chat roster entry, so it does not join role fall-through.
+# The decision service resolves the rung named here.
+reflex:
+  rung: reflex
 
 roster:
   # Conversation brain: drives chat and calls tools.

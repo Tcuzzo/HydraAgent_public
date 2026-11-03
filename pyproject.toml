@@ -90,4 +90,5 @@ markers = [
   "smoke: real bounded end-to-end smoke (opt-in via env, may hit external hosts)",
   "network: test makes a real network call (skipped when host unreachable)",
   "live: test hits a live local model/service (e.g. ollama on localhost)",
+  "reflex_bench: deterministic stub measurement of reflex loop counts",
 ]
