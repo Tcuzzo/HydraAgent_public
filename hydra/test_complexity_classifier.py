@@ -1,5 +1,5 @@
 """Tests for hydra.complexity_classifier — Task 3 of Telemetry-Driven Routing Gateway."""
-from hydra.complexity_classifier import ComplexityClassifier, Classification
+from hydra.complexity_classifier import ComplexityClassifier
 from hydra.model_router import TaskComplexity
 
 

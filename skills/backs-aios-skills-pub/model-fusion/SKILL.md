@@ -1,27 +1,35 @@
 ---
 name: "model-fusion"
-description: "Use when one model's answer is not trustworthy enough — a hard build, fix, or design where you want several models to compete and an independent judge to pick. A panel drafts in parallel, a judge merges the winner, the result is validated against the original intent. Trigger words: fusion, panel, judge, multi-model, ensemble, draft and merge, builder not grader."
+description: "Use when a task benefits from comparing independent candidate drafts within its remaining budget, or the operator requests fusion, a panel, an ensemble, or draft-and-merge. Drafting and judging use separate executions; the same capable configured model may fill every role."
 license: "MIT"
 ---
 
 # Model Fusion
-**Effort:** heavy — a full panel drafting in parallel plus an independent judge (and optional writer); spend it on hard builds and fixes that ship, never on one-line changes. Removes: betting the change on a single model's draft, and the rework when that one draft is wrong.
+**Effort:** heavy — a panel drafting in parallel plus an independent judge and optional writer. Use it when comparison can resolve a material uncertainty within the task's remaining budget.
 
-Many independent voices beat one voice. A panel of models drafts the same task in
-parallel. A judge (a model that wrote none of the drafts) picks or merges the best.
-The winner is then checked against what was actually asked.
+Independent drafting executions produce alternatives for the same task. A judge
+that authored none of the drafts picks or merges candidates against explicit
+criteria. The winner is then checked against what was actually asked. A panel is
+an optional method, not a requirement for ordinary builds or fixes.
+
+**Model agnostic:** resolve each role by capability, actual availability and live
+configuration. One capable configured model may fill every role in separate
+executions. Independent reviewers use fresh contexts without the authoring
+conversation. Different models, families and providers are optional; their names
+do not determine eligibility or establish independence.
 
 ## When to run it
 
-- Any substantial build, fix, or uplift where quality matters more than speed.
-- When you want a specific pair of independent graders, not blind trust in one model.
+- When competing approaches can resolve a material task uncertainty and justify
+  the additional work within the shared mission allowance.
+- When the operator requests independent candidate comparison or a panel.
 - NOT for trivial one-line changes. Make the direct change and verify it.
 
 ## The three stages
 
 ### 1. Panel — drafts in parallel
 
-1. Send the same task, with the same context, to every panel model at once.
+1. Send the same task, with the same context, to each configured drafting execution.
 2. Each drafter works alone. No drafter sees another's work.
 3. A drafter that errors, times out, or returns blank is logged and dropped.
    It never kills the round. Log the drop loudly — never swallow it.
@@ -34,8 +42,8 @@ The winner is then checked against what was actually asked.
    Candidates that fail the gate are out before the judge sees them.
 2. Two judge shapes — pick one per config:
    - **Synthesis:** the judge analyzes every candidate (strengths, defects, conflicts),
-     then a separate writer model composes the final answer from that analysis.
-     Writer and judge are different roles; keep them different models when you can.
+     then a separate writer execution composes the final answer from that analysis.
+     Writer and judge are separate roles; they may use the same capable model.
    - **Selection:** the judge picks the single best candidate that passed the gate.
      Cheaper. Use it when merging adds nothing.
 3. If the judge or writer is unavailable, degrade LOUDLY to selection over the same
@@ -56,15 +64,18 @@ The winner is then checked against what was actually asked.
 
 ## The ladder
 
-- Fusion's rung shape: a wide panel of cheap models at the bottom, tighter panels and
-  tighter output budgets climbing up — a misconfigured rung fails loud at load time.
+- Select panel size, candidate routes and output budgets from the task's needs and
+  remaining [bounded-loops](../bounded-loops/SKILL.md) allowance. A new panel or
+  repair round does not reset that allowance. Report unsupported configuration.
 - Config format, roles-not-names, and live-probe resolution all belong to
   [fleet-ladder](../fleet-ladder/SKILL.md).
 
 ## Hard rules — break one and the skill failed
 
-- **Builder never judges.** The judge authored no candidate. The final grader is a
-  different model (ideally a different family) from whoever built the winner.
+- **Builder never judges.** The judge authored no candidate. The final grader is
+  chosen live by capability and availability from the configured rung matrix;
+  the authoring execution that built is recorded as provenance and
+  disqualified; the reviewer runs in a fresh author-disjoint session.
 - **No hardcoded model names** at any call site. Roles in code, models in config.
 - **No silent degradation.** Dropped drafters, judge fallback, gate failures, and
   exhaustion are all loud. An ungradeable result never passes by default.

@@ -1,6 +1,6 @@
 ---
 name: "session-handoff"
-description: "Use when a session is ending, the context window is about to compact, or the work must continue in another agent or harness. Compacts the session into one flat file a brand-new agent can read cold and continue from (state, half-done work, exact next command, open decisions), with secrets redacted and concurrent work verified preserved. Trigger words: handoff, hand off, compact, save state, continue in another session, portable handoff, before restart."
+description: "Use when a session is ending, context is about to compact, a mission allowance is exhausted, or unfinished work must continue in another agent or harness. Trigger words: handoff, hand off, compact, save state, continue in another session, portable handoff, before restart."
 license: "MIT"
 ---
 
@@ -10,7 +10,9 @@ license: "MIT"
 A context window dies; the work must not. Before a session ends or compacts,
 write one flat file a brand-new agent can read cold and continue from — what
 was being done, where it lives, what is half-done, and the exact next command.
-A handoff parked in chat prose or memory alone does not exist.
+A build handoff must survive the context window. Use the existing
+[BACKS Build Flow](../backs-build-flow/SKILL.md) task record; this skill transfers
+that task rather than creating another owner, context pass, or mission.
 
 ## When to write one
 
@@ -27,6 +29,10 @@ survives a machine restart, not just a context clear. If the next agent is a
 different harness or a fresh login, write a flat portable file to the temp
 dir — it is scaffolding, not a tracked artifact.
 
+Honor `task_mode` and the task's write permissions. For a read-only or frozen
+review, return the handoff in the response or an already authorized external
+record; never write a ledger into the protected repository to satisfy this skill.
+
 ## Verify concurrent work first (before writing a word)
 
 Check that work from OTHER sessions is preserved. Run `git status`,
@@ -38,9 +44,12 @@ clean state while another session has work in flight is a false claim.
 ## What goes in — one short section each
 
 1. **Goal.** The work in one sentence. The next agent must not have to guess
-   what "done" means.
+   what "done" means. Carry `mission_id`, `task_mode`, the integration owner,
+   requested finish, and already authorized delivery actions.
 2. **State.** Landed (commit ids), building, queued. Reference specs, plans,
-   issues, and diffs by path or URL — never duplicate their content.
+   issues, and diffs by path or URL — never duplicate their content. Include the
+   pinned `base_sha`, current `candidate_sha`, sealed RED paths/commit/hashes,
+   check commands/results, and the exact candidate each receipt covers.
 3. **Where the work lives.** Branches, worktrees, dirty files. Name the exact
    files the next agent must read first.
 4. **The verdict trail.** Who or what graded each piece and what the real
@@ -55,7 +64,13 @@ clean state while another session has work in flight is a false claim.
 8. **Traps.** One line each. A trap you already paid for is worth more than a
    green — write it so the next session does not pay again.
 9. **Suggested skills.** Which skills the next agent should load first, and
-   one line why. This is what makes the doc portable across harnesses.
+   one line why. Name actual bodies/evidence already available, what needs
+   refreshing, and the operator essence source; do not copy a second profile.
+10. **Remaining budget.** Carry the original deadline and total/used/remaining
+    attempts, rounds, and other limits from
+    [bounded-loops](../bounded-loops/SKILL.md), plus pending calls and the last
+    hypothesis/failure. Unknown values stay unknown. Never reset the mission
+    budget during handoff, compaction, worker replacement, or model change.
 
 ## Hard rules
 
@@ -66,9 +81,10 @@ clean state while another session has work in flight is a false claim.
 - **Absence claims rot fastest.** Before writing "X does not exist" or "X is
   not landed," re-verify at the current commit — parallel work lands while
   you write.
-- **Two-word status per item: PROVEN or STILL-BUILDING.** Green tests without
-  live proof is STILL-BUILDING, and the handoff says exactly what proof is
-  missing.
+- **Evidence-backed status per item.** Capability delivery uses PROVEN only with
+  its required review and real-surface proof; otherwise STILL-BUILDING names the
+  missing evidence. A completed review or local patch may satisfy its requested
+  finish without being relabeled as a deployed capability.
 - **Keep it readable in two minutes** (about 120 lines). When it grows past
   that, archive the oldest blocks by moving them to a history section —
   never by deleting.
@@ -79,6 +95,12 @@ A session that starts from a handoff reads it FIRST, then verifies the top two
 or three claims against `git log` and the live tree before acting on them.
 The handoff is a map, not truth — trust it for WHERE to look; verify WHAT it
 says.
+
+Resume with the same task packet and remaining allowances. Recheck the deadline
+before dispatching work; a fresh session is not a fresh budget. If an allowance
+is exhausted, preserve the checkpoint as STILL-BUILDING and complete only useful
+authorized work that does not consume that allowance. Keep the original RED seal
+and the pinned base; update candidate identity only when the actual bytes change.
 
 ## Works well with
 

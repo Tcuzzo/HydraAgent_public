@@ -8,7 +8,6 @@
 # ExecResult with returncode == EXEC_TIMEOUT_EXIT_CODE and partial stdout.
 import subprocess
 import sys
-import time
 from pathlib import Path
 from unittest.mock import patch
 

@@ -22,7 +22,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
 from hydra.cli.tool_binding import bind_tools
 from hydra.policy import ApprovalDenied, ApprovalPolicy
@@ -70,7 +69,7 @@ def test_bind_tools_notify_telegram_true_sets_policy(tmp_path: Path) -> None:
     policy with notify_telegram=True; the default (False) must stay False.
     """
     # Default: notify_telegram=False
-    tools_default = bind_tools(tmp_path, approval_policy="ask")
+    bind_tools(tmp_path, approval_policy="ask")
     # The policy is stored on the guarded invoke closures; we can inspect it
     # indirectly by checking that notify_approval is NOT called (see test below).
     # Here we confirm the attribute via the policy object the tool_binding
@@ -84,7 +83,7 @@ def test_bind_tools_notify_telegram_true_sets_policy(tmp_path: Path) -> None:
 
     # Confirm bind_tools surfaces notify_telegram on the built policy.
     # We extract the policy by probing a guarded tool's invoke closure.
-    tools_live = bind_tools(tmp_path, approval_policy="ask", notify_telegram=True)
+    bind_tools(tmp_path, approval_policy="ask", notify_telegram=True)
     # The closures in bind_tools capture `policy` — we can call require() on the
     # real ApprovalPolicy and spy whether notify_approval fires.
     # We'll do that in subsequent tests. This test only confirms the constructors.
@@ -342,7 +341,7 @@ def test_cmd_chat_live_bind_tools_passes_notify_telegram(monkeypatch, tmp_path: 
 
     # Simulate the live chat bind_tools call that cmd_chat.py makes.
     # We call it directly with notify_telegram=True to confirm the plumbing.
-    tools = cmd_chat_mod._bind_tools(
+    cmd_chat_mod._bind_tools(
         tmp_path,
         approval_policy="ask",
         notify_telegram=True,

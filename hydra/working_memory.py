@@ -17,7 +17,6 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Dict, Optional, Tuple
-from collections import defaultdict
 from functools import wraps
 
 from hydra.atomic_write import atomic_write_bytes

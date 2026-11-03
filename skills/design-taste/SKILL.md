@@ -5,8 +5,9 @@ description: >-
   visual (a site, app, dashboard, console, or deck) so it ships with real
   taste instead of generic AI defaults. Forbids the defaults by name. Gates
   on WCAG 2.2. Removes the post-ship accessibility retrofit.
-trigger_summary: design, UI, taste, design tokens, design system, accessibility, WCAG, screenshot critique, dark mode, restyle
 license: MIT
+metadata:
+  trigger_summary: "design, UI, taste, design tokens, design system, accessibility, WCAG, screenshot critique, dark mode, restyle"
 ---
 
 # Design Taste — Tokens First, Eyes On, Accessibility Hard

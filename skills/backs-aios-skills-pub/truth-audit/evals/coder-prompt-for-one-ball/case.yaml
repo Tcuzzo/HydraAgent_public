@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: coder-prompt-for-one-ball
+expected_outcome: |
+  ball_1A_prompt.md is one self-contained prompt for one builder: role, repo, base,
+  branch and worktree, the cited lane blocks pasted in, the exact scope, the
+  interfaces and red tests copied verbatim, the constraints, the proof commands
+  including the scope check, and a -1/0/1 receipt format. It names no model.
+context:
+  scaffold_script: place-files.sh

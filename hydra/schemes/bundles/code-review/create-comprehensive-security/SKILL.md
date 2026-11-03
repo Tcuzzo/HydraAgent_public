@@ -3,20 +3,14 @@ name: create-comprehensive-security
 description: 'Auto-generated skill for: Create a comprehensive security audit report
   for the codebase... Uses web_search, read, write.'
 metadata:
-  agent:
-    emoji: "\U0001F916"
-    os:
-    - linux
-    - darwin
-    tier: workspace
-    generated_by: auto-skill-generator
-    generated_at: 2026-05-27 06:14:10 UTC
-    source_task: task-9f8ab3cbdfc9
-    confidence: 0.9
-    tags:
-    - auto-generated
-    - hydra
-    - proven
+  emoji: "\U0001F916"
+  os: "linux darwin"
+  tier: workspace
+  generated_by: auto-skill-generator
+  generated_at: "2026-05-27 06:14:10 UTC"
+  source_task: task-9f8ab3cbdfc9
+  confidence: "0.9"
+  tags: "auto-generated hydra proven"
 ---
 
 # Create Comprehensive Security

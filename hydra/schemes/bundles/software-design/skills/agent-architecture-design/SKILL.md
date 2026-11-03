@@ -1,3 +1,8 @@
+---
+name: agent-architecture-design
+description: "Design multi-agent systems: agent roles, inter-agent protocols, coordination, human-in-the-loop points, memory, and tool integration. Use when asked to architect an agent or multi-agent system."
+---
+
 # Agent Architecture Design Skill
 
 **Skill ID:** software-design/agent-architecture-design  

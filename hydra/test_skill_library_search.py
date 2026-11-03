@@ -81,3 +81,17 @@ def test_skills_search_cli_outputs_json() -> None:
     payload = json.loads(proc.stdout)
     assert payload["schema"] == "hydra.skill_library_search.v1"
     assert any(hit["skill_id"] == "system-architecture-design" for hit in payload["hits"])
+
+
+def test_allowed_tools_accepts_spec_string_and_legacy_list(tmp_path: Path) -> None:
+    """Agent Skills spec: allowed-tools is a space-separated string; legacy YAML lists still load."""
+    for name, value in (("spec-form", "fs_read grep  bash"), ("list-form", "\n  - fs_read\n  - grep\n  - bash")):
+        skill = tmp_path / "hydra" / "schemes" / "bundles" / "t" / "skills" / name / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text(
+            f"---\nname: {name}\ndescription: Use when testing allowed-tools parsing.\nallowed-tools: {value}\n---\n# {name}\nbody\n",
+            encoding="utf-8",
+        )
+    report = search_skill_library(query="allowed-tools parsing", root=tmp_path, limit=5)
+    tools = {hit["skill_id"]: hit["allowed_tools"] for hit in report["hits"]}
+    assert tools == {"spec-form": ["fs_read", "grep", "bash"], "list-form": ["fs_read", "grep", "bash"]}

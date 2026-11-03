@@ -1,7 +1,5 @@
 """Contracts for public profiles, real worker dispatch, and connector boundaries."""
 import json
-import sys
-from pathlib import Path
 
 import pytest
 

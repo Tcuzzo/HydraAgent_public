@@ -80,8 +80,17 @@ def _skill_hit(root: Path, path: Path) -> dict[str, Any]:
         "path": rel,
         "heading": _first_heading(body),
         "summary": _summary(body),
-        "allowed_tools": meta.get("allowed-tools") or [],
+        "allowed_tools": _allowed_tools(meta.get("allowed-tools")),
     }
+
+
+def _allowed_tools(value: Any) -> list[str]:
+    """Agent Skills spec form is a space-separated string; legacy YAML lists are still accepted."""
+    if isinstance(value, str):
+        return value.split()
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    return []
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:

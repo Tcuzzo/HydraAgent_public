@@ -68,7 +68,6 @@ _IS_WINDOWS = sys.platform == "win32"
 # ── Lazy POSIX-only imports ───────────────────────────────────────────────────
 # Never import at module level unconditionally; these don't exist on Windows.
 if _IS_POSIX:
-    import signal as _signal  # noqa: F811 — already imported, just for clarity
     # os.killpg / os.getpgid are stdlib on POSIX; verify at import time.
     _HAS_KILLPG = hasattr(os, "killpg") and hasattr(os, "getpgid")
 else:

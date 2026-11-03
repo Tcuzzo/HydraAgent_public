@@ -6,9 +6,7 @@ read_bus() is the missing reader so a running agent can see what its peers
 """
 from __future__ import annotations
 
-from pathlib import Path
 
-import pytest
 
 from hydra.inter_agent import create_message, log_message, read_bus, use_trace_id
 

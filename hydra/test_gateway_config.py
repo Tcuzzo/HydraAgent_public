@@ -1,4 +1,3 @@
-import pytest
 from hydra.gateway_config import GatewayConfig
 
 

@@ -26,7 +26,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -34,7 +33,7 @@ import pyfiglet
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.app import ScreenStackError
 from textual.css.query import NoMatches
 # textual 8.2.7 removed MouseWheel; use MouseScrollUp/Down (direction-encoded events).
@@ -46,9 +45,9 @@ except ImportError:  # older textual (<= pre-8.x)
 from textual import events
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Footer, Input, RichLog, Static, TextArea
+from textual.widgets import Input, RichLog, Static, TextArea
 
-from hydra.intake import COLLAB, CONVO, STEERING, classify
+from hydra.intake import CONVO, STEERING, classify
 from hydra.loop import AgentLoop, LoopStep, LoopResult, Tool
 from hydra.operator_auth import OperatorAuth, OperatorAuthError, render_qr_ascii
 from hydra.work_executor import (

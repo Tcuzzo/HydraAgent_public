@@ -5,7 +5,8 @@ description: >-
   the work, find the route, illuminate the fog, or decide what to work on next.
   It turns a destination into a map and resolves the unknowns from evidence
   below the ask-me bar — it never parks a question on the human. Never run lost.
-trigger_summary: the path, inlightenment, chart the way, find the route, wayfinder, what next, resolve unknowns, fog
+metadata:
+  trigger_summary: "the path, inlightenment, chart the way, find the route, wayfinder, what next, resolve unknowns, fog"
 ---
 
 # The Path — invoke as Inlightenment
