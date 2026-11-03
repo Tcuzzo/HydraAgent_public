@@ -1,0 +1,39 @@
+# Operator model config. Hydra reads `.hydraAgent/hydra.yaml`, or the file
+# named by HYDRA_CONFIG. It does not read this example.
+#
+# Copy it, then replace each placeholder with your own value:
+#   cp .hydraAgent/hydra.example.yaml .hydraAgent/hydra.yaml
+#
+# Each role accepts provider, model, and family. base_url, api_key_env, and
+# fallbacks are optional. Set require_independent_auditor to true when
+# planner, doer, and auditor must use distinct families.
+# subagents.spawn_model overrides the default subagent model string.
+
+agentic:
+  require_independent_auditor: false
+  roles:
+    planner:
+      provider: "<provider>"
+      model: "<model>"
+      family: "<family>"
+    doer:
+      provider: "<provider>"
+      model: "<model>"
+      family: "<family>"
+      fallbacks:
+        - provider: "<provider>"
+          model: "<model>"
+          family: "<family>"
+    worker:
+      provider: "<provider>"
+      model: "<model>"
+      family: "<family>"
+    auditor:
+      provider: "<provider>"
+      model: "<model>"
+      family: "<family>"
+      base_url: "<base-url>"
+      api_key_env: "<key-env>"
+
+subagents:
+  spawn_model: "<provider>/<model>"
