@@ -277,9 +277,8 @@ unloading through the configured loopback Ollama endpoint; coordinate with other
 GPU users. An optional unload failure warns without discarding completed work.
 
 The separate `route_and_execute` library helper is not the CLI entry point.
-The auto-fix repair loop (`auto_fix.enabled` on a worker job) is
-**not shipped in the public edition** — it depended on a private orchestration
-chain and was stripped; enabling it fails loud with a clear message.
+Setting `auto_fix.enabled` on a worker job raises `auto_fix is not available in the public edition`.
+Remove that option from the job. The repair loop is not part of this package.
 
 ### `hydra code` — compile then run
 
