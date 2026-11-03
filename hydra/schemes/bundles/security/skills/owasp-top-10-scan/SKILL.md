@@ -1,6 +1,6 @@
 ---
 name: owasp-top-10-scan
-description: Comprehensive security scan for OWASP Top 10 vulnerabilities including SQL injection, XSS, broken authentication, and more using industry-standard tools
+description: Comprehensive security scan for OWASP Top 10 vulnerabilities including SQL injection, XSS, broken authentication, and more using industry-standard tools. Use when auditing a web application or API for common vulnerability classes.
 ---
 
 # OWASP Top 10 Security Scan

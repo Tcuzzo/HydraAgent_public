@@ -1,7 +1,6 @@
 """Personal orchestration commands: teams, MCP and public profile packaging."""
 from __future__ import annotations
 
-import argparse
 import json
 from pathlib import Path
 import sys

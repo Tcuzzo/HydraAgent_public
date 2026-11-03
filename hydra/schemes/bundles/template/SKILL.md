@@ -1,3 +1,8 @@
+---
+name: template
+description: "Authoring template for a new Hydra skill doc. Use when writing a new SKILL.md by copying this file and replacing every {placeholder}; it is not a runnable skill."
+---
+
 # Hydra Skill Template
 
 **Skill ID:** hydra-{category}-{skill-name}  

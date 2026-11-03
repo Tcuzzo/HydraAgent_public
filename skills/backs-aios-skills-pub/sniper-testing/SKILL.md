@@ -1,68 +1,74 @@
 ---
-name: "sniper-testing"
-description: "Use during any fix or build loop, and before trusting any green test. Runs only the tests that cover what you touched, and kills mock theater — tests that pass while the capability is broken. Trigger words: sniper testing, scoped tests, test scope, mock theater, fake green, full suite, test bloat."
-license: "MIT"
+name: sniper-testing
+description: "Use during a build or repair loop, or before trusting a green result, when verification must cover the actual candidate without redundant whole-suite runs."
+license: MIT
 ---
 
 # Sniper Testing
-**Effort:** free — pure discipline, no extra runs; it cuts net cost outright by deleting full-suite reruns during iteration. Removes: test bloat (whole-suite runs for a tiny diff) and the mock-theater greens you would otherwise build on.
 
-## Why this exists
+Verify the changed behavior through its real consumer. Use the complete task diff
+to choose checks, then rerun only checks affected by the next change. Inherit the
+same mission allowance from [bounded-loops](../bounded-loops/SKILL.md).
 
-Two failure modes burn most test time. Test bloat: running the whole suite for
-a tiny change. Mock theater: tests that pass while the real capability is
-physically broken. This skill kills both.
+## 1. Pin the real scope
 
-## Rule 1 — the diff defines scope, not optimism
+Preserve the verified pre-task `base_sha` and current committed `candidate_sha` in
+the [Build Flow](../backs-build-flow/SKILL.md) packet. A clean working tree after
+committing RED and the fix still has a task diff. `git diff HEAD` alone loses it.
 
-During the fix/build iteration loop, you are forbidden from running the entire
-test suite.
+Use the bundled read-only scope helper from this skill's resolved directory:
 
-1. Run `git diff --name-only HEAD` to see exactly which files you touched.
-2. Map each touched file to the test files that directly cover it
-   (e.g. `src/payments/refund.py` → `tests/test_refund.py`).
-3. State your specific test target, then run ONLY those files
-   (Python: `pytest tests/test_refund.py`;
-   JS: `npx vitest run tests/refund.test.js`;
-   Go: `go test ./payments/ -run TestRefund`).
-4. A test that already passed is not re-run unless your next change touches
-   code it exercises. The diff defines the scope — not optimism, not fear.
-5. At landing time (the commit gate), run ONE full pass over every touched
-   module's suite. That single pass catches indirect couplings exactly once.
-   Iteration speed and a sound landing are both part of the job.
+```bash
+python scripts/changed_files.py --repo <verified-repo> --base <base-sha> --candidate <candidate-sha>
+```
 
-## Rule 2 — kill mock theater
+During iteration add `--include-worktree` only when the candidate is HEAD. It
+reports committed, staged, unstaged, and untracked paths separately, preserving
+unusual filenames. The aggregate scope includes deletions and both sides of a
+rename. Mark unrelated pending work as preserved; do not claim every returned path
+as yours. A missing base or invalid revision is an error to resolve, never an empty
+scope that justifies skipping checks. The helper does not fetch or change history.
 
-A capability test must assert a real, physical side-effect:
+## 2. Choose and execute real checks
 
-- "produces a video" → a real file exists on disk with size > 0 bytes.
-- "stores memory" → the row reads back from a real local database.
-- "renders the widget" → a real DOM element exists on the page.
+Map changed files and affected callers/consumers to behavior tests, then read the
+repository's actual scripts, CI, and configuration for applicable commands.
 
-Do not mock the database. Do not mock the file system. Do not mock local
-network sockets.
+| Check | Scope and evidence |
+| --- | --- |
+| Lint and format-check | Changed supported files using existing config; use check mode before deciding to reformat. |
+| Typecheck or compiler | Affected package/project boundary; type dependencies may require a wider target. |
+| Behavior tests | Real changed path and a regression that fails when the capability breaks. |
+| Contract/integration tests | Consumers, aliases, packaging, settings preservation, or runtime boundaries touched by this change. |
+| Required landing gates | Repository-mandated suites once the candidate settles. |
 
-The one legal mock is the paid external transport leaf — the HTTP call to a
-metered third-party API. Even then, the test must traverse all the real logic
-around it: building the request, routing, parsing the response. Mock the wire,
-never the brain.
+State each command, why it covers the risk, revision/pending state, executed result,
+and remaining failures. An absent linter/typechecker is **unavailable** or **not
+applicable**, with a reason; do not invent a pass. Do not install a new tool just
+because an example names it. A green lint run does not substitute for behavior tests.
 
-## Audit before you trust
+During iteration choose the narrowest meaningful target. A previously passing
+check need not rerun when no exercised code, inputs, or relevant environment changed.
+A concrete unresolved coupling or a required project gate justifies broader testing;
+record why. At landing, run the required aggregate checks once for the final candidate.
+Changes after that result invalidate only affected evidence and required commit gates.
 
-Before relying on any test, read it. If it is mock theater (green because of
-mocks, with no physical assertion), delete the mock and rewrite the test to
-assert a real side-effect. A test that cannot fail is worse than no test: it
-certifies a lie, and you will build on that lie.
+## 3. Make tests detect real breakage
 
-## Hard rules (any one broken fails the skill)
+Assert an observable effect: an artifact exists and is valid, data reads back from
+a real local database, the host receives actual context bytes, or a UI element
+renders. Exercise local files, databases, and sockets rather than mocking them.
+A metered external transport leaf may be replaced by a deterministic fixture while
+request construction, routing, parsing, and the local consumer remain real. Never
+claim that fixture proves the external service ran.
 
-- No full-suite run during iteration.
-- No green claim without a real side-effect assertion.
-- No mock beyond the paid external transport leaf in a capability test.
-- No landing without the single full pass over touched modules.
+Keep the sealed RED file from [red-first](../red-first/SKILL.md) byte-identical.
+For a new gap, add a separate supplemental regression file using that skill's
+evidence and sealing rules. Never weaken, rename, replace, or edit the original
+sealed file.
 
-## Works well with
+## Exit
 
-- [clean-code-gauntlet](../clean-code-gauntlet/SKILL.md) — sniper scope feeds its first gate
-- [red-first](../red-first/SKILL.md) — write the failing test before the fix
-- [seam-engineering](../seam-engineering/SKILL.md) — fix the class, then sweep with scoped tests
+Return candidate scope, executed lint/type/test results, real side-effect evidence,
+and unresolved gates to the same owner. [clean-code-gauntlet](../clean-code-gauntlet/SKILL.md)
+uses this evidence as its first stage, not as a reason to repeat unchanged checks.

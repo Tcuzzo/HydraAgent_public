@@ -128,7 +128,6 @@ async def test_timeout_cancels_future_so_worker_skips_set_result():
     completion redundantly by checking it was cancelled mid-flight."""
     dispatch_started = asyncio.Event()
     dispatch_release = asyncio.Event()
-    set_result_called = {"v": False}
 
     async def dispatch(decision, task):
         dispatch_started.set()

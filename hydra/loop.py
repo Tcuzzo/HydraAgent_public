@@ -31,13 +31,13 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from hydra.llm import ChatMessage, LlmError, OllamaClient, ToolCall  # noqa: E402
+from hydra.llm import LlmError, OllamaClient, ToolCall  # noqa: E402
 from hydra.inter_agent import current_trace_id, new_trace_id, use_trace_id  # noqa: E402
 from hydra.tool_bridge import extract_bridged_tool_call, scrub_public_fake_output_preview  # noqa: E402
 

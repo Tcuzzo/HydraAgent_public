@@ -1,6 +1,6 @@
 ---
 name: "optimus"
-description: "Use when starting any agent session, job, or loop — before writing any code. Harness-first boot: load the invariant floor and the skills the job needs, so the agent reads the rules before it works; includes the grounding-gate hook pattern that blocks mutating tools until the harness is loaded. Trigger words: optimus, harness-boot, harness first, load the harness, boot the floor, grounding gate, read the floor, no code without harness, session start, boot sequence."
+description: "Use when starting or resuming an agent session, job, or autonomous loop that needs the BACKS harness and relevant task skills."
 license: "MIT"
 ---
 
@@ -14,122 +14,50 @@ loading the rules is the first act, and a hook makes it structural instead of ad
 
 ## When to run
 
-At the start of every session, job, mission, and loop. Again after a context reset or a
-handoff. Loading the harness once and coasting for a week is not loading the harness.
+At the start of a session or new job; revalidate after a context reset or handoff.
+An inner retry reuses current grounding and the same task packet. Reload missing or
+changed bodies; do not reboot the whole lifecycle for every iteration.
 
 ## The boot sequence
 
 1. **Load the invariant floor.** Read [invariant-floor](../invariant-floor/SKILL.md)
    before touching anything. This is the floor the whole session stands on.
-2. **Load the map for this job.** Name which files, which rules, and which pack skills
-   govern this specific work. If you cannot name them, you are not ready to edit.
-3. **Load the human profile** ([human-calibration](../human-calibration/SKILL.md)) when the
-   job touches a human's taste, surface, or workflow.
-4. **Arm the session.** Claude/Cursor native `sessionStart` arms RED; OpenCode and
-   Codex start RED when the session identity is new or has no marker. A successful
-   native post-skill event arms GREEN for Claude, Cursor, and OpenCode. For hosts
-   without a native skill event (Codex, bare API loops, or any runtime without one),
-   run the explicit gate loader; it loads optimus and arms the session marker GREEN:
+2. **Apply [Build Flow](../backs-build-flow/SKILL.md).** It owns task mode,
+   readiness to act, skill selection, bounded RED/GREEN with scoped lint and tests,
+   gauntlet evidence, and delivery. Reuse a verified packet; gather only missing
+   facts needed for the next concrete action. Specialists return to one owner.
+3. **Apply human context** ([human-calibration](../human-calibration/SKILL.md)) when
+   relevant. [operator-essence](../operator-essence/SKILL.md) owns the evidence-backed
+   awareness file and missing-file insight pass; do not run a second profile cycle.
+4. **Load the session.** The session hook delivers the actual Optimus, Yoke, and Build Flow
+   bodies, plus the proven native harness when available. Compaction reloads those
+   bodies without revoking earned grounding. A missing marker at a mutating tool
+   triggers loading, never a tool refusal. Hosts without a context hook can use:
    ```bash
    node "$HOME/.local/share/backs-aios/current/hooks/aios_gate.js" --load backs-aios:optimus
    ```
-   Python alternate:
-   ```bash
-   python3 "$HOME/.local/share/backs-aios/current/hooks/aios_gate.py" --load backs-aios:optimus
-   ```
-   The `--load` call prints the skill body and atomically arms the same session marker
-   GREEN. Unknown skills return nonzero and do not arm.
-5. **Invoke the skills the job needs — in real time, in this session.** A skill named
-   but not invoked did not happen. Working "from memory of a skill" is not invoking it.
+   In a Codex shell, pass the active `CODEX_SESSION_ID` as the final argument.
+   Python is available through the matching `aios_gate.py` loader. Unknown skills
+   return nonzero without inventing a receipt.
+5. **Apply the skills the next action needs.** Name each purpose, output, and exit.
+   A skill named but not invoked did not happen. Reuse actual bodies still available
+   in current context; a remembered summary or file hash does not replace them.
 6. Only then: write code, run mutating commands, or change anything.
 
-## The grounding-gate pattern
+## Automatic grounding
 
-Make step 4 structural with a deterministic **pre-tool-use hook** — a small script your
-agent runtime calls before every tool call:
+The existing hook reads the foundation files and delivers their bodies through
+host context. It records source hashes only after delivery. Context-loading
+receipts are distinct from actual Skill-event evidence; loading a pointer or
+hashing a file is not an invocation of that skill.
 
-- Every session starts **RED**.
-- While RED, read-only tools (read, grep, search, fetch) always pass. The agent grounds
-  itself freely.
-- While RED, the hook **blocks mutating tools** (edit, write, delete) and primary
-  mutating shell verbs (commit, push, rm, install, service restart, in-place edits).
-- Invoking any harness skill **flips the session GREEN** (caught by a post-tool-use
-  hook). Then the agent may act.
-- **Re-arm:** a real native `sessionStart` event re-arms the emitting host to RED.
-  `sessionStart` never arms GREEN; native post-skill success arms GREEN. For a new
-  job, handoff, context reset, or compaction that does NOT emit a real
-  `sessionStart`, re-arm explicitly with the gate loader:
-  ```bash
-  node "$HOME/.local/share/backs-aios/current/hooks/aios_gate.js" --rearm <session_id>
-  ```
-  Python alternate:
-  ```bash
-  python3 "$HOME/.local/share/backs-aios/current/hooks/aios_gate.py" --rearm <session_id>
-  ```
-
-Design rules for the hook itself:
-
-- **Deterministic and free.** No model call, no network, no dependencies. State is one
-  small file per session, written atomically.
-- **It forces grounding, not a sandbox or security boundary.** Match only primary
-  mutating verbs. Positive matching is incomplete; exotic mutations may slip
-  through. Do not claim matcher parity across hosts or complete mutation coverage.
-- **Fail open, but loud, only in native hook mode.** A crashed native hook must never
-  brick the session — and must never allow silently. Explicit `--load` and `--rearm`
-  errors are loud and nonzero.
-- **Never trap a session.** Unknown session identity resolves through explicit CLI
-  id, then payload session_id/conversation_id, supported environment variables in
-  declared order, then parent PID; parent PID is the final nonempty fallback and
-  there is no anonymous allow after it.
-- **One human-owned kill-switch** (an env var), defaults ON, logs loudly when off. The
-  gate binds agents, never the human. Never add a second gate.
-
-Generic hook (pseudocode, ~25 lines):
-
-```python
-HARNESS_SKILLS = {"optimus", "repair-loop", "invariant-floor"}  # your pack set
-MUTATING_TOOLS = {"Edit", "Write", "Delete"}
-MUTATING_SHELL = r"^\s*(sudo\s+)?(git (commit|push|reset|checkout)|rm|pip install|" \
-                 r"npm install|systemctl (restart|stop)|sed .*-i)"
-
-def resolve_session_id(args):
-    # bounded identity resolution; parent PID is the final nonempty fallback
-    if args.get("cli_session_id"):
-        return args["cli_session_id"]
-    payload = args.get("payload", {})
-    for key in ("session_id", "conversation_id"):
-        if payload.get(key):
-            return payload[key]
-    env = args.get("env", {})
-    for key in ("BACKS_BUILD_SESSION",
-                "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID",
-                "CURSOR_SESSION_ID", "CURSOR_CONVERSATION_ID",
-                "OPENCODE_SESSION_ID",
-                "CODEX_SESSION_ID", "CLAUDE_SESSION_ID"):
-        if env.get(key):
-            return env[key]
-    return parent_pid()                      # final nonempty fallback; one state per shell/process
-
-def handle(event, session_id, tool, args):
-    if kill_switch_off():                    # human-owned env var, e.g. HARNESS_GATE=off
-        return ALLOW                         # disabled loudly, never silently
-    if not session_id:
-        session_id = resolve_session_id(args)
-    if event == "SessionStart":
-        set_state(session_id, "RED")         # every real session start re-arms to RED; never arms GREEN
-        return ALLOW
-    if event == "PostToolUse":
-        if tool == "Skill" and args.get("skill") in HARNESS_SKILLS:
-            set_state(session_id, "GREEN")   # harness invoked -> agent may act
-        return ALLOW
-    if event == "PreToolUse":
-        mutating = tool in MUTATING_TOOLS or (
-            tool == "Bash" and matches(MUTATING_SHELL, args.get("command", "")))
-        if not mutating or get_state(session_id) == "GREEN":
-            return ALLOW                     # read-only always passes
-        return BLOCK("RED: invoke a harness skill first, then act")
-    return ALLOW
-```
+- Session start and compaction reload the floor without taking tools away.
+- A missing session marker triggers automatic loading at the next matched tool.
+- Missing or unreadable bodies produce a visible diagnostic and no false receipt;
+  the operator and agents retain their tools.
+- `--rearm <session_id>` requests another load. It never locks the session.
+- `AIOS_GATE=off` remains the operator's existing, reversible kill switch.
+- Hooks are local and deterministic. No model call or network dependency is added.
 
 ## Hard rules (what fails this skill)
 
@@ -139,7 +67,7 @@ def handle(event, session_id, tool, args):
   harness. BACKS is model- and context-agnostic with robust memory lanes — the
   harness (memory files, playbooks, ledgers, ladder yaml) carries the knowledge;
   the model's head does not (operator ruling 2026-09-26).
-- A hook that blocks read-only tools, traps a session in RED, or fails silently.
+- A hook that refuses any tool, revokes earned grounding, or reports loading that did not occur.
 - A second gate, or any new friction placed on the human. The kill-switch stays theirs.
 
 ## Works well with
@@ -160,4 +88,4 @@ builder seat, and HARD-gate realtime research seams (web + GitHub + Reddit + pap
 when the rung marks frontier / `research_seams`. Never hardcode model IDs; Patch owns yaml.
 Cite: `observe/SECURITY_OPERATOR_BUILDER_SEAT_ORDER_20260926.md`.
 
-Honor [fleet-ladder](../fleet-ladder/SKILL.md) thinking floor (medium FLOOR; ultra???medium; research???token_efficiency before MiniMax/5.6 heavy lift; no truncation hacks).
+Honor [fleet-ladder](../fleet-ladder/SKILL.md): use a medium-or-higher reasoning baseline where supported, research before heavy lifts, and do not truncate context.

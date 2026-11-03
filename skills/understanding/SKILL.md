@@ -2,10 +2,9 @@
 name: understanding
 description: Score code against its intent and ask Hydra's routed auditor to refute unsupported claims before delivery.
 license: MIT
-version: "1.0"
-allowed-tools:
-  - fs_read
-  - shell
+allowed-tools: fs_read shell
+metadata:
+  version: "1.0"
 ---
 # Understanding
 
