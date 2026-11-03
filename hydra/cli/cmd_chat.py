@@ -42,7 +42,7 @@ from hydra.semantic_recall import build_semantic_memory_context
 from hydra.memory_kernel import assemble_truth_context
 from hydra.rubric_judge import judge as rubric_judge
 from hydra.prompt_builder import PromptBuilderError, compose_operator_prompt
-from hydra.runtime_route import default_runtime_route, route_string
+from hydra.runtime_route import default_runtime_route, offline_pair, offline_runtime_route, route_string
 from hydra.model_routing import RungResolutionError, load_routing
 from hydra.providers import is_local_provider
 from hydra.rung_resolver import LOCAL as LOCAL_TRANSPORT
@@ -420,8 +420,51 @@ def _local_gpu_fallback_client(args: argparse.Namespace):
     return client, cfg
 
 
+def _explicit_profile(args: argparse.Namespace) -> str:
+    """The profile the caller named. Missing or unknown is an error, not ``auto``."""
+    profile = getattr(args, "profile", None)
+    if not isinstance(profile, str) or not profile.strip():
+        raise ValueError("pass --profile explicitly; Hydra has no silent profile default")
+    known = load_routing().chat_profiles
+    if profile not in known:
+        raise ValueError(
+            f"unknown profile {profile!r}; choose one of: {', '.join(sorted(known))}"
+        )
+    return profile
+
+
+def _runtime_only_snapshot(profile: str, args: argparse.Namespace) -> dict[str, str]:
+    """Profile, transport, and rung route from the routing file. No network."""
+    routing = load_routing()
+    entry = routing.entry(routing.chat_profiles[profile])
+    provider, model = offline_pair(entry)
+    override_provider = getattr(args, "provider", None)
+    override_model = getattr(args, "model", None)
+    if override_provider:
+        provider = str(override_provider)
+    if override_model:
+        model = str(override_model)
+    route = offline_runtime_route()
+    route["conversation_provider"] = provider
+    if profile == "local":
+        route["planner_provider"] = provider
+    return {
+        "profile": profile,
+        "provider": provider,
+        "model": model,
+        "planner_provider": route["planner_provider"],
+        "worker_provider": route["worker_provider"],
+        "local_worker_provider": route["worker_provider"],
+        "runtime_route": route_string(route),
+        "local_gpu_policy": route["local_gpu_policy"],
+        "workbench_api": os.environ.get("HYDRA_WORKBENCH_API", DEFAULT_WORKBENCH_API),
+    }
+
+
 def _resolve_chat_runtime(args: argparse.Namespace) -> dict[str, str]:
-    profile = getattr(args, "profile", "auto") or "auto"
+    profile = _explicit_profile(args)
+    if getattr(args, "runtime_only", False):
+        return _runtime_only_snapshot(profile, args)
     try:
         default_provider, default_model = CHAT_PROFILE_DEFAULTS[profile]
     except RungResolutionError:

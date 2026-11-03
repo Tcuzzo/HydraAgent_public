@@ -57,7 +57,7 @@ class _ProviderSpec:
 _BUILTINS: dict[str, _ProviderSpec] = {
     "needle": _ProviderSpec(
         name="needle", env_file=".env.needle", endpoint_default="",
-        model_default="needle3", requires_key=False,
+        model_default="", requires_key=False,
     ),
     "ollama": _ProviderSpec(
         name="ollama",

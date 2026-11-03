@@ -5,8 +5,8 @@ Launch: hydra chat  (do not change this)
 Layout (per-turn):
   [streaming tool calls + assistant thinking — inline]
   [Final response panel]
-  ─── 🐉 tok:~1.2k │ ⚡ iter:3 │ 🛠 7 │ ollama-cloud │ 🔐 yolo ────
-  [🐉 qwen2.5:72b] ❯  <input here>
+  ─── 🐉 tok:~1.2k │ ⚡ iter:3 │ 🛠 7 │ <provider> │ 🔐 yolo ────
+  [🐉 <model>] ❯  <input here>
    /help │ /skills │ /models │ /mode │ Ctrl+C stop │ Ctrl+D exit
 """
 from __future__ import annotations
@@ -200,12 +200,8 @@ class TokenTracker:
         self.output_tokens += output_tok
         self.total_tokens = self.input_tokens + self.output_tokens
         self.model_name = model
-        if "deepseek" in model.lower():
-            self.estimated_cost_usd = (input_tok * 0.14 + output_tok * 0.28) / 1_000_000
-        elif "qwen" in model.lower():
-            self.estimated_cost_usd = (input_tok * 0.05 + output_tok * 0.15) / 1_000_000
-        else:
-            self.estimated_cost_usd = 0.0  # local = free
+        # Rates are not hardcoded per model family. A configured rate can fill this later.
+        self.estimated_cost_usd = 0.0
 
 # ── Key hints for bottom toolbar ──────────────────────────────────────────────
 _TOOLBAR_HTML = (
@@ -231,6 +227,28 @@ def _short_model(model: str) -> str:
     parts = model.split("/")
     name = parts[-1] if parts else model
     return name[:20] + "…" if len(name) > 20 else name
+
+
+def _configured_route_rows(chat_route: str, chat_transport: str) -> list[tuple[str, str, str]]:
+    """Chat shows the live session route. Other roles show the rung from config."""
+    rows = [("Chat (primary)", chat_route, chat_transport)]
+    try:
+        from hydra.model_routing import load_routing
+        from hydra.rung_resolver import GATEWAY, LOCAL
+
+        routing = load_routing()
+    except Exception:
+        return rows
+    for role in ("worker", "planner"):
+        roster_id = routing.roles.get(role)
+        if not roster_id:
+            continue
+        try:
+            entry = routing.entry(roster_id)
+        except KeyError:
+            continue
+        rows.append((role, entry.rung, LOCAL if entry.local else GATEWAY))
+    return rows
 
 
 def _format_bytes(n: int) -> str:
@@ -1000,7 +1018,7 @@ class EliteTUI:
           - classify() still runs to detect peer→collab vs operator→intent check.
           - For operator turns: route_turn() fans out a cloud intent check and a
             speculative convo draft in parallel. chat → emit the ready draft,
-            task → discard the draft and run the cloud-qwen work executor.
+            task → discard the draft and run the work-role executor.
           - For peer/collab turns: always go straight to the work executor.
         """
         self._parallel_agents_this_turn = []
@@ -1481,22 +1499,23 @@ class EliteTUI:
                 print(f"  {r.name:28s}  {(r.description or '')[:60]}")
 
     def _cmd_models(self) -> None:
+        rows = _configured_route_rows(self.model_short, self.provider_name)
         if RICH_AVAILABLE:
             tbl = Table(
                 box=box.SIMPLE_HEAD,
                 border_style="dim",
-                title="Model Matrix",
+                title="Route Matrix",
                 title_style="bold cyan",
             )
             tbl.add_column("Role", style="bold")
-            tbl.add_column("Model", style="cyan")
-            tbl.add_column("Provider", style="dim")
-            tbl.add_row("Chat (primary)", self.model_short, self.provider_name)
-            tbl.add_row("Tools / workers", "qwen2.5-coder:7b", "ollama-local")
-            tbl.add_row("Planner", "deepseek-v3.2", "ollama-cloud")
+            tbl.add_column("Route", style="cyan")
+            tbl.add_column("Transport", style="dim")
+            for role, route, transport in rows:
+                tbl.add_row(role, route, transport)
             self.console.print(tbl)
         else:
-            print(f"Chat:    {self.model_short}  ({self.provider_name})")
+            for role, route, transport in rows:
+                print(f"{role}: {route}  ({transport})")
 
     def _cmd_audit(self) -> None:
         """Delegate to native Go harness for fast repo audit."""
