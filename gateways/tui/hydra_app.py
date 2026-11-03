@@ -6,7 +6,7 @@ Three-panel layout (Claude Code / arcade-edition style):
   │   ▄█▄  H Y D R A  ▄█▄                                            │
   │                  agent                                            │
   ├─ SCROLLING RUNTIME LIVE STREAM ─────────────── ▲ UP / DOWN ▼ ────┤
-  │  [🐉 qwen2.5:72b] ▶ thinking…                                      │
+  │  [🐉 <model>] ▶ thinking…                                          │
   │  ✓ bash › git status (0.0s)                                       │
   │  ✓ glob › **/*.zig (3.1s)                                         │
   │  ✓ fs_read › /src/main.zig (0.1s)                                 │
@@ -939,9 +939,9 @@ class HydraApp(App[int]):
         Always shows BOTH the chat model and the work model so the operator
         can never look up and see only the chat model at rest.
 
-        Format (idle):     chat:llama-3.3-70b  ·  work:qwen2.5:72b
-        Format (work active):  chat:llama-3.3-70b  ·  ⚙ work:qwen2.5:72b
-        Fail-soft (no work):   llama-3.3-70b
+        Format (idle):     chat:<chat>  ·  work:<work>
+        Format (work active):  chat:<chat>  ·  ⚙ work:<work>
+        Fail-soft (no work):   <active>
         """
         if self._work_model and self._work_model != self.model:
             work_active = (self._active_model == self._work_model)

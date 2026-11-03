@@ -1,9 +1,9 @@
 """Operator law (2026-10-23): no model IDs, provider names or secret names in any Hydra
 file. Routing names BACKS rungs only; Kev/Needle resolve them at call time.
 
-The scan covers every code and config file in the ``hydra`` package (``.py``, ``.yaml``,
-``.yml``, ``.json``, ``.toml``), tests and the vendored tree aside. Checks, each reporting
-file:line and the offending token (never a value):
+The scan covers every code and config file in the ``hydra`` package and ``gateways``
+(``.py``, ``.yaml``, ``.yml``, ``.json``, ``.toml``), tests and the vendored tree aside.
+Checks, each reporting file:line and the offending token (never a value):
 
 * model tags   - ``name:tag`` model references (``family:14b``, ``family:cloud`` ...).
 * secret names - ``*_API_KEY`` / ``*_TOKEN`` / ``*_SECRET`` style key names.
@@ -25,6 +25,8 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 PKG = REPO / "hydra"
+GATEWAYS = REPO / "gateways"
+SCAN_ROOTS = (PKG, GATEWAYS)
 
 #: The routing surface: every file that decides which model answers a turn. These must
 #: always be in the scan (a guard against the package walk silently missing them).
@@ -55,24 +57,34 @@ NON_MODEL_HOSTS = frozenset({
     "github.com", "pypi.org", "api.osv.dev",
     "zapier.com", "docs.zapier.com", "www.twingate.com",
     "dash.cloudflare.com", "developers.cloudflare.com",
+    "api.telegram.org",
 })
 #: Chat-channel and connector credentials (not model or provider keys). The operator
 #: sets these for the channel they connect; no model or provider key may be named here.
-CHANNEL_CREDENTIAL_FILES = {"discord_listener_runtime.py", "cmd_workbench.py", "zapier_harness.py"}
+CHANNEL_CREDENTIAL_FILES = {
+    "discord_listener_runtime.py", "cmd_workbench.py", "zapier_harness.py", "live.py",
+}
+
+
+def _tree_files(root: Path) -> list[Path]:
+    if not root.is_dir():
+        return []
+    return sorted(
+        p for p in root.rglob("*")
+        if p.is_file() and p.suffix in SCANNED_SUFFIXES
+        and not p.name.startswith("test_") and p.name != "conftest.py"
+        and not SKIPPED_DIRS.intersection(p.relative_to(root).parts)
+    )
 
 
 def _package_files() -> list[Path]:
-    files = sorted(
-        p for p in PKG.rglob("*")
-        if p.is_file() and p.suffix in SCANNED_SUFFIXES
-        and not p.name.startswith("test_") and p.name != "conftest.py"
-        and not SKIPPED_DIRS.intersection(p.relative_to(PKG).parts)
-    )
-    return files
+    return _tree_files(PKG)
 
 
 def _surface_files() -> list[Path]:
-    files = _package_files()
+    files = []
+    for root in SCAN_ROOTS:
+        files.extend(_tree_files(root))
     missing = [rel for rel in SURFACE if (PKG / rel).exists() and (PKG / rel) not in files]
     assert not missing, f"routing surface files missing from the package scan: {missing}"
     assert len(files) > len(SURFACE), "package scan found too few files"
@@ -104,12 +116,25 @@ def _env_key_hits(pattern: re.Pattern[str]) -> list[str]:
 
 
 def test_scan_covers_the_whole_package():
-    files = {p.relative_to(PKG).as_posix() for p in _surface_files()}
+    files = {p.relative_to(REPO).as_posix() for p in _surface_files()}
     for rel in SURFACE:
-        assert rel in files
+        assert f"hydra/{rel}" in files
     # Spot-check modules well outside routing are in scope too.
     for rel in ("roles.py", "setup.py", "setup_panel.py", "work_executor.py", "go_bridge.py"):
-        assert rel in files, rel
+        assert f"hydra/{rel}" in files, rel
+    assert "gateways/tui/elite.py" in files
+
+
+def test_builtin_model_defaults_come_from_config_or_rungs():
+    """A built-in transport may name an endpoint. It may not name a model."""
+    from hydra.providers import _BUILTINS
+
+    leaked = {
+        spec.name: spec.model_default
+        for spec in _BUILTINS.values()
+        if spec.model_default
+    }
+    assert not leaked, f"built-in model defaults must be empty, got {leaked}"
 
 
 def test_scanner_catches_planted_literals(tmp_path):
@@ -148,7 +173,9 @@ def test_no_secret_names_in_hydra():
 
 def test_channel_credential_files_name_no_model_or_provider_key():
     """The channel exemption is narrow: only channel/connector credential names."""
-    channel = re.compile(r"^(?:HYDRA_(?:DISCORD|TELEGRAM)_BOT_TOKEN|ZAPIER_[A-Z_]+)$")
+    channel = re.compile(
+        r"^(?:HYDRA_(?:DISCORD|TELEGRAM)_BOT_TOKEN|TELEGRAM_BOT_TOKEN|ZAPIER_[A-Z_]+)$"
+    )
     files = [f for f in _surface_files() if f.name in CHANNEL_CREDENTIAL_FILES]
     hits = [h for h in _hits(SECRET_NAME, files) if not channel.match(h.rsplit(": ", 1)[1])]
     assert not hits, "non-channel secret names in channel files:\n" + "\n".join(hits)

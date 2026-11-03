@@ -59,6 +59,10 @@ ROUTER_OUTCOME = "/api/router/outcome"
 ROUTE_PREFIX = "router/"
 #: The router walks a whole chain, so a call gets at least this long.
 ROUTER_MIN_TIMEOUT = 300.0
+#: How long one decision-service call may wait. A cold service is about 30s;
+#: override with HYDRA_DECISION_TIMEOUT when the host needs longer or shorter.
+DECISION_TIMEOUT_ENV = "HYDRA_DECISION_TIMEOUT"
+DEFAULT_DECISION_TIMEOUT = 30.0
 #: Last chain the router gave per task (this process only, for logs). Never stored.
 _CHAINS: dict[str, list[dict]] = {}
 #: When BACKS was last found unreachable or out of rungs: (monotonic time, why). For a
@@ -132,6 +136,23 @@ def _post(url: str, body: dict, timeout: float) -> tuple[int, Any]:
         return status, {"message": raw[:300]}
 
 
+def decision_timeout(explicit: float | None = None) -> float:
+    """Seconds to wait on the decision service. An explicit value wins; otherwise
+    ``HYDRA_DECISION_TIMEOUT`` or the cold-start default."""
+    if explicit is not None:
+        return explicit
+    raw = os.environ.get(DECISION_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_DECISION_TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_DECISION_TIMEOUT
+    if value <= 0:
+        return DEFAULT_DECISION_TIMEOUT
+    return value
+
+
 def route_for(task: str, rung: str) -> str:
     return f"{ROUTE_PREFIX}{task}/{rung}"
 
@@ -194,12 +215,14 @@ def _local_served_model(env_dir: str | Path | None, get: Callable[[str, float], 
 
 def resolve(rung: str, *, local: bool = False, task: str | None = None, env_dir: str | Path | None = None,
             fetch: Callable[[str, float], Any] | None = None,
-            post: Callable[..., tuple[int, Any]] | None = None, timeout: float = 15.0) -> tuple[str, str]:
+            post: Callable[..., tuple[int, Any]] | None = None, timeout: float | None = None) -> tuple[str, str]:
     """Resolve one rung to Hydra's ``(transport, route)`` pair.
 
     Raises ``RungResolutionError`` (retryable) when this rung can't be used, so the
-    caller moves on to the next rung.
+    caller moves on to the next rung. ``timeout`` defaults to the decision-service
+    budget (``decision_timeout``), which tolerates a cold start.
     """
+    timeout = decision_timeout(timeout)
     if not rung:
         raise RungResolutionError("routing entry has no rung name")
     get = fetch or _get
