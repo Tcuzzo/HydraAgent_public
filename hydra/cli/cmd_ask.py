@@ -48,10 +48,12 @@ def _auth_rejection_message(provider: str, error: LlmError) -> str | None:
     status = getattr(error, "status_code", None)
     text = str(error)
     lowered = text.lower()
-    key_words = ("api key", "api_key", "authorization", "unauthor", "forbidden", "invalid key")
-    auth = kind in {"authentication", "permission"} or status in {401, 403}
-    if status == 400 and any(word in lowered for word in key_words):
-        auth = True
+    # A BACKS rung walk uses 401/402/403 as "try the next rung", not as a key refusal.
+    if "no rung answered" in lowered or re.search(r"rung[- ][\w-]+:\d{3}", lowered):
+        return None
+    key_words = ("api key", "api_key", "authorization", "unauthor", "invalid key")
+    talks_about_a_key = any(word in lowered for word in key_words)
+    auth = kind == "authentication" or (status in {400, 401, 403} and talks_about_a_key)
     if not auth:
         return None
     key_var = re.sub(r"[^A-Za-z0-9]", "_", str(provider or "provider")).upper() + "_API_KEY"

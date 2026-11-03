@@ -51,7 +51,9 @@ def test_documented_hydra_flags_exist():
 
 
 def test_documented_env_vars_are_read():
-    mentioned = set(re.findall(r"\b([A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+)\b", _text()))
+    text = _text()
+    mentioned = set(re.findall(r"\b([A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+)\b", text))
+    mentioned -= set(re.findall(r"\b([A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+)\.md\b", text))
     mentioned = {name for name in mentioned if not name.startswith("MYSERVER_")}
     blob = []
     for path in (ROOT / "hydra").rglob("*"):
