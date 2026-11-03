@@ -346,40 +346,52 @@ def _check_model_based_decision() -> "AuditCheck":
 
 
 def _check_work_executor_cloud_qwen() -> "AuditCheck":
-    """(vi) Work executor (steering/collab) must route to the cloud model, not the chat model."""
+    """(vi) Work turns must use the work role's cloud rung, not the local chat rung.
+
+    The property is the roster entry (role tag or the ``work`` role), never a
+    model-name token. Resolving the live model would also touch the network at
+    every chat start.
+    """
+    from hydra.model_routing import load_routing
+    from hydra.turn_profiles import load_turn_profile
+
     failures: list[str] = []
+    routing = load_routing()
+    work_role = routing.roles.get("work", "")
     for kind in ("steering", "collab"):
         try:
-            pair = _resolve_work_model(kind)
+            profile = load_turn_profile(kind)
         except Exception as exc:
-            failures.append(f"{kind}: resolve raised {exc}")
+            failures.append(f"{kind}: profile raised {exc}")
             continue
-        if pair is None:
-            failures.append(f"{kind}: resolve_work_model returned None")
+        roster_id = (getattr(profile, "executor", "") or "").strip()
+        if not roster_id:
+            failures.append(f"{kind}: no executor rung")
             continue
-        provider, model = pair
-        if "qwen" not in model.lower() and "cloud" not in provider.lower():
+        try:
+            entry = routing.entry(roster_id)
+        except KeyError:
+            failures.append(f"{kind}: executor {roster_id!r} is not a roster rung")
+            continue
+        is_work_role = entry.id == work_role or "work" in entry.role_tags
+        if entry.local or not entry.rung or not is_work_role:
             failures.append(
-                f"{kind}: executor is {provider}/{model} — expected cloud-based qwen model"
-            )
-        elif "ollama-cloud" not in provider.lower() and "cloud" not in provider.lower():
-            # Warn if it's a local executor — policy requires cloud for work turns
-            failures.append(
-                f"{kind}: executor is local ({provider}/{model}) — expected ollama-cloud"
+                f"{kind}: executor {entry.id} is local rung {entry.rung}; "
+                "work turns use the work role's rung"
             )
 
     if failures:
         return AuditCheck(
-            check_id="work_executor_cloud_qwen",
-            description="Work executor must be cloud-based, not a local chat model",
+            check_id="work_executor_rung",
+            description="Work executor must be the work role's cloud rung, not the local chat rung",
             passed=False,
             detail="; ".join(failures),
         )
     return AuditCheck(
-        check_id="work_executor_cloud_qwen",
-        description="Work executor must be cloud-based, not a local chat model",
+        check_id="work_executor_rung",
+        description="Work executor must be the work role's cloud rung, not the local chat rung",
         passed=True,
-        detail="steering and collab both route to ollama-cloud",
+        detail="steering and collab both use the work role's rung",
     )
 
 
