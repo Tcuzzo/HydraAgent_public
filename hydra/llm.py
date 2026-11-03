@@ -20,6 +20,8 @@ import json
 import hashlib
 import logging
 import socket
+import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -28,6 +30,61 @@ from dataclasses import dataclass, field
 from typing import Iterable, Protocol
 
 _LOG = logging.getLogger(__name__)
+_CONNECT_CAP_SECONDS = 15.0
+
+
+def connect_budget(timeout: float) -> float:
+    """Seconds to wait for TCP connect. The read budget can be longer."""
+    try:
+        value = float(timeout)
+    except (TypeError, ValueError):
+        value = _CONNECT_CAP_SECONDS
+    if value <= 0:
+        return _CONNECT_CAP_SECONDS
+    return min(_CONNECT_CAP_SECONDS, value)
+
+
+def connect_status_line(host: str, seconds: float) -> str:
+    return f"connecting to {host}… (connect timeout {seconds:.0f}s)"
+
+
+def _open_url(req: urllib.request.Request, *, timeout: float):
+    """Open a request with a short connect wait and the caller's read budget."""
+    host = urlsplit(req.full_url).hostname or "provider"
+    connect = connect_budget(timeout)
+    started = time.monotonic()
+    announced = threading.Event()
+
+    def _announce() -> None:
+        if not announced.wait(3):
+            print(connect_status_line(host, connect), file=sys.stderr, flush=True)
+
+    watcher = threading.Thread(target=_announce, daemon=True)
+    watcher.start()
+    original = socket.create_connection
+
+    def create_connection(address, sock_timeout=None, *args, **kwargs):
+        sock = original(address, connect, *args, **kwargs)
+        try:
+            sock.settimeout(timeout)
+        except OSError:
+            pass
+        return sock
+
+    socket.create_connection = create_connection
+    try:
+        return urllib.request.urlopen(req, timeout=timeout)
+    except socket.timeout as exc:
+        elapsed = time.monotonic() - started
+        if elapsed <= connect + 1:
+            raise LlmError(
+                f"could not reach {host} after {elapsed:.0f}s (connect timeout)",
+                kind="timeout",
+            ) from exc
+        raise
+    finally:
+        announced.set()
+        socket.create_connection = original
 
 # --- cloud model-catalog cache (inv_16: never hammer the provider) ----------
 # A live GET /v1/models is reused for this many seconds per endpoint, so a
@@ -448,21 +505,19 @@ class OllamaClient:
 
     # --- transport -------------------------------------------------------
 
-    _USER_AGENT = "HydraAgent/1.0 (+local-llm; stdlib-urllib)"
-
     def _default_headers(self) -> dict[str, str]:
         """Headers every request carries.
 
-        `User-Agent: HydraAgent/...` is honest and matters operationally:
-        Cloudflare-fronted hosts return HTTP 403 / Cloudflare
-        error 1010 against the default `Python-urllib/X.Y` UA, blocking
-        the request before it ever reaches the upstream LLM. We surface
-        the client identity instead of impersonating a browser.
+        The User-Agent is a neutral client token. Attribution for hosts that
+        ask for it (HTTP-Referer, X-Title) rides alongside. A token that
+        contains "hydra" is refused by some WAFs before the model sees it.
         """
-        h: dict[str, str] = {"User-Agent": self._USER_AGENT}
+        from hydra.http_identity import attribution_headers
+
+        headers = attribution_headers()
         if self.api_key:
-            h["Authorization"] = f"Bearer {self.api_key}"
-        return h
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
     def _get_json(self, url: str, *, timeout: float) -> dict:
         req = urllib.request.Request(
@@ -480,7 +535,7 @@ class OllamaClient:
 
     def _read_json(self, req: urllib.request.Request, *, timeout: float) -> dict:
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with _open_url(req, timeout=timeout) as resp:
                 raw = resp.read().decode("utf-8")
         except urllib.error.HTTPError as e:
             body = ""

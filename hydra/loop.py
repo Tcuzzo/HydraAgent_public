@@ -27,6 +27,7 @@ Maturity: SCAFFOLDED. Promoted by §10.25.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass, field
@@ -274,7 +275,13 @@ class AgentLoop:
 
         for iteration in range(1, max_iterations + 1):
             last_iteration = iteration
-            
+            if iteration > 1 and os.environ.get("HYDRA_REFLEX") == "1":
+                again = maybe_handle(user_prompt, tools, root=repo_root)
+                if again is not None:
+                    final_response = str(again.get("response") or "")
+                    halted_reason = str(again.get("halted_reason") or "reflex")
+                    break
+
             # AUTO-SYNTHESIS TRIGGER: when genuinely near the cap (2 before the
             # end), nudge the model to deliver findings instead of running out of
             # room mid-collection. This scales with max_iterations: cap 6 fires at

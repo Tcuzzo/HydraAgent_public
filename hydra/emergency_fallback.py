@@ -90,7 +90,9 @@ def probe_model(provider: str, model: str, timeout: float = 5.0) -> bool:
         from hydra.providers import cli_transport_installed
 
         return cli_transport_installed(shutil.which)
-    headers: dict[str, str] = {"User-Agent": "HydraAgent/probe"}
+    from hydra.http_identity import attribution_headers
+
+    headers: dict[str, str] = attribution_headers()
     if cfg.api_key:
         headers["Authorization"] = f"Bearer {cfg.api_key}"
     is_local = cfg.endpoint.startswith("http://localhost") or cfg.endpoint.startswith(

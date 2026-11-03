@@ -46,6 +46,23 @@ pipx install git+https://github.com/Tcuzzo/HydraAgent_public.git
 
 No API keys ship with Hydra.
 
+## First run with your own key
+
+Replace the placeholders. Do not commit the key.
+
+```bash
+export OPENROUTER_ENDPOINT='https://openrouter.ai/api/v1'
+export OPENROUTER_MODEL='<your-openrouter-model>'
+export OPENROUTER_API_KEY='<your-openrouter-key>'
+hydra ask "summarize this folder" --provider openrouter --approval-policy deny
+```
+
+Gemini uses the same pattern with `GEMINI_ENDPOINT`, `GEMINI_MODEL`, and `GEMINI_API_KEY`. The endpoint is `https://generativelanguage.googleapis.com/v1beta/openai`. A missing or rejected key stops with a message that names the variable. Hydra does not continue on an empty model.
+
+Direct chat and the Jev decision rung are different. Chat reads `<NAME>_ENDPOINT`, `<NAME>_MODEL`, and `<NAME>_API_KEY`. The decision service at `HYDRA_BACKS_URL` does not receive that chat key. Direct Jev, when you want typed decisions without that service, reads `OPENROUTER_API_KEY` and `HYDRA_JEV_MODEL`. See [Jev typed decisions](#jev-typed-decisions-optional).
+
+On a network where public names resolve to the benchmark range `198.18.0.0/15`, set `HYDRA_FETCH_ALLOW_FAKEIP=1` or set `HTTPS_PROXY`. Otherwise fetches refuse that range and say so.
+
 ## 2. Choose a model
 
 ```bash
@@ -167,23 +184,66 @@ The example file itself is not loaded. In a source checkout the constant `HYDRA_
 
 ### Jev typed decisions (optional)
 
-Hydra asks the decision service for a live rung. Plain turns go to `POST /api/router/complete`. This repository has no Jev client. `hydra/model_routing.yaml` names rungs. `hydra/rung_resolver.py` reads the service origin and sends no provider key. The `backs` transport is built with `requires_key=False` (`hydra/providers.py`). `hydra setup` has no `backs` mode.
+Typed decisions are separate from chat. `hydra/model_routing.yaml` names three rungs and stores no model id: `llm_decision`, `vision_decision`, and `text_decision`. `hydra/decision_ladder.py` resolves the rung you asked for at call time. Every call sends an `instructions` field. A blank model is not called.
 
-Get an OpenRouter API key. The funded Jev rung takes that key from `OPENROUTER_API_KEY` in the decision service's environment: that name is the ladder row's `env_key`, and the service reads it when the rung is selected. The model is the Jev model on OpenRouter, chosen by your ladder/env. Keep the value uncommitted. `.gitignore` ignores `.env` and `.env.*` except `.env.example`, and ignores `.hydraAgent/workspace/`. Hydra's reader for this route is `HYDRA_BACKS_URL` (`hydra/rung_resolver.py`). When that variable is empty, `backs_url()` reads `BACKS_ENDPOINT` from `~/.hydraAgent/workspace/.env.backs`. Those two settings name the service. They are not the OpenRouter key, and a key stored only in a Hydra env file is not forwarded.
+The ladder tries configured rungs in this order. A rung that returns HTTP 401, 402, or 403 steps to the next one. The receipt's `rung` field names the step that answered (`backs`, `kev`, `laya`, `vision`, `text`, or `jev`). `tier_rung` is the name from the routing file.
 
-A local Kev decision rung is preferred when the ladder lists one, and that rung is free. The funded Jev rung is the paid fallback under it. `hydra/model_routing.yaml` does not encode that order. The service returns the chain from `POST /api/router/resolve` and walks it on `POST /api/router/complete`. Hydra logs the head rung.
+1. **Decision service.** Used when `HYDRA_BACKS_URL` is set, or when `BACKS_ENDPOINT` is set in the process or in `~/.hydraAgent/workspace/.env.backs`. Hydra posts to `{origin}/api/router/complete`. The body includes `instructions`. Hydra does not send your OpenRouter key on this hop. `hydra setup` has no `backs` mode.
+2. **Local decision model.** Vision uses `HYDRA_VISION_MODEL` on the local Ollama endpoint (`OLLAMA_ENDPOINT`, or `http://localhost:11434`). The llm tier uses `HYDRA_KEV_MODEL` or `HYDRA_LLM_DECISION_MODEL` the same way, then `HYDRA_LAYA_MODEL` through `LayaDecisionClient`. The text tier uses `HYDRA_TEXT_DECISION_MODEL`, and `HYDRA_LAYA_MODEL` when that is set. This path does not use a model id compiled into the ladder. The older `python -m hydra.decision_models` command is a different entry point and still has its own checkpoint default, described in [Models](docs/MODELS.md).
+3. **Direct Jev.** Used when both `OPENROUTER_API_KEY` and `HYDRA_JEV_MODEL` are set. Hydra posts to `{HYDRA_JEV_BASE_URL or https://openrouter.ai/api/v1}/chat/completions` with `model`, `instructions`, and `messages`. The key is sent on this hop. This is separate from chat: chat also works with `OPENROUTER_ENDPOINT`, `OPENROUTER_MODEL`, and `OPENROUTER_API_KEY` and does not require `HYDRA_JEV_MODEL`. If the key is set and `HYDRA_JEV_MODEL` is empty, the Jev hop is skipped and chat is unchanged.
 
-Jev rejects a bare prompt. Every call that reaches it has to include an `instructions` field. The local typed-decision API in this repo is a different program: `LayaDecisionClient` in `hydra/decision_models.py` reads `HYDRA_LAYA_MODEL` and `HYDRA_LAYA_DEVICE`, and it accepts a question when `type` is `choice`, `score`, or `noul`. The question objects in [Models](docs/MODELS.md) include `instructions` for that local API.
+If none of those is configured, or every hop refuses, the error names `HYDRA_BACKS_URL`, `BACKS_ENDPOINT`, `HYDRA_KEV_MODEL`, `HYDRA_LAYA_MODEL`, `OPENROUTER_API_KEY`, and `HYDRA_JEV_MODEL`. Vision and text errors also name `HYDRA_VISION_MODEL` and `HYDRA_TEXT_DECISION_MODEL`.
 
-If an error body reaches `hydra/provider_health.http_failure` with metadata `limit_source` equal to `openrouter_in_flight_budget`, the kind is `rate_limit`. The gateway path raises `RungResolutionError` and leaves that classifier unused. The status text is in the section above.
-
-Check:
+Create an OpenRouter key at [openrouter.ai/keys](https://openrouter.ai/keys) (sign-in required). The request shape is in the [OpenRouter quickstart](https://openrouter.ai/docs/quickstart). Put the key in the environment, not in the repo. `.gitignore` ignores `.env` and `.env.*` except `.env.example`, and ignores `.hydraAgent/workspace/`.
 
 ```bash
-python -c "from hydra.rung_resolver import backs_url; print(backs_url())"
+export OPENROUTER_API_KEY='<your-openrouter-key>'
+export HYDRA_JEV_MODEL='<your-openrouter-model>'
 ```
 
-That prints the origin, or raises `RungResolutionError` with `BACKS rung resolver location is not set`. It does not place a paid call. `python -m pytest -q hydra/test_backs_router_client.py` checks this client offline, with no key and no model name.
+`<your-openrouter-model>` is a placeholder. Read the model id from your OpenRouter account. Do not commit it.
+
+Question shapes:
+
+- llm: `type` is `choice`, `score`, or `noul`, plus `instructions`.
+- vision: `type` is `yes_no` or `score`, plus `instructions` and the claim. Pass the image reference with the call.
+- text: `type` is `classify` or `validate`, plus `instructions` and the text to check.
+
+With `HYDRA_REFLEX=1`, the agent loop asks the llm tier before it spends a model loop, and again before a later loop. A decision that is done, stopped, or a single tool call does not call the big model. If the tier cannot be resolved, the turn uses the normal loop.
+
+Check, with no paid call:
+
+```bash
+hydra doctor --rungs
+```
+
+That prints `set` or `unset` for each rung. It does not print the key or the model id. `python -m pytest -q hydra/test_decision_ladder.py hydra/test_backs_router_client.py` checks the ladder and the decision-service client offline.
+
+### Live research
+
+`hydra live` searches the web and prints sources. It does not call a model. The default provider is DuckDuckGo's HTML search and needs no key. The Textual chat and the plain chat accept `/live <question>`, show the sources, and feed them into the next reasoning turn. The agent tool `live_research` does the same lookup when the question depends on recent facts. The chat system prompt tells the model to call it in that case.
+
+```bash
+hydra live "current python release"
+hydra live "current python release" --no-fetch
+hydra live "current python release" --json --limit 3
+```
+
+A keyed provider needs three settings. The endpoint is yours; Hydra does not bake one in.
+
+```bash
+export HYDRA_LIVE_PROVIDER='<provider-name>'
+export HYDRA_LIVE_ENDPOINT='https://<search-host>/<path>'
+export HYDRA_LIVE_KEY='<your-search-key>'
+```
+
+Unset `HYDRA_LIVE_PROVIDER` to return to DuckDuckGo. Page text is data for the answer, not new instructions.
+
+### Decision tiers and local models
+
+The three rungs are the deterministic layer in front of a larger model: the llm tier asks whether the direction is right and which tool is next, the vision tier asks whether an image shows a claim, and the text tier classifies or validates structured output. The same three checks are the control layer a later robotics driver would use before moving hardware. This repository does not ship a robot driver.
+
+Local weights and the env var for each tier are in [Models](docs/MODELS.md#local-decision-models). Pull or download a model, then set the env var to the id you chose. `hydra doctor --rungs` shows whether that var is set.
 
 ### Sandbox (Bubblewrap)
 

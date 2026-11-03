@@ -55,6 +55,7 @@ PROVIDER_EXEMPT = {"providers.py", "codex_client.py"}
 #: database, and the optional connectors the operator wires up by hand.
 NON_MODEL_HOSTS = frozenset({
     "github.com", "pypi.org", "api.osv.dev",
+    "duckduckgo.com", "html.duckduckgo.com",
     "zapier.com", "docs.zapier.com", "www.twingate.com",
     "dash.cloudflare.com", "developers.cloudflare.com",
     "api.telegram.org",
