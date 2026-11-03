@@ -1,6 +1,6 @@
 ---
 name: design-critique
-description: Critique a product surface against its actual user task, evidence hierarchy, affordances, motion, accessibility, and visual coherence; deliver specific fixes and verify them on the live surface.
+description: Use when a product surface needs a design review. Critique it against its actual user task, evidence hierarchy, affordances, motion, accessibility, and visual coherence; deliver specific fixes and verify them on the live surface.
 license: MIT
 ---
 
