@@ -9,8 +9,9 @@ name lives in Hydra. At call time this module asks the BACKS rung resolver
   docs/BACKS_ROUTER_CONTRACT.md). Hydra asks ``POST /api/router/resolve`` for the live
   chain, logs the head rung and its model, and sends the turn to
   ``POST /api/router/complete``, where BACKS walks the chain, carries the essence and
-  records an outcome per attempt. Turns that carry Hydra's own tools go through the
-  BACKS gateway capability for the rung, and Hydra reports that outcome to
+  records an outcome per attempt. Turns that carry Hydra's own tools go to the BACKS
+  gateway and follow the same chain: each rung is pinned in turn (the rung's capability
+  last), HTTP 401/402/403 step to the next rung, and Hydra reports every attempt to
   ``POST /api/router/outcome``. BACKS holds the keys; Hydra sends none.
 * a local GPU rung (``local: true`` in the routing file) resolves to the model the
   BACKS ladder assigns that rung, served by this host's local GPU endpoint.
@@ -29,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import socket
 import sys
 import time
@@ -192,6 +194,62 @@ def _capability_for(rung: str, catalog: Any) -> str | None:
     return None
 
 
+#: Statuses on which a tool turn steps to the next rung of the router's chain: auth and
+#: billing refusals (401/402/403), a rung the gateway can't pin (404/410), a timeout or rate
+#: limit (408/429) and upstream errors (5xx). Any other 4xx is about the request itself.
+STEP_STATUSES = frozenset({401, 402, 403, 404, 408, 410, 429})
+_BILLING_WORDS = ("billing", "credit", "quota", "payment", "past due", "insufficient")
+
+
+def _steps_to_next_rung(status: int | None, exc: LlmError) -> bool:
+    if status is None:
+        return exc.kind == "timeout"
+    return status in STEP_STATUSES or status >= 500
+
+
+def _error_class(status: int | None, text: str) -> str:
+    """Router contract failure classes (docs/BACKS_ROUTER_CONTRACT.md)."""
+    if status in (401, 403):
+        return "quota" if any(w in text.lower() for w in _BILLING_WORDS) else "auth"
+    if status in (402, 429):
+        return "quota"
+    if status in (404, 410):
+        return "retired"
+    if status is not None and status >= 500:
+        return "server"
+    return "timeout" if status is None else "error"
+
+
+def _gateway_prefix(catalog: Any) -> str | None:
+    """The gateway's id prefix, read from its live capability ids (no literal here)."""
+    for item in (catalog or {}).get("data") or []:
+        cap_id = str(item.get("id") or "")
+        if "-" in cap_id:
+            return cap_id.rsplit("-", 1)[0] + "-"
+    return None
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9._-]+", "-", text).strip("-").lower()
+
+
+def _pinned_chain(rows: list[dict], catalog: Any) -> list[tuple[dict, str]]:
+    """Gateway ids that pin each chain row to its rung: ``<prefix><role>-<rung>``, the
+    BACKS gateway's own picker id for a ladder row. Rows without a rung or role are skipped
+    (logged); the gateway answers 404 for a rung it can't pin and the walk steps on."""
+    prefix = _gateway_prefix(catalog)
+    pinned: list[tuple[dict, str]] = []
+    for row in rows or []:
+        if not row.get("usable", True):
+            continue
+        rung, role = str(row.get("rung") or ""), str(row.get("role") or "")
+        if not (prefix and rung and role):
+            _LOG.warning("router row %r can't be pinned at the gateway (needs rung, role and a catalog)", rung or row)
+            continue
+        pinned.append((row, f"{prefix}{_slug(role)}-{_slug(rung)}"))
+    return pinned
+
+
 def _ladder_model(rung: str, rows: Any) -> str | None:
     for candidates in ((rows or {}).get("roles") or {}).values():
         for row in candidates or []:
@@ -346,30 +404,73 @@ class RungGatewayClient(OllamaClient):
 
     def _tool_turn(self, messages, *, task: str, rung: str, max_tokens: int, temperature: float,
                    timeout: float, tools: list[dict]):
-        """Hydra runs its own tools, so this turn goes to the gateway capability for the
-        rung (native tool calls) and the outcome is reported to the router."""
-        cap = _capability_for(rung, _get(f"{self.endpoint}/v1/models", 15.0))
-        if not cap:
-            raise RungResolutionError(f"BACKS has no capability rung named {rung!r}")
-        started = time.monotonic()
-        try:
-            resp = super().chat(messages, model=cap, max_tokens=max_tokens,
-                                temperature=temperature, timeout=timeout, tools=tools)
-        except LlmError:
-            hit = self.last_receipt.get("x-backs-identity")
-            if hit:
-                report_outcome(self.endpoint, {"task_type": task, "rung": hit, "success": False,
-                                               "error_class": "server",
-                                               "latency_s": round(time.monotonic() - started, 3)},
-                               post=self.post)
-            raise
-        hit = self.last_receipt.get("x-backs-identity")
-        if hit:
-            report_outcome(self.endpoint, {"task_type": task, "rung": hit, "success": True,
+        """Hydra runs its own tools, so this turn goes to the BACKS gateway (native tool
+        calls). It follows the rung chain the router picked for ``task``: each usable row
+        is pinned in turn, then the rung's capability is the last attempt. HTTP 401/402/403
+        (and a rung the gateway can't pin, a rate limit, a 5xx) step to the next rung;
+        every attempt's outcome is reported to the router. The receipt names the rung that
+        actually answered; when none does, one line names every rung tried and its status."""
+        catalog = _get(f"{self.endpoint}/v1/models", 15.0)
+        attempts = [(f"rung {row['rung']}", str(row["rung"]), pin)
+                    for row, pin in _pinned_chain(self._chain_for(task), catalog)]
+        cap = _capability_for(rung, catalog)
+        if cap:
+            attempts.append((f"capability {rung}", "", cap))
+        if not attempts:
+            raise RungResolutionError(
+                f"tool turn for task {task}: BACKS has no rung chain and no capability named {rung!r}")
+        failed: list[str] = []
+        for index, (label, row_rung, gateway_id) in enumerate(attempts):
+            self.last_receipt = {}
+            started = time.monotonic()
+            try:
+                resp = super().chat(messages, model=gateway_id, max_tokens=max_tokens,
+                                    temperature=temperature, timeout=timeout, tools=tools)
+            except LlmError as exc:
+                status = getattr(exc, "status_code", None)
+                failed.append(f"{label}:{status or exc.kind}")
+                reported = self.last_receipt.get("x-backs-identity") or row_rung
+                if reported:
+                    report_outcome(self.endpoint, {"task_type": task, "rung": reported, "success": False,
+                                                   "error_class": _error_class(status, str(exc)),
+                                                   "latency_s": round(time.monotonic() - started, 3)},
+                                   post=self.post)
+                if not _steps_to_next_rung(status, exc) or index == len(attempts) - 1:
+                    verdict = "no rung answered" if _steps_to_next_rung(status, exc) else "stopped"
+                    raise RungResolutionError(
+                        f"tool turn for task {task}: {verdict} ({'; '.join(failed)})",
+                        kind=exc.kind, status_code=status) from exc
+                step = (f"hydra: tool turn task {task}: {label} answered "
+                        f"{f'HTTP {status}' if status else exc.kind}; stepping to {attempts[index + 1][0]}")
+                _LOG.warning(step)
+                print(step, file=sys.stderr)
+                continue
+            answered = self.last_receipt.get("x-backs-identity") or row_rung or label
+            self.last_receipt = {**self.last_receipt, "x-backs-identity": answered}
+            report_outcome(self.endpoint, {"task_type": task, "rung": answered, "success": True,
                                            "latency_s": round(time.monotonic() - started, 3),
                                            "tokens_in": resp.prompt_tokens, "tokens_out": resp.completion_tokens},
                            post=self.post)
-        return resp
+            line = (f"hydra: tool turn task {task} (rung {rung}) answered by rung {answered} -> model "
+                    f"{self.last_receipt.get('x-backs-model', '(per BACKS ladder)')}"
+                    + (f"; fell through {', '.join(f.replace('rung ', '', 1) for f in failed)}" if failed else ""))
+            _LOG.info(line)
+            print(line, file=sys.stderr)
+            return resp
+        raise RungResolutionError(f"tool turn for task {task}: no attempt was made")
+
+    def _chain_for(self, task: str) -> list[dict]:
+        """The router's usable chain for ``task``: the one resolve() just logged, else asked now."""
+        if task in _CHAINS:
+            return _CHAINS[task]
+        status, data = (self.post or _post)(
+            f"{self.endpoint}{ROUTER_RESOLVE}", {"task_type": task, "task": "route check", "tools": []}, 15.0)
+        if status != 200:
+            _LOG.warning("BACKS router gave no chain for task %s (HTTP %s); using the capability only", task, status)
+            return []
+        rows = [row for row in (data or {}).get("chain") or [] if row.get("usable")]
+        _CHAINS[task] = rows
+        return rows
 
     def _read_json(self, req: urllib.request.Request, *, timeout: float) -> dict:
         try:
@@ -377,12 +478,12 @@ class RungGatewayClient(OllamaClient):
                 receipt = {k.lower(): v for k, v in resp.headers.items() if k.lower().startswith("x-backs-")}
                 raw = resp.read().decode("utf-8")
         except urllib.error.HTTPError as e:
-            body = ""
             try:
                 body = e.read().decode("utf-8", errors="replace")
-            except Exception:  # noqa: BLE001
-                pass
-            raise RungResolutionError(f"HTTP {e.code} from {req.full_url}: {body[:300] or e.reason}") from e
+            except OSError as read_exc:
+                body = f"(error body unreadable: {read_exc})"
+            raise RungResolutionError(f"HTTP {e.code} from {req.full_url}: {body[:300] or e.reason}",
+                                      kind="http", status_code=e.code) from e
         except urllib.error.URLError as e:
             raise RungResolutionError(f"could not reach {req.full_url}: {getattr(e, 'reason', e)}") from e
         except socket.timeout as e:

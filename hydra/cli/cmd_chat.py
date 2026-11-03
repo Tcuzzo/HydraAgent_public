@@ -419,6 +419,9 @@ def _local_gpu_fallback_client(args: argparse.Namespace):
             file=sys.stderr,
         )
         return None
+    if not cfg.model:
+        print("local GPU fallback unavailable: the local GPU rung has no model configured.", file=sys.stderr)
+        return None
     return client, cfg
 
 
