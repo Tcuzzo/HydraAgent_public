@@ -38,6 +38,9 @@ Resolution lives only in the deploy ladder files. Skills teach agents to
 | GPU nodes | `<BACKS_DEPLOY_ROOT>/config/gpu_nodes.yaml` |
 | Public ladder example | `skills/fleet-ladder/ladder.example.yaml` (template only) |
 
+`<BACKS_DEPLOY_ROOT>` is a placeholder for the folder that holds your own BACKS
+deployment checkout. Set it per machine; never commit a real path.
+
 **NEVER** hardcode model IDs in skill text, prompts, or call sites as source of truth.
 You may name **roles** in prose (`builder`, `grader`, `worker`, and the
 configured planning role — native deployments call this `plan` — **only if
