@@ -42,7 +42,7 @@ rules:
   # phrasings reach steering — "go build", "can you build", "i need you to build",
   # "now finish", "please fix". Without this, only a bare first-word verb matched
   # and everything else fell into the gagged convo profile (1 iteration, no work)
-  # where the agent narrates/confabulates instead of doing. (operator fix 2026-06-10)
+  # where the agent narrates instead of doing.
   - id: steering_imperative_build
     classification: steering
     when:
@@ -81,7 +81,7 @@ rules:
 
   # Work-STATUS questions → steering, so the agent VERIFIES with tools instead of
   # confabulating (it lied about a browser tool because gagged convo had no tools
-  # to check with). (operator fix 2026-06-10)
+  # to check with).
   - id: steering_work_blocker
     classification: steering
     when:
