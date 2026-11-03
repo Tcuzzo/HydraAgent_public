@@ -21,7 +21,7 @@ from hydra.operator_auth import (
 
 
 def test_totp_secret_setup_writes_secret_outside_repo_with_private_mode(tmp_path: Path) -> None:
-    auth = OperatorAuth(auth_dir=tmp_path, hostname="DUDE")
+    auth = OperatorAuth(auth_dir=tmp_path, hostname="example-host")
 
     setup = auth.setup_totp(now=1000.0, force=True)
 
@@ -32,9 +32,9 @@ def test_totp_secret_setup_writes_secret_outside_repo_with_private_mode(tmp_path
     raw = json.loads(secret_path.read_text(encoding="utf-8"))
     assert raw["schema"] == SECRET_SCHEMA
     assert raw["issuer"] == "HydraAgent"
-    assert raw["account"] == "operator@DUDE"
+    assert raw["account"] == "operator@example-host"
     assert raw["secret_base32"] == setup.secret_base32
-    assert setup.provisioning_uri.startswith("otpauth://totp/HydraAgent%3Aoperator%40DUDE?")
+    assert setup.provisioning_uri.startswith("otpauth://totp/HydraAgent%3Aoperator%40example-host?")
     assert "secret=" in setup.provisioning_uri
     assert not state_path.exists()
 
@@ -50,7 +50,7 @@ def test_totp_generation_verifies_current_and_adjacent_window() -> None:
 
 
 def test_yolo_unlock_is_single_scope_for_local_and_network_and_idle_expires(tmp_path: Path) -> None:
-    auth = OperatorAuth(auth_dir=tmp_path, hostname="DUDE")
+    auth = OperatorAuth(auth_dir=tmp_path, hostname="example-host")
     setup = auth.setup_totp(now=1000.0, force=True)
     code = generate_totp(setup.secret_base32, for_time=1010.0)
 
@@ -71,7 +71,7 @@ def test_yolo_unlock_is_single_scope_for_local_and_network_and_idle_expires(tmp_
 
 
 def test_operator_activity_extends_yolo_idle_window(tmp_path: Path) -> None:
-    auth = OperatorAuth(auth_dir=tmp_path, hostname="DUDE")
+    auth = OperatorAuth(auth_dir=tmp_path, hostname="example-host")
     setup = auth.setup_totp(now=1000.0, force=True)
     auth.unlock_yolo(generate_totp(setup.secret_base32, for_time=1005.0), now=1005.0)
 
@@ -82,7 +82,7 @@ def test_operator_activity_extends_yolo_idle_window(tmp_path: Path) -> None:
 
 
 def test_extension_nonce_can_extend_yolo_without_second_totp(tmp_path: Path) -> None:
-    auth = OperatorAuth(auth_dir=tmp_path, hostname="DUDE")
+    auth = OperatorAuth(auth_dir=tmp_path, hostname="example-host")
     setup = auth.setup_totp(now=1000.0, force=True)
     auth.unlock_yolo(generate_totp(setup.secret_base32, for_time=1005.0), now=1005.0)
     poll = auth.prepare_extension_poll(now=4450.0)
@@ -95,9 +95,9 @@ def test_extension_nonce_can_extend_yolo_without_second_totp(tmp_path: Path) -> 
 
 
 def test_provisioning_uri_is_google_authenticator_compatible() -> None:
-    uri = provisioning_uri("JBSWY3DPEHPK3PXP", issuer="HydraAgent", account="operator@DUDE")
+    uri = provisioning_uri("JBSWY3DPEHPK3PXP", issuer="HydraAgent", account="operator@example-host")
 
-    assert uri.startswith("otpauth://totp/HydraAgent%3Aoperator%40DUDE?")
+    assert uri.startswith("otpauth://totp/HydraAgent%3Aoperator%40example-host?")
     assert "issuer=HydraAgent" in uri
     assert "digits=6" in uri
     assert "period=30" in uri
@@ -163,7 +163,7 @@ def test_totp_secret_write_restricts_the_acl_on_windows(
     monkeypatch.setattr(operator_auth, "_IS_WINDOWS", True)
     monkeypatch.setattr(operator_auth.subprocess, "run", fake_run)
 
-    auth = OperatorAuth(auth_dir=tmp_path, hostname="DUDE")
+    auth = OperatorAuth(auth_dir=tmp_path, hostname="example-host")
     auth.setup_totp(now=1000.0, force=True)
 
     secret_path = tmp_path / "totp.json"
@@ -191,7 +191,7 @@ def test_totp_secret_write_fails_loudly_when_the_acl_cannot_be_applied(
     monkeypatch.setattr(operator_auth, "_IS_WINDOWS", True)
     monkeypatch.setattr(operator_auth.subprocess, "run", fake_run)
 
-    auth = OperatorAuth(auth_dir=tmp_path, hostname="DUDE")
+    auth = OperatorAuth(auth_dir=tmp_path, hostname="example-host")
     with pytest.raises(OperatorAuthError, match="refusing to leave"):
         auth.setup_totp(now=1000.0, force=True)
 
@@ -204,7 +204,7 @@ def test_totp_secret_is_never_world_readable_even_under_a_permissive_umask(
         pytest.skip("POSIX umask semantics; the Windows ACL path is covered above")
     previous = os.umask(0o000)
     try:
-        auth = OperatorAuth(auth_dir=tmp_path, hostname="DUDE")
+        auth = OperatorAuth(auth_dir=tmp_path, hostname="example-host")
         auth.setup_totp(now=1000.0, force=True)
     finally:
         os.umask(previous)

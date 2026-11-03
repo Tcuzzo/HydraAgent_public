@@ -23,7 +23,7 @@ def test_auth_extension_markup_uses_separate_namespace() -> None:
 
 
 def test_auth_extension_callback_extends_yolo_window(tmp_path: Path) -> None:
-    auth = OperatorAuth(auth_dir=tmp_path, hostname="DUDE")
+    auth = OperatorAuth(auth_dir=tmp_path, hostname="example-host")
     setup = auth.setup_totp(now=1000.0, force=True)
     auth.unlock_yolo(generate_totp(setup.secret_base32, for_time=1005.0), now=1005.0)
     poll = auth.prepare_extension_poll(now=4450.0)
