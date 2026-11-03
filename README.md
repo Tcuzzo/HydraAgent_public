@@ -52,7 +52,7 @@ hydra setup --mode local --model qwen3:8b --non-interactive
 hydra ask "Explain this project's entry point" --provider ollama --model qwen3:8b --approval-policy deny
 ```
 
-That model is an example; choose one that fits your hardware and supports the tasks you need. Run `hydra models --provider ollama` to inspect installed models. See [QUICKSTART.md](QUICKSTART.md) for development installation and first-run checks.
+That model is an example; choose one that fits your hardware and supports the tasks you need. Run `hydra models --provider ollama` to inspect installed models. See [What you need](QUICKSTART.md#what-you-need) for the required install, optional pieces, and which skips are expected.
 
 ## Personal orchestration preview
 
@@ -158,7 +158,7 @@ use a Linux environment for confined worker verification.
 | Configure and train local models | [Models](docs/MODELS.md) · [Training](docs/TRAINING.md) |
 | Build and review a full-stack application | [Full-stack workflow for Hydra and BACKS](docs/FULLSTACK-WORKFLOW.md) |
 | Understand platform differences | [Platform notes](docs/PLATFORM-NOTES.md) |
-| Develop and run tests | [Quickstart](QUICKSTART.md) |
+| Develop and run tests | [Quickstart](QUICKSTART.md#what-you-need) |
 | Report a vulnerability | [Security policy](SECURITY.md) |
 
 Hydra's public edition includes the coding-agent runtime and public skill library. See [PROVENANCE.md](PROVENANCE.md) and [NOTICE.md](NOTICE.md) for origins and third-party notices.
