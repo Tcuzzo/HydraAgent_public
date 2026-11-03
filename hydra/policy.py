@@ -51,6 +51,21 @@ def is_risky_tool(tool_name: str) -> bool:
     return tool_name in RISKY_TOOLS
 
 
+_UI_APPROVAL: Callable[[str], str] | None = None
+
+
+def set_ui_approval(fn: Callable[[str], str] | None) -> None:
+    """Install the TUI approval prompt. None restores the policy's input_fn."""
+    global _UI_APPROVAL
+    _UI_APPROVAL = fn
+
+
+def _prompt_approval(policy: "ApprovalPolicy", summary: str) -> str:
+    if _UI_APPROVAL is not None:
+        return _UI_APPROVAL(summary)
+    return policy.input_fn(f"Approve {summary}? [y/N] ")
+
+
 @dataclass
 class ApprovalPolicy:
     """Decide whether a tool call may run.
@@ -197,7 +212,9 @@ class ApprovalPolicy:
         if autonomy["decision"] == "blocked":
             raise ApprovalDenied(f"approval denied for {_summarize(tool_name, arguments)}")
         summary = _summarize(tool_name, arguments)
-        if not self.stdin_is_tty():
+        if getattr(self, "_session_always", False):
+            return
+        if not self.stdin_is_tty() and _UI_APPROVAL is None:
             request_id = self._queue_approval(tool_name, arguments, summary, mission_level=mission_level)
             # Re-execution seam: block for the operator's decision and resolve it.
             self._resolve_or_raise(
@@ -206,7 +223,10 @@ class ApprovalPolicy:
                 queued_message=f"approval queued for {summary}: {request_id}",
             )
             return
-        answer = self.input_fn(f"Approve {summary}? [y/N] ").strip().lower()
+        answer = _prompt_approval(self, summary).strip().lower()
+        if answer in {"a", "always"}:
+            self._session_always = True
+            answer = "y"
         if answer not in {"y", "yes"}:
             raise ApprovalDenied(f"approval denied for {summary}")
         self.output_fn(f"approved: {summary}")

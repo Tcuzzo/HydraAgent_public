@@ -5,6 +5,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -38,6 +39,23 @@ from hydra.cli.cmd_chat import (
 
 
 DEFAULT_ASK_MAX_ITERATIONS = 20
+
+
+def _auth_rejection_message(provider: str, error: LlmError) -> str | None:
+    """A bad or missing key is not a reason to try another model."""
+    kind = getattr(error, "kind", "")
+    status = getattr(error, "status_code", None)
+    text = str(error)
+    lowered = text.lower()
+    key_words = ("api key", "api_key", "authorization", "unauthor", "forbidden", "invalid key")
+    auth = kind in {"authentication", "permission"} or status in {401, 403}
+    if status == 400 and any(word in lowered for word in key_words):
+        auth = True
+    if not auth:
+        return None
+    key_var = re.sub(r"[^A-Za-z0-9]", "_", str(provider or "provider")).upper() + "_API_KEY"
+    summary = text.splitlines()[0][:240]
+    return f"{provider} rejected the API key ({summary}). Check {key_var}."
 
 
 def _budgeted(client, provider: str, model: str, prompt: str) -> AnswerBudgetClient:
@@ -269,6 +287,10 @@ def cmd_ask(args: argparse.Namespace) -> int:
             print(f"ask error: {e}", file=sys.stderr)
             return 2
         except LlmError as e:
+            auth_message = _auth_rejection_message(args.provider, e)
+            if auth_message:
+                print(auth_message, file=sys.stderr)
+                return 1
             if attempted_local_fallback or is_local_provider(args.provider):
                 print(f"LLM error: {e}", file=sys.stderr)
                 return 1
@@ -279,10 +301,17 @@ def cmd_ask(args: argparse.Namespace) -> int:
             client, cfg = fallback
             failed_provider = args.provider
             args.provider = cfg.name
-            # The explicit --model named the failed provider's model; the local
-            # server answers with its own configured model.
-            args.model = cfg.model or args.model
-            model = args.model
+            # The local server answers with its own model. Never reuse an empty
+            # or cloud model name.
+            model = str(getattr(cfg, "model", "") or "").strip()
+            if not model:
+                print(
+                    f"API failure on {failed_provider}. Local fallback has no model configured, "
+                    "so Hydra will not call an empty model.",
+                    file=sys.stderr,
+                )
+                return 1
+            args.model = model
             reason = str(e).splitlines()[0][:160] if str(e) else type(e).__name__
             print(
                 f"API failure on {failed_provider} ({reason}). Falling back to local GPU provider {cfg.name}/{model}.",

@@ -5,6 +5,7 @@ OSV response parsing, diagnosis, summary, and the upgrade command.
 """
 from __future__ import annotations
 
+import json
 import sys
 
 from hydra.doctor import (
@@ -139,3 +140,69 @@ def test_packages_to_fix_picks_outdated_and_vulnerable_only():
         DepReport("missing", None, "1.0.0"),                # not installed -> skip
     ]
     assert packages_to_fix(reports) == ["old", "vuln"]
+
+
+def test_decision_configuration_names_tiers_and_hides_secrets(monkeypatch):
+    from hydra.decision_ladder import jev_key_name
+    from hydra.doctor import decision_configuration
+
+    monkeypatch.setenv("HYDRA_BACKS_URL", "http://backs.example")
+    monkeypatch.setenv("HYDRA_JEV_MODEL", "from-env")
+    monkeypatch.setenv(jev_key_name(), "secret-value")
+    monkeypatch.setenv("HYDRA_LAYA_MODEL", "local-checkpoint")
+    monkeypatch.delenv("HYDRA_VISION_MODEL", raising=False)
+    monkeypatch.delenv("HYDRA_TEXT_DECISION_MODEL", raising=False)
+    monkeypatch.delenv("HYDRA_LIVE_KEY", raising=False)
+    report = decision_configuration()
+    assert report["paid_calls"] is False
+    assert report["backs"] == "set"
+    assert report["jev_key"] == "set"
+    assert report["jev_model"] == "set"
+    assert report["laya_model"] == "set"
+    assert report["vision_model"] == "unset"
+    assert report["tiers"] == {
+        "llm": "llm_decision",
+        "vision": "vision_decision",
+        "text": "text_decision",
+    }
+    assert report["live_provider"] == "duckduckgo"
+    blob = json.dumps(report)
+    assert "secret-value" not in blob
+    assert "from-env" not in blob
+    assert "local-checkpoint" not in blob
+
+
+def test_doctor_command_prints_rungs_without_a_paid_call(capsys, monkeypatch):
+    from argparse import Namespace
+
+    from hydra.cli.cmd_doctor import cmd_doctor
+
+    monkeypatch.setattr("hydra.doctor.diagnose", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        "hydra.doctor.summarize",
+        lambda reports: {"total": 0, "outdated": 0, "vulnerable": 0, "missing": 0},
+    )
+    monkeypatch.setattr("hydra.doctor.packages_to_fix", lambda reports: [])
+    rc = cmd_doctor(Namespace(fix=False, no_pip=True, timeout=1, format="text"))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "llm_decision" in out
+    assert "vision_decision" in out
+    assert "text_decision" in out
+    assert "no paid call" in out.lower()
+
+
+def test_doctor_rungs_skips_package_lookups(capsys, monkeypatch):
+    from argparse import Namespace
+
+    from hydra.cli.cmd_doctor import cmd_doctor
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("package lookup")
+
+    monkeypatch.setattr("hydra.doctor.diagnose", boom)
+    rc = cmd_doctor(Namespace(fix=False, no_pip=True, timeout=1, format="text", rungs=True))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "llm_decision" in out
+    assert "no paid call" in out.lower()

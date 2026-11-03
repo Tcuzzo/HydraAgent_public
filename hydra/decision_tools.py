@@ -13,6 +13,24 @@ def laya_decide(state, questions):
             'result': LayaDecisionClient().predict(state, questions, timeout=60)}
 
 
+def vision_decide(claim, image, instructions, kind="yes_no"):
+    from hydra.decision_ladder import decide
+    return decide(
+        {"type": kind, "instructions": instructions, "claim": claim},
+        tier="vision",
+        image=image,
+        claim=claim,
+    )
+
+
+def text_decide(text, instructions, kind="classify", labels=None):
+    from hydra.decision_ladder import decide
+    return decide(
+        {"type": kind, "instructions": instructions, "text": text, "labels": list(labels or [])},
+        tier="text",
+    )
+
+
 def needle_select(query, candidates, tools):
     from hydra.llm import ChatMessage
     from hydra.needle_client import NeedleClient

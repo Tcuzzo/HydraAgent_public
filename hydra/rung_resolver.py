@@ -103,7 +103,9 @@ def backs_url(env_dir: str | Path | None = None) -> str:
 
 
 def _get(url: str, timeout: float) -> Any:
-    req = urllib.request.Request(url, headers={"User-Agent": OllamaClient._USER_AGENT})
+    from hydra.http_identity import user_agent
+
+    req = urllib.request.Request(url, headers={"User-Agent": user_agent()})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
@@ -117,9 +119,11 @@ def _get(url: str, timeout: float) -> Any:
 
 def _post(url: str, body: dict, timeout: float) -> tuple[int, Any]:
     """POST JSON; returns (status, body). Only an unreachable host raises."""
+    from hydra.http_identity import user_agent
+
     req = urllib.request.Request(
         url, data=json.dumps(body).encode("utf-8"), method="POST",
-        headers={"User-Agent": OllamaClient._USER_AGENT, "Content-Type": "application/json"},
+        headers={"User-Agent": user_agent(), "Content-Type": "application/json"},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -233,7 +237,10 @@ def resolve(rung: str, *, local: bool = False, task: str | None = None, env_dir:
             model = _ladder_model(rung, get(f"{backs_url(env_dir)}/api/system/needle_engineer_rungs", timeout))
         except RungResolutionError as exc:
             why = "BACKS unreachable"
-            _LOG.warning("rung %s: BACKS ladder unreachable (%s); asking the local GPU", rung, exc)
+            if os.environ.get("HYDRA_DEBUG") == "1":
+                _LOG.warning("rung %s: BACKS ladder unreachable (%s); asking the local GPU", rung, exc)
+            else:
+                _LOG.debug("rung %s: BACKS ladder unreachable (%s); asking the local GPU", rung, exc)
         if model:
             _LOG.info("rung %s -> BACKS ladder -> local GPU model %s", rung, model)
             return LOCAL, model
