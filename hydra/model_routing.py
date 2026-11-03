@@ -204,10 +204,14 @@ class ModelRouting:
 
     # ── policy helpers (the public surface the hardcode sites read) ──────────
     def chat_default(self, profile: str) -> tuple[str, str]:
-        """(provider, model) for a chat profile (auto/cloud/local)."""
+        """(provider, model) for a chat profile named in the routing file.
+
+        An unknown profile is an error. There is no silent fallback.
+        """
         roster_id = self.chat_profiles.get(profile)
         if roster_id is None:
-            roster_id = self.chat_profiles["auto"]
+            known = ", ".join(sorted(self.chat_profiles))
+            raise ValueError(f"unknown profile {profile!r}; choose one of: {known}")
         return self._pair(roster_id, "chat")
 
     def worker_default(self) -> tuple[str, str]:
