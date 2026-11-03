@@ -94,8 +94,9 @@ path skill carries it as a named route. Five steps:
 2. `git push origin <branch>` — branch lands on the shared remote.
 3. `bash scripts/sync_github_main.sh --source-ref <branch>` — the operator's
    promotion organ. Scrubs, publishes, advances `refs/backs/proven/production`.
-4. Rebuild + restart: `npm run build` + `systemctl restart jarvis-frontend.service`
-   for FE; `bash scripts/restart_jarvis_services.sh backend` for BE.
+4. Rebuild + restart is operator-only: agents never run the service-restart
+   script or `systemctl`. Hand the operator the built artifact and the exact
+   restart step from their runbook, then wait for their go.
 5. Live-prove on the operator's own surface.
 
 Forbidden paths the harness guard refuses (do not pursue): `git update-ref HEAD`,

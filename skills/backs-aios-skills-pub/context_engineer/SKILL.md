@@ -1,23 +1,17 @@
 ---
-skill_id: context-engineer
 name: context-engineer
 description: Use when a task needs missing execution context reconstructed from repository state, traces, constraints, and operator intent, or a concise handoff to another worker.
 license: Apache-2.0
-preferred_mode: direct
-tags:
-- backs-native
-- context-engineer
-allowed-tools:
-- sys.read_file
-- sys.bash
-- sys.write_file
+allowed-tools: "sys.read_file sys.bash sys.write_file"
 metadata:
   backs_tier: native
   upstream_package: backs-aios
   upstream_version: 0.8.5+codex.20260908213642
-  upstream_sources:
-    skills/context-engineer/SKILL.md: 769329c1f32f74c6e7d018f0aa17d93d7cacf859b4fdc5ec8e0561a2008687dc
+  upstream_sources: "{\"skills/context-engineer/SKILL.md\": \"769329c1f32f74c6e7d018f0aa17d93d7cacf859b4fdc5ec8e0561a2008687dc\"}"
   adaptation: Selective native reconstruction; current CLAUDE.md and operator scope override portable runtime restrictions; reviewed relative links bind native files.
+  skill_id: "context-engineer"
+  preferred_mode: "direct"
+  tags: "backs-native, context-engineer"
 ---
 
 ## Native execution binding

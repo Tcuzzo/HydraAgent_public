@@ -1,6 +1,6 @@
 ---
 name: harness-optimizer
-description: Improve an evaluation or agent harness through bounded baseline-versus-candidate measurements, holdouts, leakage checks, and durable evidence without benchmark overfitting.
+description: Use when an evaluation or agent harness needs improving. Improve it through bounded baseline-versus-candidate measurements, holdouts, leakage checks, and durable evidence without benchmark overfitting.
 license: Apache-2.0
 ---
 
