@@ -17,6 +17,15 @@ schema: hydra.model_routing.v2
 reflex:
   rung: reflex
 
+# Typed decision tiers. Rung names only; the ladder resolves each one at call time.
+decisions:
+  llm:
+    rung: llm_decision
+  vision:
+    rung: vision_decision
+  text:
+    rung: text_decision
+
 roster:
   # Conversation brain: drives chat and calls tools.
   - id: cloud-doer

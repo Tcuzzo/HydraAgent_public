@@ -5,6 +5,7 @@ import datetime as _dt
 import difflib
 import ipaddress
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -161,6 +162,15 @@ def write_session_file(
     return packet
 
 
+def _benchmark_range_allowed() -> bool:
+    if os.environ.get("HYDRA_FETCH_ALLOW_FAKEIP", "").strip() == "1":
+        return True
+    for name in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
+        if os.environ.get(name, "").strip():
+            return True
+    return False
+
+
 def _is_ip_allowed(host: str) -> tuple[bool, str | None]:
     """Check if a host resolves to allowed (public) IPs only.
     
@@ -181,6 +191,15 @@ def _is_ip_allowed(host: str) -> tuple[bool, str | None]:
         except ValueError:
             continue
         
+        # 198.18.0.0/15 is the RFC 2544 benchmark range. Python marks it private.
+        # Proxy and fake-IP DNS (common on VMs) use it for every public name.
+        if isinstance(ip, ipaddress.IPv4Address) and ip in ipaddress.ip_network("198.18.0.0/15"):
+            if _benchmark_range_allowed():
+                continue
+            return False, (
+                f"benchmark/fake-IP range {ip_str}. Set HYDRA_FETCH_ALLOW_FAKEIP=1 "
+                "or configure HTTP_PROXY/HTTPS_PROXY when a proxy answers public names."
+            )
         # Check for private/internal ranges
         if ip.is_loopback:
             return False, f"loopback address {ip_str}"
@@ -221,7 +240,9 @@ def fetch_session_url(
     session = session_status(env_root, session_id)
     if not isinstance(url, str) or not url.startswith(("http://", "https://")):
         raise EnvironmentError("url must start with http:// or https://")
-    request = urllib.request.Request(url, headers={"User-Agent": "HydraAgent/1.0"})
+    from hydra.http_identity import attribution_headers
+
+    request = urllib.request.Request(url, headers=attribution_headers())
     with open_checked(request, validate=validate, timeout=timeout_seconds) as response:
         raw = response.read(max_chars + 1)
         text = raw[:max_chars].decode("utf-8", errors="replace")

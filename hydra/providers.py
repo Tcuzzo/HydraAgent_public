@@ -102,6 +102,14 @@ _BUILTINS: dict[str, _ProviderSpec] = {
         model_default="",
         requires_key=False,
     ),
+    # Direct typed-decision transport. The model id is never stored here.
+    "openrouter": _ProviderSpec(
+        name="openrouter",
+        env_file=".env.openrouter",
+        endpoint_default="https://openrouter.ai/api/v1",
+        model_default="",
+        requires_key=True,
+    ),
 }
 
 _PROVIDER_ALIASES: dict[str, str] = {
@@ -210,6 +218,14 @@ def _lookup_env_value(env: dict[str, str], key: str) -> str | None:
         if candidate in os.environ and os.environ[candidate]:
             return os.environ[candidate]
     return None
+
+
+def jev_base_url() -> str:
+    """OpenAI-compatible origin for a direct typed decision. Env override wins."""
+    override = os.environ.get("HYDRA_JEV_BASE_URL", "").strip()
+    if override:
+        return override.rstrip("/")
+    return _BUILTINS["openrouter"].endpoint_default.rstrip("/")
 
 
 def list_providers() -> list[str]:

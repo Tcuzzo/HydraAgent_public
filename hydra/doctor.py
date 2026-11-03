@@ -112,10 +112,12 @@ def installed_version(name: str) -> str | None:
 
 
 def _http_json(url: str, *, data: bytes | None = None, timeout: float = 10.0):
+    from hydra.http_identity import attribution_headers
+
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Accept": "application/json", "User-Agent": "hydra-doctor"},
+        headers={"Accept": "application/json", **attribution_headers()},
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 (fixed hosts)
         return json.loads(resp.read().decode("utf-8"))
@@ -146,6 +148,36 @@ _FALLBACK_DEPENDENCIES = (
     "jsonschema", "prompt_toolkit", "psutil", "pyfiglet",
     "qrcode", "rich", "textual", "pyyaml", "packaging",
 )
+
+
+def decision_configuration(env: dict | None = None) -> dict:
+    """Which decision rungs are configured. Reads env only; places no paid call."""
+    import os
+
+    from hydra.decision_ladder import backs_origin, jev_key_name, tier_rung
+
+    source = env if env is not None else os.environ
+
+    def flag(name: str) -> str:
+        return "set" if str(source.get(name, "")).strip() else "unset"
+
+    backs = "set" if flag("HYDRA_BACKS_URL") == "set" or flag("BACKS_ENDPOINT") == "set" else "unset"
+    if backs == "unset" and env is None and backs_origin():
+        backs = "set"
+    return {
+        "paid_calls": False,
+        "backs": backs,
+        "kev_model": flag("HYDRA_KEV_MODEL"),
+        "laya_model": flag("HYDRA_LAYA_MODEL"),
+        "llm_decision_model": flag("HYDRA_LLM_DECISION_MODEL"),
+        "vision_model": flag("HYDRA_VISION_MODEL"),
+        "text_decision_model": flag("HYDRA_TEXT_DECISION_MODEL"),
+        "jev_key": flag(jev_key_name()),
+        "jev_model": flag("HYDRA_JEV_MODEL"),
+        "tiers": {name: tier_rung(name) for name in ("llm", "vision", "text")},
+        "live_provider": str(source.get("HYDRA_LIVE_PROVIDER", "")).strip() or "duckduckgo",
+        "live_key": flag("HYDRA_LIVE_KEY"),
+    }
 
 
 def hydra_dependency_names() -> list[str]:

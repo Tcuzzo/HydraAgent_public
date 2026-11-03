@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -51,7 +52,7 @@ _LOG = logging.getLogger(__name__)
 # a JSON record is appended here so the operator can see it and the self-audit
 # can read it. Path is module-level so tests can monkeypatch it.
 SELF_AUDIT_LOG_PATH: str = str(
-    Path(__file__).resolve().parent.parent / ".hydra_self_audit.jsonl"
+    Path.home() / ".hydraAgent" / "state" / "self_audit.jsonl"
 )
 
 # ── Ollama base URL (module-level so tests can monkeypatch) ───────────────────
@@ -177,7 +178,10 @@ def resolve_work_model(kind: str) -> tuple[str, str] | None:
         entry = routing.entry(roster_id)
         return entry.as_pair()
     except Exception as exc:  # unknown id, bad YAML — never crash the turn
-        _LOG.warning("work executor roster id %r unresolved (%s)", roster_id, exc)
+        if os.environ.get("HYDRA_DEBUG") == "1":
+            _LOG.warning("work executor roster id %r unresolved (%s)", roster_id, exc)
+        else:
+            _LOG.debug("work executor roster id %r unresolved (%s)", roster_id, exc)
         return None
 
 

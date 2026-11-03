@@ -135,6 +135,8 @@ def resolve_route(rung: str) -> str:
     """Resolve the reflex rung to a route token. Failure raises ReflexUnavailable."""
     if not str(rung or "").strip():
         raise ReflexUnavailable("reflex rung name is empty")
+    route = ""
+    error: Exception | None = None
     try:
         from hydra.rung_resolver import resolve
 
@@ -142,18 +144,56 @@ def resolve_route(rung: str) -> str:
     except ReflexUnavailable:
         raise
     except Exception as exc:
-        raise ReflexUnavailable(str(exc)) from exc
+        error = exc
     if not isinstance(route, str) or not route.strip() or _MODEL_TAG.search(route):
-        raise ReflexUnavailable("reflex route is not a rung route")
+        from hydra.decision_ladder import configured_steps
+
+        if not configured_steps("llm"):
+            raise ReflexUnavailable(str(error or "reflex route is not a rung route"))
+        route = f"router/decide/{rung}"
     return route
 
 
 def default_decider(*, prompt: str, hint: dict[str, Any] | None, rung: str, route: str) -> dict[str, Any]:
-    """Ask the installed decision client. With none installed, the rung is unavailable."""
-    if _DECISION_CLIENT is None:
-        raise ReflexUnavailable(f"reflex decision client is not configured for rung {rung}")
-    raw = _DECISION_CLIENT(prompt=prompt, hint=hint, rung=rung, route=route)
-    return validate_decision(raw)
+    """Ask the installed client, or the decision ladder's llm tier."""
+    if _DECISION_CLIENT is not None:
+        raw = _DECISION_CLIENT(prompt=prompt, hint=hint, rung=rung, route=route)
+        return validate_decision(raw)
+    from hydra.decision_ladder import DecisionError, decide
+
+    question = {
+        "type": "choice",
+        "instructions": (
+            "Decide the next reflex action before any further model loop. "
+            "Return JSON with keys schema, next_tool, done, retry, escalate, and reason. "
+            "Choose exactly one of next_tool, done, retry, or escalate. "
+            "Use next_tool vision_decide when an image claim must be checked. "
+            "Use next_tool text_decide when structured output must be classified or validated. "
+            "Use next_tool live_research when the task depends on facts that may be stale."
+        ),
+        "criteria": {
+            "done": "the turn is finished",
+            "retry": "repeat the last step once",
+            "escalate": "the full model loop is required",
+            "stop": "stop without a tool and without another model loop",
+        },
+        "prompt": prompt,
+        "hint": hint,
+        "route": route,
+    }
+    try:
+        receipt = decide(question, tier="llm")
+    except DecisionError as exc:
+        raise ReflexUnavailable(str(exc)) from exc
+    answer = receipt.get("answer")
+    if isinstance(answer, str):
+        answer = json.loads(answer)
+    if isinstance(answer, dict) and "schema" not in answer and isinstance(answer.get("text"), str):
+        try:
+            answer = json.loads(answer["text"])
+        except json.JSONDecodeError:
+            pass
+    return validate_decision(answer)
 
 
 def run_turn(

@@ -53,8 +53,9 @@ def _startup_self_audit() -> None:
             )
         else:
             ids = [v.check_id for v in report.violations]
-            _LOG.warning(
-                "hydra startup self-audit FAILED — %d violation(s): %s",
+            log = _LOG.warning if os.environ.get("HYDRA_DEBUG") == "1" else _LOG.debug
+            log(
+                "hydra startup self-audit: %d optional check(s) not green: %s",
                 len(report.violations),
                 ids,
             )
@@ -602,6 +603,8 @@ class EliteTUI:
             initial_messages=self._chat_messages,
             notify_telegram=self._notify_telegram,
         )
+        app._rebind_tools = getattr(self, "_rebind_for_app", None)
+        app._switch_profile = getattr(self, "_switch_profile_for_app", None)
         app.run(mouse=False)
         # Terminal is restored at this point — safe to re-exec if /restart was used.
         app.maybe_reexec()
@@ -660,6 +663,9 @@ class EliteTUI:
                     return
                 if stripped == "/help":
                     self._print_help()
+                    continue
+                if stripped.lower().startswith("/live"):
+                    self._cmd_live(stripped)
                     continue
                 if stripped.startswith("/skills"):
                     query = stripped[len("/skills"):].strip() or None
@@ -933,6 +939,9 @@ class EliteTUI:
                 transient=True,
             ) as live:
                 self._live_status = live
+                from hydra.policy import set_ui_approval
+
+                set_ui_approval(self._approval_input)
                 try:
                     result: LoopResult = active_loop.run(
                         user_input,
@@ -945,6 +954,7 @@ class EliteTUI:
                         on_step=self._on_step,
                     )
                 finally:
+                    set_ui_approval(None)
                     self._live_status = None
         else:
             result = active_loop.run(
@@ -1121,6 +1131,23 @@ class EliteTUI:
 
         self._write_trace_turn_text(user_input, final)
         return final
+
+    def _approval_input(self, summary: str) -> str:
+        """Pause the spinner so the [y/N] prompt is not painted over."""
+        live = self._live_status
+        if live is not None:
+            try:
+                live.stop()
+            except Exception:
+                live = None
+        try:
+            return input(f"Approve {summary}? [y/N] ")
+        finally:
+            if live is not None:
+                try:
+                    live.start()
+                except Exception:
+                    pass
 
     def _render_status(self):
         """Build a live-updating status renderable shown during agent work."""
@@ -1587,6 +1614,31 @@ class EliteTUI:
             tbl.add_row(label, _format_envelope_value(value))
         self.console.print(tbl)
 
+    def _cmd_live(self, text: str) -> None:
+        """Show citations, then feed them into the next reasoning turn."""
+        query = text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) > 1 else ""
+        if not query:
+            self.console.print("[yellow]usage: /live <question>[/yellow]")
+            return
+        from hydra.live_research import LiveResearchError, research
+
+        try:
+            packet = research(query)
+        except LiveResearchError as exc:
+            self.console.print(f"[red]{exc}[/red]")
+            return
+        self.console.print(packet["reasoning_context"])
+        prompt = (
+            "Use these live research sources when you answer. Cite them.\n\n"
+            + packet["reasoning_context"]
+            + "\n\nQuestion: "
+            + query
+        )
+        try:
+            self._stream_turn(prompt)
+        except Exception as exc:  # noqa: BLE001 - the citations were already shown
+            self.console.print(f"[bold red]Turn error:[/bold red] {exc}")
+
     def _print_help(self) -> None:
         commands = [
             ("/skills [query]",                "Browse 1400+ skill library"),
@@ -1603,6 +1655,7 @@ class EliteTUI:
             ("/setup",                         "Connect or switch your AI model"),
             ("/skill NAME",                    "Load a trusted skill into context"),
             ("/clear",                         "Clear screen"),
+            ("/live QUESTION",                 "Web search with citations, then reason over the sources"),
             ("/help",                          "Show this help"),
             ("/exit  /quit  stop",             "Leave the REPL"),
         ]

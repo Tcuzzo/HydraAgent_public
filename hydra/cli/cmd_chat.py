@@ -129,7 +129,9 @@ DEFAULT_SYSTEM_PROMPT = (
     "success on belief alone. "
     "You do not give up. If the first approach fails, diagnose and try another. "
     "When a task is done, confirm it plainly in one or two sentences. "
-    "Speak like a senior engineer who cares about getting things right — warm, direct, no filler."
+    "Speak like a senior engineer who cares about getting things right — warm, direct, no filler. "
+    "When the question depends on recent facts, news, prices, versions, or anything that may be stale, "
+    "call live_research before you answer and cite the sources it returns."
 )
 
 HYDRA_CONFIG = REPO_ROOT / ".hydraAgent" / "hydra.yaml"
@@ -741,7 +743,10 @@ def cmd_chat(args: argparse.Namespace) -> int:
             # Vector memory is optional -- recall falls back to keyword search --
             # so this stays non-fatal at startup. But the operator must be TOLD
             # the vector lane is off, and why: a silent degrade is a hidden gate.
-            print(f"Hydra memory: vector lane OFF — {_exc}")
+            if os.environ.get("HYDRA_DEBUG") == "1":
+                print(f"Hydra memory: vector lane OFF — {_exc}")
+            else:
+                print("Hydra memory: keyword recall only.")
 
         probe = build_semantic_memory_context(
             "startup memory probe",
@@ -945,7 +950,25 @@ def cmd_chat(args: argparse.Namespace) -> int:
             return True
         return False
 
-    EliteTUI(
+    def _rebind_for_app(path: Path):
+        return _bind_tools(
+            path,
+            approval_policy=args.approval_policy,
+            memory_root=memory_root,
+            memory_workspace_root=path,
+            notify_telegram=True,
+        )
+
+    def _switch_profile_for_app(name: str):
+        args.profile = name
+        args.provider = None
+        switched = _resolve_chat_runtime(args)
+        args.provider = switched["provider"]
+        switched_client, switched_cfg = _make_client_or_setup(args)
+        switched_model = args.model or switched_cfg.model or switched["model"]
+        return switched_client, switched_cfg, switched_model, f"chat profile changed to: {switched['profile']}"
+
+    tui = EliteTUI(
         client=client,
         model=model,
         cfg=cfg,
@@ -966,7 +989,10 @@ def cmd_chat(args: argparse.Namespace) -> int:
         command_handler=_elite_command_handler,
         initial_request=getattr(args, "initial_request", None),
         notify_telegram=True,  # Enabled — callback infrastructure verified working
-    ).run()
+    )
+    tui._rebind_for_app = _rebind_for_app
+    tui._switch_profile_for_app = _switch_profile_for_app
+    tui.run()
     return 0
 
 
@@ -982,7 +1008,7 @@ def register_chat_commands(
         "chat",
         help="interactive session that runs the agent loop one prompt at a time",
         description=(
-            "Start an interactive Hydra session. Type stop to interrupt/exit. "
+            "Start an interactive Hydra session. /stop, /exit, or /quit leaves. "
             "Use /root PATH to re-scope filesystem tools. Conversation history persists."
         ),
     )
@@ -1000,7 +1026,7 @@ def register_chat_commands(
         action="store_true",
         help="prompt for local/cloud/Codex setup if provider config is missing",
     )
-    p_chat.add_argument("--root", default=None, help="filesystem scope (default: /)")
+    p_chat.add_argument("--root", default=None, help="filesystem scope (default: the current working directory)")
     p_chat.add_argument(
         "--memory-root",
         default=str(default_memory_root),

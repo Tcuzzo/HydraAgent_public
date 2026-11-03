@@ -133,6 +133,9 @@ Screen {
     border-bottom: heavy #ff2d95;
     padding: 0 1;
 }
+Screen.compact #header-band {
+    height: 1;
+}
 
 /* Chat fills all available space between header and input */
 #chat-stream {
@@ -406,7 +409,7 @@ def _load_vibe() -> str:
 
 
 def _augment_system_prompt(
-    base: str, *, workspace_root: Path, tool_names: list[str]
+    base: str, *, workspace_root: Path, tool_names: list[str], model: str = ""
 ) -> str:
     """Compose: VIBE.md + dynamic runtime context + base system prompt.
 
@@ -416,10 +419,17 @@ def _augment_system_prompt(
     """
     vibe = _load_vibe()
     tool_inventory = ", ".join(sorted(tool_names)) if tool_names else "(none)"
+    identity = (
+        "You are Hydra, the local agent in this terminal. "
+        "You are not a hosted vendor model and you do not claim to be one. "
+        f"The active model rung for this session is {model or 'unset'}.\n"
+    )
     runtime_block = (
         "\n\n═══ RUNTIME CONTEXT (system, dynamic per launch) ═══\n"
+        f"{identity}"
         f"workspace: {workspace_root}\n"
         f"tools ({len(tool_names)}): {tool_inventory}\n"
+        "Set HYDRA_REFLEX=1 to ask the decision tier before another model loop.\n"
         "═══════════════════════════════════════════════════════\n\n"
     )
     return (vibe + runtime_block + base) if vibe else (runtime_block + base)
@@ -484,10 +494,15 @@ class HydraApp(App[int]):
         # Inject workspace + toolkit context into the system prompt so the
         # agent always knows where it is and what it can do. Without this
         # the model asks 'what's the repo root?' every turn.
+        self._base_prompt = system_prompt
+        self._rebind_tools = None
+        self._switch_profile = None
+        self._approve_always = False
         self.system_prompt = _augment_system_prompt(
             system_prompt,
             workspace_root=self.workspace_root,
             tool_names=[t.name for t in tools],
+            model=model,
         )
 
         self._chat_messages: list[dict] = list(initial_messages or [])
@@ -598,6 +613,8 @@ class HydraApp(App[int]):
         yield Static(self._render_stat_bar(), id="stat-bar")
 
     async def on_mount(self) -> None:
+        self._install_approval_prompt()
+        self._apply_layout()
         chat = self.query_one("#chat-stream", RichLog)
         # Build the model line — always show BOTH chat and work models so the
         # operator can see at a glance the active chat model and work executor.
@@ -626,6 +643,12 @@ class HydraApp(App[int]):
             self._initial_request = None
             self._post_chat_line("user", req)
             self._submit_turn(req)
+
+    def on_unmount(self) -> None:
+        from hydra.policy import set_ui_approval
+
+        if getattr(self, "_approval_installed", False):
+            set_ui_approval(None)
 
     # ── Input handling ───────────────────────────────────────────────────
 
@@ -658,26 +681,27 @@ class HydraApp(App[int]):
         if auth_cmd.kind != "none":
             self._handle_auth(auth_cmd)
             return
-        # Slash commands handled inline
-        if text.lower() in {"/exit", "/quit", "stop"}:
+        # Slash commands handled inline. A bare word such as "stop" is a
+        # message to the agent, not an exit.
+        if text.lower() in {"/exit", "/quit", "/stop"}:
             self.exit(0)
             return
         if text == "/help":
             self._show_help()
             return
+        if text.lower().startswith("/live"):
+            self._cmd_live(text)
+            return
         if text == "/clear":
             self.action_clear_runtime()
-            return
-        if text == "/audit":
-            self._show_go("audit")
-            return
-        if text == "/capabilities":
-            self._show_go("capabilities")
             return
         if text == "/restart":
             self._do_restart()
             return
-        if self._on_command is not None and self._on_command(text):
+        if text.startswith("/"):
+            if self._handle_public_command(text):
+                return
+            self._post_log(f"unknown command {text.split()[0]}, try /help")
             return
         self._post_chat_line("user", text)
         # Fabric §5 step 1: classify before we route.
@@ -846,13 +870,7 @@ class HydraApp(App[int]):
         """AgentLoop step callback. Runs in worker thread — must marshal
         all UI writes to the main thread via call_from_thread."""
         if step.kind == "assistant":
-            content = (step.content or "").strip()
-            if content and not content.startswith('{"'):
-                preview = content[:120] + ("…" if len(content) > 120 else "")
-                self.call_from_thread(
-                    self._post_log,
-                    f"  [bright_cyan]│[/bright_cyan] [dim italic]{preview}[/dim italic]",
-                )
+            # The finished turn is posted once, as the Hydra line.
             return
 
         if step.kind != "tool_result":
@@ -871,7 +889,7 @@ class HydraApp(App[int]):
         if step.tool_error:
             markup = (
                 f"  [red]✗[/red] {icon} [bold]{tool_name}[/bold] "
-                f"[dim]›[/dim] [red]{step.tool_error[:60]}[/red]{duration_str}"
+                f"[dim]›[/dim] [red]{step.tool_error}[/red]{duration_str}"
             )
         else:
             markup = (
@@ -1072,19 +1090,189 @@ class HydraApp(App[int]):
                 return content
         return ""
 
+    def set_root(self, requested: str) -> str:
+        """Rescope filesystem tools and rebuild the agent loop."""
+        if not str(requested or "").strip():
+            return f"current root: {self.workspace_root}"
+        path = Path(requested).expanduser().resolve()
+        if not path.is_dir():
+            return f"workspace root is not a directory: {path}"
+        self.workspace_root = path
+        if self._rebind_tools is not None:
+            self.tools = list(self._rebind_tools(path))
+        self.system_prompt = _augment_system_prompt(
+            self._base_prompt,
+            workspace_root=path,
+            tool_names=[tool.name for tool in self.tools],
+            model=self.model,
+        )
+        self._agent_loop = AgentLoop(self.client, model=self.model, system_prompt=self.system_prompt)
+        return f"workspace root changed to: {path}"
+
+    def set_profile(self, name: str) -> str:
+        """Switch the chat profile when the launcher supplied a callback."""
+        if self._switch_profile is None:
+            return f"profile {name} is unavailable in this session"
+        try:
+            client, cfg, model, note = self._switch_profile(name)
+        except Exception as exc:  # noqa: BLE001 - the operator sees the provider error
+            return f"profile error: {exc}"
+        model = str(model or "").strip()
+        if not model:
+            return f"no model resolved for profile {name}"
+        self.client = client
+        self.cfg = cfg
+        self.model = model
+        self._provider_name = getattr(cfg, "name", "") or name
+        self._agent_loop = AgentLoop(self.client, model=model, system_prompt=self.system_prompt)
+        return str(note or f"chat profile changed to: {name}")
+
+    def _handle_public_command(self, text: str) -> bool:
+        head = text.split()[0].lower()
+        if head == "/root":
+            requested = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
+            self._post_log(self.set_root(requested))
+            return True
+        if head in {"/cloud", "/local"}:
+            self._post_log(self.set_profile(head[1:]))
+            return True
+        if head in {"/audit", "/capabilities"}:
+            self._post_log(self._python_surface(head[1:], text))
+            return True
+        captured = self._capture_command(text)
+        if captured is None:
+            return False
+        if captured:
+            self._post_log(captured)
+        return True
+
+    def _capture_command(self, text: str) -> str | None:
+        if self._on_command is None:
+            return None
+        import contextlib
+        import io
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            handled = bool(self._on_command(text))
+        if not handled:
+            return None
+        return buf.getvalue().strip()
+
+    def _python_surface(self, name: str, text: str) -> str:
+        if name == "audit":
+            from hydra.audit import run_audit
+
+            requested = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else str(self.workspace_root)
+            try:
+                result = run_audit(requested, root=self.workspace_root)
+            except Exception as exc:  # noqa: BLE001
+                return f"audit error: {exc}"
+            return result.report or f"audit status: {result.status}"
+        try:
+            from hydra.capability_cards import load_cards, render_card_list
+            from hydra.cli.cmd_chat import REPO_ROOT
+
+            cards = load_cards(REPO_ROOT / ".hydraAgent" / "capabilities")
+            return render_card_list(cards)
+        except Exception as exc:  # noqa: BLE001
+            return (
+                "capabilities: the Go helper is not shipped with this install. "
+                f"Python catalog: {exc}"
+            )
+
+    def _apply_layout(self) -> None:
+        compact = self.size.height < 30
+        if compact:
+            self.add_class("compact")
+        else:
+            self.remove_class("compact")
+        try:
+            header = self.query_one("#header-band", Static)
+            if compact:
+                header.update(f"HYDRA · {self.model} · {self._provider_name}")
+            else:
+                header.update(self._render_banner())
+        except (NoMatches, ScreenStackError):
+            pass
+        if self._follow_chat:
+            try:
+                self.query_one("#chat-stream", RichLog).scroll_end(animate=False)
+            except (NoMatches, ScreenStackError, AttributeError):
+                pass
+
+    def on_resize(self, event) -> None:
+        self._apply_layout()
+
+    def _install_approval_prompt(self) -> None:
+        import threading
+
+        from hydra.policy import set_ui_approval
+        from gateways.tui.approval_modal import ApprovalModal
+
+        def ask(summary: str) -> str:
+            if self._approve_always:
+                return "y"
+            done = threading.Event()
+            box = {"value": "n"}
+
+            def show() -> None:
+                def finish(value: str | None) -> None:
+                    box["value"] = value or "n"
+                    done.set()
+
+                self.push_screen(ApprovalModal(summary), finish)
+
+            self.call_from_thread(show)
+            if not done.wait(600):
+                return "n"
+            if box["value"] == "always":
+                self._approve_always = True
+                return "y"
+            return box["value"]
+
+        set_ui_approval(ask)
+        self._approval_installed = True
+
     def _show_help(self) -> None:
         self._post_log(
             "\n[bold cyan]Slash commands[/bold cyan]\n"
             "  [bright_cyan]/help[/bright_cyan]          show this help\n"
+            "  [bright_cyan]/live QUESTION[/bright_cyan]  web search with citations\n"
+            "  [bright_cyan]/root PATH[/bright_cyan]      change the workspace tools can see\n"
+            "  [bright_cyan]/cloud[/bright_cyan] · [bright_cyan]/local[/bright_cyan]   switch chat profile\n"
+            "  [bright_cyan]/skills[/bright_cyan] · [bright_cyan]/runtime[/bright_cyan] · [bright_cyan]/providers[/bright_cyan]\n"
+            "  [dim]HYDRA_REFLEX=1[/dim] runs a typed decision before the next model loop\n"
             "  [bright_cyan]/clear[/bright_cyan]         clear the runtime stream\n"
-            "  [bright_cyan]/audit[/bright_cyan]         run Go repo audit\n"
-            "  [bright_cyan]/capabilities[/bright_cyan]  discover host capabilities\n"
+            "  [bright_cyan]/audit[/bright_cyan]         Python directory audit (no Go helper)\n"
+            "  [bright_cyan]/capabilities[/bright_cyan]  Python capability catalog\n"
             "  [bright_cyan]/restart[/bright_cyan]       relaunch HYDRA (picks up new code)\n"
-            "  [bright_cyan]/yolo[/bright_cyan]          unlock full authority (prompts for your code)\n"
+            "  [bright_cyan]/yolo[/bright_cyan]          unlock full authority (after /mfa setup)\n"
             "  [bright_cyan]/mfa setup[/bright_cyan]     print Google Authenticator QR/URI\n"
             "  [bright_cyan]/lock[/bright_cyan]          leave yolo · [bright_cyan]/mode[/bright_cyan] show mode\n"
-            "  [bright_cyan]/exit[/bright_cyan] · [bright_cyan]/quit[/bright_cyan] · [bright_cyan]stop[/bright_cyan]   leave\n"
+            "  [bright_cyan]/exit[/bright_cyan] · [bright_cyan]/quit[/bright_cyan] · [bright_cyan]/stop[/bright_cyan]   leave\n"
             "  [dim]Ctrl+C[/dim] quit · [dim]Ctrl+L[/dim] clear runtime"
+        )
+
+    def _cmd_live(self, text: str) -> None:
+        """Show citations, then feed them into the next reasoning turn."""
+        query = text.split(maxsplit=1)[1].strip() if len(text.split(maxsplit=1)) > 1 else ""
+        if not query:
+            self._post_log("[yellow]usage: /live <question>[/yellow]")
+            return
+        from hydra.live_research import LiveResearchError, research
+
+        try:
+            packet = research(query)
+        except LiveResearchError as exc:
+            self._post_log(f"[red]{exc}[/red]")
+            return
+        self._post_log(packet["reasoning_context"])
+        self._submit_turn(
+            "Use these live research sources when you answer. Cite them.\n\n"
+            + packet["reasoning_context"]
+            + "\n\nQuestion: "
+            + query
         )
 
     def _show_go(self, op: str) -> None:
@@ -1181,6 +1369,11 @@ class HydraApp(App[int]):
             self._do_mfa_setup(cmd.force)
             return
         if cmd.kind == "prompt_code":
+            if not self._auth.secret_path.exists():
+                self._post_log(
+                    "[yellow]Yolo needs an authenticator.[/yellow] Run [bright_cyan]/mfa setup[/bright_cyan] first."
+                )
+                return
             self._set_code_prompt(True)
             self._post_log(
                 "[bright_cyan]🔐 Enter your Google Authenticator code[/bright_cyan] "

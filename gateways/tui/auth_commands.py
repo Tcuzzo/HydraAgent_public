@@ -42,6 +42,8 @@ def parse_auth_command(text: str, *, awaiting_code: bool) -> AuthCommand:
     if awaiting_code:
         if lower in {"/cancel", "/abort", "cancel"}:
             return AuthCommand(kind="cancel")
+        if lower in {"/help", "/exit", "/quit", "/stop"}:
+            return AuthCommand(kind="none")
         compact = raw.replace(" ", "")
         if compact.isdigit() and len(compact) == 6:
             return AuthCommand(kind="consume_code", code=compact)

@@ -41,7 +41,12 @@ def safe_message(value: str) -> str:
 def http_failure(status: int, body: str, retry_after: str | None = None, *, now: float | None = None) -> LlmError:
     """Classify positive evidence; a bare 404 never proves model retirement."""
     now = time.time() if now is None else now
-    code, message, metadata = '', body, {}
+    from hydra.http_identity import summarize_error_body
+
+    summary = summarize_error_body(status, body)
+    code, message, metadata = '', summary or body, {}
+    if summary:
+        return LlmError(summary, kind='permission' if status == 403 else 'request', status_code=status)
     try:
         payload = json.loads(body)
         error = payload.get('error', payload) if isinstance(payload, dict) else {}
@@ -90,7 +95,10 @@ def http_failure(status: int, body: str, retry_after: str | None = None, *, now:
 
 
 def default_health_path() -> Path:
-    return Path(os.environ.get('HYDRA_MODEL_HEALTH_PATH') or Path.cwd() / '.hydra' / 'model-health.json').expanduser().resolve()
+    override = os.environ.get('HYDRA_MODEL_HEALTH_PATH', '').strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return (Path.home() / '.hydraAgent' / 'state' / 'model-health.json').resolve()
 
 
 @dataclass(frozen=True)
