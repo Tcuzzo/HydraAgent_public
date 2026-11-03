@@ -6,8 +6,8 @@ Normal work can use one model. Independent review needs genuinely different
 configured families and reports an inconclusive result when those judges are
 unavailable; it does not lock normal work out.
 
-This release is a tested development preview. A successful tool call, a model's
-review, and a passing test are different evidence and remain separate in receipts.
+A successful tool call, a model's review, and a passing test are different
+evidence. Hydra records them separately.
 
 ## Start with the normal runtime
 
@@ -41,14 +41,15 @@ an explicit installation error rather than silently using a paid service.
 
 Select a checkpoint with `HYDRA_NEEDLE_MODEL` for the selector tool,
 `NEEDLE_MODEL` for provider `needle`, and `HYDRA_LAYA_MODEL` for typed decisions.
-`HYDRA_LAYA_DEVICE` defaults to CPU. Keep private trained weights outside public
-releases. Model grounding through canon/essence is not weight training. The earlier
-starter models require further evaluation before unattended routing.
+`HYDRA_LAYA_DEVICE` defaults to CPU when unset (`hydra/decision_models.py`). Keep
+trained weights outside this repository. Canon and essence text is not weight
+training. Evaluate a checkpoint on held-out data before you use it for unattended
+routing.
 
 Local prediction workers apply `HYDRA_LOCAL_CPU_FRACTION=0.15` by default using
-available process affinity and thread settings. On a 24-logical-CPU machine this
-selects three logical CPUs (12.5% of logical scheduling capacity). It does **not**
-promise 15% electrical power use. The receipt states the applied CPUs or an
+available process affinity and thread settings. For example, 0.15 of 24 logical
+CPUs selects three (12.5% of that host's logical scheduling capacity). It does
+not promise 15% electrical power use. The worker reports the applied CPUs or an
 unsupported backend. Multiple workers still need queue admission; affinity does
 not make model loading or disk contention free.
 
@@ -123,23 +124,23 @@ embedding configuration at its `/v1` endpoint. Use the actual GGUF checksum as
 the revision. Verify device/offload logs as well as the returned vector; HTTP
 success alone does not prove iGPU execution. Driver readiness and device support
 must be verified before assigning work to either GPU.
-The 4080/OCuLink topology below is a deployment design, not a benchmark of that hardware.
 
 ```mermaid
 flowchart LR
-    U[CLI / normal Hydra session] --> R[Configured routing and literal health]
-    R --> G[Main model: local 4080 via OCuLink]
+    U[CLI / normal Hydra session] --> R[Configured routing and recorded health]
+    R --> G[Main model: the local endpoint you configure]
     R --> C[Optional configured cloud model]
-    U --> N[Needle / Laya: bounded CPU workers]
+    U --> N[Needle / Laya: optional local workers]
     U --> I[Shared source index: local disk]
-    U --> M[Memory and provenance: local SQLite]
-    M --> E[Separate embedding backend: detected iGPU or CPU]
+    U --> M[Memory: local SQLite]
+    M --> E[Embedding backend you configure]
     U --> T[Independent judges: canon and essence]
     T --> R
 ```
 
 Driver support, link bandwidth, VRAM, available iGPU, cold/warm latency and host
-contention must be measured on the target. Do not infer a GPU from a machine name.
+contention must be measured on the machine that will run the model. Do not infer
+a GPU from a machine name.
 
 Use `hydra model-residency load MODEL` or `hydra model-residency unload MODEL`
 for explicit local Ollama residency changes. Loading requests a five-minute
@@ -242,15 +243,6 @@ dependency status. These are setup recipes, not five installed or wired memory
 backends. Keep the working SQLite backend unless another engine solves a measured
 need. Graph extraction still needs a configured model and quality evaluation.
 
-[Twingate's local Connector](https://www.twingate.com/docs/connectors-on-linux)
-can make an owned model/API endpoint reachable without putting the agent in a
-cloud VM. Restrict Resources to the services you need. Twingate still uses its
-hosted control plane; [plan limits](https://www.twingate.com/pricing) apply and
-headless service accounts may require payment. An existing authorized local
-client/tunnel avoids publishing local model ports directly to the Internet.
-
-Cloudflare's [agentic payments](https://developers.cloudflare.com/agents/tools/payments/)
-and [Workflows](https://developers.cloudflare.com/workflows/) solve different
-problems. Neither is an unlimited free local runtime. Payment execution needs
-explicit transaction semantics, account credentials and spend limits. This
-release does not create wallets, approve payments or deploy Cloudflare resources.
+Bind a model server to loopback, or to HTTPS on a host you control. Do not publish
+model ports on the open internet. Hydra does not create wallets, approve payments,
+or deploy cloud resources.

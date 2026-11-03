@@ -116,6 +116,11 @@ else:
     raise SystemExit("Choose needle or laya")
 ```
 
+The checkpoint strings in that sample (`needle3.safetensors` and the Laya hub id)
+are upstream starter ids those SDK calls accept. They are not Hydra's chat model.
+Replace them only when the SDK accepts another id. After you export your own
+files, point `NEEDLE_MODEL` and `HYDRA_LAYA_MODEL` at those paths.
+
 Change Laya's `device` to `"cpu"` on a machine without supported CUDA. Its output folder is ready for `LayaDecisionClient` and includes `train_report.json` with base/trained accuracy, loss and calibration metrics. Needle writes a LoRA adapter and exports `hydra.cact` for native inference. `score=False` skips the SDK's slow internal generative scoring; use the separate evaluation below. Local Needle tuning does not train its confidence head, so the exported model reports `confidence: null`.
 
 ## Evaluate adapters before enabling them

@@ -1,11 +1,10 @@
 schema: hydra.model_routing.v2
 # SINGLE SOURCE OF TRUTH for Hydra's routing policy. Read by hydra/model_routing.py.
 #
-# OPERATOR LAW (2026-10-23): this file names BACKS rungs only. No model, provider or
-# key name lives in Hydra. At call time hydra/rung_resolver.py asks the BACKS rung
-# resolver (Kev/Needle) what each rung means right now; BACKS holds the keys and
-# picks the live model, and each answer logs its route receipt. To change what a
-# role runs on, change the BACKS rungs (fleet_ladder), not this file.
+# This file names rungs only. No model, provider, or key name lives here.
+# At call time hydra/rung_resolver.py asks the decision service (Kev/Needle)
+# what each rung means. That service holds the keys and picks the live model.
+# To change what a role runs on, change the service ladder, not this file.
 #
 # Rungs: plan / work / build / auto are BACKS capability rungs (auto = Kev/Needle
 # decide). `task` names the BACKS router task (backs.router.v1) the entry asks for:
@@ -54,7 +53,7 @@ routing:
     cloud: cloud-planner
     local: local-worker
   complexity:
-    simple:   local-worker  # reads run LOCAL (free) — operator law
+    simple:   local-worker  # simple reads use the local rung
     moderate: cloud-doer
     complex:  cloud-planner
     critical: cloud-planner

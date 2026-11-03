@@ -1,9 +1,10 @@
 # BACKS router client contract (`backs.router.v1`)
 
-Vendorable. Copy this file into any client (Hydra, the POWERS PLAYBOOK app, a script). It is the
-whole contract between a client and the BACKS router. BACKS owns the server side
-(`backend/services/backs_router.py`, `backend/routes/backs_router_routes.py`); the authority for
-which rungs exist and in what order is `config/fleet_ladder.yaml` (`roles:` plus the `router:` block).
+This is the HTTP contract between a client such as Hydra and a decision service
+you run. Hydra does not ship that server. The service owns which rungs exist and
+in what order. Point Hydra at it with `HYDRA_BACKS_URL` or with `BACKS_ENDPOINT` in
+`~/.hydraAgent/workspace/.env.backs`. The value is the origin only, for example
+`http://<backs-host>:<port>`. `hydra setup` has no `backs` mode.
 
 ## What the router promises
 
@@ -22,7 +23,8 @@ which rungs exist and in what order is `config/fleet_ladder.yaml` (`roles:` plus
 
 ## Endpoints
 
-LAN callers only (loopback or the house LAN). Base: the BACKS backend, port 8000.
+Call `<needle-url>` over loopback or another network you control. Hydra does not
+assume a port.
 
 ### `POST /api/router/resolve` - chain plus essence, no model call
 
@@ -152,16 +154,9 @@ Durations live in `router.cooldown_s` in the ladder. Before giving up, the route
 pass over rungs skipped for soft reasons (unavailable, server, timeout), local first. It never
 retries a rung that is down for auth, quota, retirement, or config.
 
-## State on the BACKS host
+## State on the decision-service host
 
-`backend/state/backs_router/` (override with `BACKS_ROUTER_STATE`): `bandit.json`,
-`cooldowns.json`, `outcomes.jsonl`. Plain JSON, safe to read, safe to delete (the router reseeds
-from the ladder).
-
-## CLI on the BACKS host
-
-```
-cd backend && python -m services.backs_router resolve answer "say hi"
-cd backend && python -m services.backs_router complete answer "say hi" --contract '{"type":"json","required":["answer"]}'
-cd backend && python -m services.backs_router state --tail 5
-```
+The service keeps its own learning state (bandit, cooldowns, and an outcomes
+log). That state is not a file in this repository. Deleting it on the service
+host makes the router reseed from its ladder. `GET <needle-url>/api/router/state`
+is the client-facing view.

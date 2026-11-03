@@ -1,6 +1,6 @@
-# Operator model config. Hydra reads `.hydraAgent/hydra.yaml`, or the file
-# named by HYDRA_CONFIG. It does not read this example.
-#
+# Role config template. Hydra does not read this file.
+# In a source checkout, ask/chat/execute/roles load `.hydraAgent/hydra.yaml`.
+# ModelRouter with no path reads $HYDRA_CONFIG, or ~/.hydra/hydra.yaml.
 # Copy it, then replace each placeholder with your own value:
 #   cp .hydraAgent/hydra.example.yaml .hydraAgent/hydra.yaml
 #
