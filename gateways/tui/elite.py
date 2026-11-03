@@ -98,7 +98,7 @@ from hydra.loop import AgentLoop, LoopStep, LoopResult, Tool  # noqa: E402
 from hydra.cli.tool_binding import bind_tools  # noqa: E402
 from hydra.operator_auth import OperatorAuth, OperatorAuthError, render_qr_ascii  # noqa: E402
 from hydra.skill_spine import build_agent_system_prompt, list_skill_records  # noqa: E402
-from hydra.intake import CONVO, classify  # noqa: E402
+from hydra.intake import classify  # noqa: E402
 from hydra.intent_router import classify_intent, route_turn  # noqa: E402
 from hydra.turn_profiles import load_turn_profile  # noqa: E402
 from hydra.work_executor import (  # noqa: E402
@@ -111,7 +111,6 @@ from hydra.session_memory import (  # noqa: E402
     compact_session,
     create_session,
     add_message,
-    get_session_messages,
     rotate_session,
     session_exists,
 )
@@ -1403,6 +1402,7 @@ class EliteTUI:
 
     def _print_welcome(self) -> None:
         tool_count = len(self.tools)
+        status_text = "🟢 online"
 
         if RICH_AVAILABLE:
             # Gradient ASCII dragon banner

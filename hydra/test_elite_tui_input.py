@@ -125,7 +125,7 @@ def test_prompt_session_created_on_tty(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(elite_mod, "build_agent_system_prompt", lambda p: p)
     monkeypatch.setattr(elite_mod, "AgentLoop", lambda *a, **kw: object())
 
-    tui = EliteTUI(
+    EliteTUI(
         client=object(),
         model="fake-model",
         cfg=SimpleNamespace(name="fake-provider"),

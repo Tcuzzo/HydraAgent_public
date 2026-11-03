@@ -37,10 +37,9 @@ CLI: ``python3 -m hydra self-audit``
 """
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 _LOG = logging.getLogger(__name__)
 
@@ -144,7 +143,7 @@ _CONVO_SAMPLES = [
 
 def _check_classify_work_imperatives() -> AuditCheck:
     """(i) Work imperatives must classify as STEERING, not convo."""
-    from hydra.intake import CONVO, STEERING
+    from hydra.intake import STEERING
     failures: list[str] = []
     for text in _WORK_IMPERATIVES:
         try:

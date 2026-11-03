@@ -1,6 +1,6 @@
 ---
 name: deep-research-synthesis
-description: Conduct multi-step autonomous research across multiple sources, synthesize findings into coherent reports with proper citations and source verification
+description: Conduct multi-step autonomous research across multiple sources, synthesize findings into coherent reports with proper citations and source verification. Use when a question needs several sources read, cross-checked, and cited.
 ---
 
 # Deep Research Synthesis
@@ -119,14 +119,14 @@ eval:
 
 ---
 
-## Proven Results
+## Target Results (not yet measured)
 
 | Metric | Target | Achieved |
 |--------|--------|----------|
-| Factual Accuracy | 98% | 98.4% |
-| Citation Accuracy | 97% | 97.9% |
-| Hallucination Rate | 2% | 1.3% |
-| User Satisfaction | 4.5/5 | 4.7/5 |
+| Factual Accuracy | 98% | not measured |
+| Citation Accuracy | 97% | not measured |
+| Hallucination Rate | 2% | not measured |
+| User Satisfaction | 4.5/5 | not measured |
 
 ---
 

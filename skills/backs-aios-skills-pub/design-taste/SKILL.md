@@ -42,8 +42,11 @@ give the builder eyes with a screenshot loop, and gate on accessibility — hard
 6. **Close the screenshot → vision-critic loop.** For anything rendered: render it in
    a headless browser at mobile and desktop widths, screenshot, and have a vision
    model score it — then fix, in separate passes (critique → structural fix → audit →
-   polish), never one-shot. The critic is a grader: use a model from a different
-   family than the builder, scoring named axes, never one holistic score. Resolve the
+   polish), never one-shot. The critic is a grader: pick a non-builder grader,
+   chosen live by capability and availability from the configured rung matrix
+   (the authoring execution that built is recorded as provenance and
+   disqualified; the reviewer uses a fresh author-disjoint session),
+   scoring named axes, never one holistic score. Resolve the
    critic model from config at call time — a pinned model id retires someday and
    takes the whole loop down with it.
 7. **Score the 8-axis taste rubric.** 0–3 per axis, and every axis must score ≥ 2:
@@ -74,7 +77,7 @@ give the builder eyes with a screenshot loop, and gate on accessibility — hard
 - [intent-compiler](../intent-compiler/SKILL.md) — the full read-the-brief discipline.
 - [blind-eval](../blind-eval/SKILL.md) — keep-or-revert when taste is the question.
 - [clean-code-gauntlet](../clean-code-gauntlet/SKILL.md) — hardening the code behind the pixels.
-- [blind-tribunal](../blind-tribunal/SKILL.md) — cross-family grading before landing.
+- [blind-tribunal](../blind-tribunal/SKILL.md) — fresh author-disjoint review before landing.
 
 > Scaffold credit: W3C Design Tokens Community Group (token format); WCAG 2.2, W3C
 > (accessibility gate); UICrit, UIST 2024 (axis-scored UI critique); AI Jason, &

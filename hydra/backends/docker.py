@@ -7,13 +7,12 @@ Provides containerized execution with:
 - Clean container lifecycle management
 """
 
-import json
 import logging
 import os
 import shutil
 import subprocess
 import tempfile
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from .base import BackendBase, BackendConfig, ExecutionResult
 

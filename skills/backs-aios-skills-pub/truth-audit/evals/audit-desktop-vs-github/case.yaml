@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: audit-desktop-vs-github
+expected_outcome: |
+  The agent stays read-only. It first establishes what runs (process command lines,
+  ports, launchers, which source tree the process imports, git and remote state) and
+  compares trees by content hash rather than commit ids or folder names. Findings land
+  in lane-format blocks with re-runnable evidence and in the gated ledger. The output is
+  a repair spec in waves of balls with disjoint scopes, red tests by name, and native
+  proofs, plus a short plain summary for the human.

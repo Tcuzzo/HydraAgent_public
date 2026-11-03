@@ -1,3 +1,8 @@
+---
+name: software-design
+description: "Scaffolded catalog of software-design skills (system, API, database, microservice and agent architecture). Use when designing software with Hydra; the system and agent architecture skills under skills/ are implemented, the rest are catalog entries."
+---
+
 # Hydra Software Design Bundle - Scaffolded Catalog
 
 **Bundle ID:** hydra-software-design

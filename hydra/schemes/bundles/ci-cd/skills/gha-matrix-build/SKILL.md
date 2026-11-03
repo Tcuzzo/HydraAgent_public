@@ -1,6 +1,6 @@
 ---
 name: gha-matrix-build
-description: Set up cross-platform test matrices in GitHub Actions for testing across multiple OS, Node versions, and configurations efficiently
+description: Set up cross-platform test matrices in GitHub Actions for testing across multiple OS, Node versions, and configurations efficiently. Use when a workflow must run the same tests across several OS or runtime versions.
 ---
 
 # GitHub Actions Matrix Build
@@ -119,13 +119,13 @@ eval:
 
 ---
 
-## Proven Results
+## Target Results (not yet measured)
 
 | Metric | Target | Achieved |
 |--------|--------|----------|
-| YAML Validity | 100% | 100% |
-| Best Practices | 98% | 99.2% |
-| User Satisfaction | 4.5/5 | 4.8/5 |
+| YAML Validity | 100% | not measured |
+| Best Practices | 98% | not measured |
+| User Satisfaction | 4.5/5 | not measured |
 
 ---
 
