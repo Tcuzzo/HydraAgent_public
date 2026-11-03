@@ -35,8 +35,13 @@ method and sends the resulting calls through Hydra's approval and tool executor.
 It never calls the SDK's tool-executing `run` method.
 
 ```bash
-hydra ask "Read README.md" --provider needle --model needle3 --approval-policy deny
+hydra ask "Read README.md" --provider needle --model '<your-needle-model>' --approval-policy deny
 ```
+
+`<your-needle-model>` is a placeholder. `hydra/needle_client.py` does not read an
+environment variable. The `needle` provider passes `NEEDLE_MODEL` from the
+process environment or `~/.hydraAgent/workspace/.env.needle`. If that variable is
+unset, the provider uses the fallback name compiled in `hydra/providers.py`.
 
 Needle is designed to select tools. It does not supply a conversational final
 answer. The CLI can show an empty final answer on a refusal, or a partial-result
@@ -50,9 +55,12 @@ disabled for this worker; initial model downloads still need network access.
 
 ## Laya: typed decisions
 
-Install `hydraagent[laya]`. This extra declares `laya>=0.4.2,<0.5`; the default
-checkpoint is `convaiinnovations/laya`. It is an open Jev-style decision model,
-with `choice`, `score`, and `noul` question types. It is separate from chat roles.
+Install `hydraagent[laya]`. This extra declares `laya>=0.4.2,<0.5`. It is an open
+Jev-style decision model, with `choice`, `score`, and `noul` question types. It
+is separate from chat roles. Pass `--model <your-checkpoint>` or set
+`HYDRA_LAYA_MODEL`. If both are unset, `hydra/decision_models.py` uses the
+checkpoint id compiled in that file. The upstream checkpoint page is linked below;
+it is a starting point you can replace.
 
 ```python
 from hydra.decision_models import LayaDecisionClient
