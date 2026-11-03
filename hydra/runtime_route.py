@@ -37,6 +37,37 @@ def _build_default_runtime_route() -> dict[str, str]:
     }
 
 
+def offline_pair(entry) -> tuple[str, str]:
+    """Transport and route for one roster entry, without contacting a service.
+
+    A cloud entry with a router task is ``router/<task>/<rung>``. Anything else
+    is labeled with its rung name. The live model stays on the service.
+    """
+    from hydra.rung_resolver import route_for
+
+    if entry.local:
+        return LOCAL, f"rung:{entry.rung}"
+    if getattr(entry, "task", ""):
+        return GATEWAY, route_for(entry.task, entry.rung)
+    return GATEWAY, f"rung:{entry.rung}"
+
+
+def offline_runtime_route() -> dict[str, str]:
+    """The same route map as ``default_runtime_route``, read from the file only."""
+    routing = load_routing()
+    planner = routing.entry(routing.roles["planner"])
+    worker = routing.entry(routing.roles["worker"])
+    verifier = routing.entry(routing.verifier)
+    planner_transport = offline_pair(planner)[0]
+    return {
+        "conversation_provider": planner_transport,
+        "planner_provider": planner_transport,
+        "worker_provider": LOCAL if worker.local else GATEWAY,
+        "verifier": "/".join(offline_pair(verifier)),
+        "local_gpu_policy": "worker-only-unless-explicit",
+    }
+
+
 def default_runtime_route() -> dict[str, str]:
     return _build_default_runtime_route()
 
