@@ -60,7 +60,9 @@ Jev-style decision model, with `choice`, `score`, and `noul` question types. It
 is separate from chat roles. Pass `--model <your-checkpoint>` or set
 `HYDRA_LAYA_MODEL`. If both are unset, `hydra/decision_models.py` uses the
 checkpoint id compiled in that file. The upstream checkpoint page is linked below;
-it is a starting point you can replace.
+it is a starting point you can replace. Paid real-time routing through the Jev
+model on OpenRouter is a decision-service rung. See
+[Jev typed decisions](../QUICKSTART.md#jev-typed-decisions-optional).
 
 ```python
 from hydra.decision_models import LayaDecisionClient

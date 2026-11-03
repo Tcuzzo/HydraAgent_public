@@ -70,6 +70,7 @@ Hydra runs without any of these. Each one is a separate install or setting. What
 |---|---|
 | Local models (Ollama) | Chat and coding on a server you run |
 | Needle / Kev and a fleet ladder | Tool selection, and a decision service at `http://<backs-host>:<port>` (`HYDRA_BACKS_URL`; there is no `hydra setup --mode backs`) |
+| Jev typed decisions | Paid typed routing on that same service. Hydra reads `HYDRA_BACKS_URL`; the service reads `OPENROUTER_API_KEY` |
 | Sandbox (Bubblewrap) | Confined worker verification on Linux |
 | MCP | Hydra tools over stdio, or servers you list in a config file |
 | Memory embeddings | Vector recall next to keyword search |
