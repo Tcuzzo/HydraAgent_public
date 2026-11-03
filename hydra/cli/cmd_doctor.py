@@ -26,6 +26,11 @@ def register_doctor_command(sub) -> None:
     p.add_argument("--timeout", type=float, default=10.0,
                    help="network timeout per lookup in seconds (default: 10)")
     p.add_argument("--format", choices=("text", "json"), default="text")
+    p.add_argument(
+        "--rungs",
+        action="store_true",
+        help="report configured decision rungs only (no package lookup, no paid call)",
+    )
 
 
 def _report_dict(r) -> dict:
@@ -49,7 +54,26 @@ def _status(r) -> str:
     return "ok"
 
 
+def _print_rungs(decisions: dict, *, fmt: str) -> None:
+    if fmt == "json":
+        print(json.dumps({"decisions": decisions, "paid_calls": False}, indent=2))
+        return
+    print("Decision rungs (no paid call)")
+    print(
+        f"  llm {decisions['tiers']['llm']}: backs={decisions['backs']} "
+        f"kev={decisions['kev_model']} laya={decisions['laya_model']} "
+        f"jev_key={decisions['jev_key']} jev_model={decisions['jev_model']}"
+    )
+    print(f"  vision {decisions['tiers']['vision']}: model={decisions['vision_model']}")
+    print(f"  text {decisions['tiers']['text']}: model={decisions['text_decision_model']}")
+    print(f"  live provider={decisions['live_provider']} key={decisions['live_key']}")
+    print("This report places no paid call.")
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
+    if getattr(args, "rungs", False):
+        _print_rungs(doctor.decision_configuration(), fmt=args.format)
+        return 0
     names = doctor.hydra_dependency_names()
     if not getattr(args, "no_pip", False):
         names.append("pip")
@@ -66,6 +90,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     summary = doctor.summarize(reports)
     offline = all(r.latest is None for r in reports if r.installed)
 
+    decisions = doctor.decision_configuration()
     if args.format == "json":
         print(json.dumps({
             "python": platform.python_version(),
@@ -73,6 +98,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             "offline": offline,
             "summary": summary,
             "packages": [_report_dict(r) for r in reports],
+            "decisions": decisions,
+            "paid_calls": False,
         }, indent=2))
     else:
         print(f"hydra doctor · Python {platform.python_version()} · "
@@ -85,6 +112,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
               f"{summary['vulnerable']} vulnerable")
         if offline:
             print("note: could not reach PyPI/OSV — version & vulnerability checks were skipped.")
+        print()
+        _print_rungs(decisions, fmt="text")
 
     fixes = doctor.packages_to_fix(reports)
 

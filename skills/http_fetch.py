@@ -26,7 +26,13 @@ class SkillError(Exception):
 
 DEFAULT_TIMEOUT_SECONDS = 15
 DEFAULT_MAX_BYTES = 256 * 1024
-DEFAULT_USER_AGENT = "HydraAgent-Skill/1.0"
+def _default_agent() -> str:
+    from hydra.http_identity import user_agent
+
+    return user_agent()
+
+
+DEFAULT_USER_AGENT = _default_agent()
 
 
 def run(

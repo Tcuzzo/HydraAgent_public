@@ -21,3 +21,34 @@ def test_needle_never_invokes_proposed_tool(monkeypatch):
     assert result['selections'] == [{'tool': 'read', 'arguments': {}}]
     assert result['executed_actions'] is False
     assert calls == []
+
+
+def test_vision_and_text_tools_use_their_decision_tiers(monkeypatch):
+    seen = []
+
+    def fake_decide(question, *, tier="llm", **kwargs):
+        seen.append((tier, question["instructions"], kwargs.get("claim"), kwargs.get("image")))
+        return {
+            "ok": True,
+            "rung": tier,
+            "tier": tier,
+            "tier_rung": tier + "_decision",
+            "instructions": question["instructions"],
+            "answer": {"ok": True},
+        }
+
+    monkeypatch.setattr("hydra.decision_ladder.decide", fake_decide)
+    from hydra.decision_tools import text_decide, vision_decide
+
+    vision = vision_decide(
+        "the login form is visible",
+        "frame.png",
+        "Does the image show the claim?",
+    )
+    text = text_decide('{"ok": true}', "Is this JSON the required object?", kind="validate")
+    assert vision["rung"] == "vision"
+    assert text["rung"] == "text"
+    assert seen[0][0] == "vision" and seen[0][2] == "the login form is visible"
+    assert seen[0][3] == "frame.png"
+    assert seen[1][0] == "text"
+    assert seen[1][1] == "Is this JSON the required object?"

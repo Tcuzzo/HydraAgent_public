@@ -5,6 +5,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -39,6 +40,25 @@ from hydra.cli.cmd_chat import (
 
 
 DEFAULT_ASK_MAX_ITERATIONS = 20
+
+
+def _auth_rejection_message(provider: str, error: LlmError) -> str | None:
+    """A bad or missing key is not a reason to try another model."""
+    kind = getattr(error, "kind", "")
+    status = getattr(error, "status_code", None)
+    text = str(error)
+    lowered = text.lower()
+    # A BACKS rung walk uses 401/402/403 as "try the next rung", not as a key refusal.
+    if "no rung answered" in lowered or re.search(r"rung[- ][\w-]+:\d{3}", lowered):
+        return None
+    key_words = ("api key", "api_key", "authorization", "unauthor", "invalid key")
+    talks_about_a_key = any(word in lowered for word in key_words)
+    auth = kind == "authentication" or (status in {400, 401, 403} and talks_about_a_key)
+    if not auth:
+        return None
+    key_var = re.sub(r"[^A-Za-z0-9]", "_", str(provider or "provider")).upper() + "_API_KEY"
+    summary = text.splitlines()[0][:240]
+    return f"{provider} rejected the API key ({summary}). Check {key_var}."
 
 
 def _budgeted(client, provider: str, model: str, prompt: str) -> AnswerBudgetClient:
@@ -316,6 +336,10 @@ def cmd_ask(args: argparse.Namespace) -> int:
             print(f"ask error: {e}", file=sys.stderr)
             return 2
         except LlmError as e:
+            auth_message = _auth_rejection_message(args.provider, e)
+            if auth_message:
+                print(auth_message, file=sys.stderr)
+                return 1
             failures.append(f"{cfg.name}/{model} [{_one_line(e)}]")
             if is_local_provider(args.provider):
                 print(f"ask error: no rung answered: {'; '.join(failures)}", file=sys.stderr)

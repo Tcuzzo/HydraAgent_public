@@ -38,6 +38,7 @@ CLI: ``python3 -m hydra self-audit``
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -433,8 +434,9 @@ def run_self_audit() -> SelfAuditReport:
             "hydra self-audit PASSED — all %d invariant checks green", len(checks)
         )
     else:
-        _LOG.warning(
-            "hydra self-audit FAILED — %d violation(s): %s",
+        log = _LOG.warning if os.environ.get("HYDRA_DEBUG") == "1" else _LOG.debug
+        log(
+            "hydra self-audit: %d check(s) not green: %s",
             len(violations),
             [v.check_id for v in violations],
         )
