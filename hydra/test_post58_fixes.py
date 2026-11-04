@@ -167,3 +167,70 @@ def test_page_without_closing_head_still_yields_body_text():
 
     html = "<html><head><title>T</title><noscript>x<body><p>Visible body.</p>"
     assert "Visible body." in _page_text(html)
+
+
+# 1b. Chat stream: typed text, replies and page text are not markup ----------
+
+def _tui_app(tmp_path):
+    from types import SimpleNamespace
+
+    from gateways.tui.hydra_app import HydraApp
+
+    app = HydraApp(
+        client=SimpleNamespace(),
+        model="test-model",
+        cfg=SimpleNamespace(name="test-provider"),
+        system_prompt="test system prompt",
+        tools=[],
+        workspace_root=tmp_path,
+    )
+    app._submit_turn = lambda *_a, **_k: None
+    return app
+
+
+def _stream_text(app) -> str:
+    from textual.widgets import RichLog
+
+    return "\n".join(str(line.text) for line in app.query_one("#chat-stream", RichLog).lines)
+
+
+def test_typed_brackets_do_not_crash_the_tui(tmp_path):
+    app = _tui_app(tmp_path)
+    typed = "run echo '[bold]x[/oops]' please"
+
+    async def go():
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app.query_one("#operator-input").value = typed
+            await pilot.press("enter")
+            await pilot.pause()
+            app._post_chat_line("hydra", "done: [/b] and [red]kept[/red]")
+            app._handle_turn_error("bad [/thing]")
+            await pilot.pause()
+            return _stream_text(app)
+
+    shown = asyncio.run(go())
+    assert "[bold]x[/oops]" in shown
+    assert "done: [/b] and [red]kept[/red]" in shown
+    assert "bad [/thing]" in shown
+
+
+def test_live_page_text_with_brackets_does_not_crash_the_tui(tmp_path, monkeypatch):
+    from hydra import live_research
+
+    app = _tui_app(tmp_path)
+    monkeypatch.setattr(
+        live_research,
+        "research",
+        lambda q: {"reasoning_context": "Live sources for: q\n[1] Page\nsays [/close] and [b]x"},
+    )
+
+    async def go():
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._cmd_live("/live q")
+            await pilot.pause()
+            return _stream_text(app)
+
+    shown = asyncio.run(go())
+    assert "says [/close] and [b]x" in shown
