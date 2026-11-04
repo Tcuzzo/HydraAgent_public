@@ -234,3 +234,28 @@ def test_live_page_text_with_brackets_does_not_crash_the_tui(tmp_path, monkeypat
 
     shown = asyncio.run(go())
     assert "says [/close] and [b]x" in shown
+
+
+def test_tool_step_line_with_brackets_does_not_crash_the_tui(tmp_path):
+    from hydra.loop import LoopStep
+
+    app = _tui_app(tmp_path)
+    app.call_from_thread = lambda fn, *a, **k: fn(*a, **k)
+
+    async def go():
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            app._on_loop_step(LoopStep(
+                step=1, kind="tool_result", role="tool", content="ok", tool_name="bash",
+                tool_arguments={"command": "echo '[bold]x[/oops]'"},
+            ))
+            app._on_loop_step(LoopStep(
+                step=2, kind="tool_result", role="tool", content="", tool_name="bash",
+                tool_arguments={}, tool_error="exit 1: [/nope]",
+            ))
+            await pilot.pause()
+            return _stream_text(app)
+
+    shown = asyncio.run(go())
+    assert "echo '[bold]x[/oops]'" in shown
+    assert "exit 1: [/nope]" in shown
