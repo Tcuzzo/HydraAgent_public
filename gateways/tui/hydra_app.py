@@ -886,11 +886,12 @@ class HydraApp(App[int]):
         duration_str = ""
         if isinstance(step.tool_duration_ms, int):
             duration_str = f" [dim]({step.tool_duration_ms / 1000:.1f}s)[/dim]"
-        summary = _tool_summary(tool_name, step.tool_arguments, step.content)
+        summary = escape_markup(_tool_summary(tool_name, step.tool_arguments, step.content))
+        tool_name = escape_markup(tool_name)
         if step.tool_error:
             markup = (
                 f"  [red]✗[/red] {icon} [bold]{tool_name}[/bold] "
-                f"[dim]›[/dim] [red]{step.tool_error}[/red]{duration_str}"
+                f"[dim]›[/dim] [red]{escape_markup(str(step.tool_error))}[/red]{duration_str}"
             )
         else:
             markup = (
