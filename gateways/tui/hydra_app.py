@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Callable
 
 import pyfiglet
+from rich.markup import escape as escape_markup
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -701,7 +702,7 @@ class HydraApp(App[int]):
         if text.startswith("/"):
             if self._handle_public_command(text):
                 return
-            self._post_log(f"unknown command {text.split()[0]}, try /help")
+            self._post_log(f"unknown command {escape_markup(text.split()[0])}, try /help")
             return
         self._post_chat_line("user", text)
         # Fabric §5 step 1: classify before we route.
@@ -935,7 +936,7 @@ class HydraApp(App[int]):
         # Dragon seam: thinking -> idle on error path too.
         self._set_dragon_idle()
         self._update_stat_bar()
-        self._post_log(f"[red]✗ turn error:[/red] {detail}")
+        self._post_log(f"[red]✗ turn error:[/red] {escape_markup(detail)}")
         self._post_chat_line("system", f"⚠ {detail[:160]}")
 
     # ── Utilities ────────────────────────────────────────────────────────
@@ -1077,7 +1078,8 @@ class HydraApp(App[int]):
             "system": "[bold #ffd966]\\[SYS][/bold #ffd966]",
         }.get(role, f"\\[{role}]")
         # Preserve multi-line content — chat-stream wraps natively.
-        line = f"{tag} » {content}"
+        # Typed text, model replies and errors are shown as written, not as markup.
+        line = f"{tag} » {escape_markup(content)}"
         self._chat_lines.append((role, content))
         try:
             self.query_one("#chat-stream", RichLog).write(line)
@@ -1131,10 +1133,10 @@ class HydraApp(App[int]):
         head = text.split()[0].lower()
         if head == "/root":
             requested = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
-            self._post_log(self.set_root(requested))
+            self._post_log(escape_markup(self.set_root(requested)))
             return True
         if head in {"/cloud", "/local"}:
-            self._post_log(self.set_profile(head[1:]))
+            self._post_log(escape_markup(self.set_profile(head[1:])))
             return True
         if head in {"/audit", "/capabilities"}:
             self._post_log(self._python_surface(head[1:], text))
@@ -1265,9 +1267,9 @@ class HydraApp(App[int]):
         try:
             packet = research(query)
         except LiveResearchError as exc:
-            self._post_log(f"[red]{exc}[/red]")
+            self._post_log(f"[red]{escape_markup(str(exc))}[/red]")
             return
-        self._post_log(packet["reasoning_context"])
+        self._post_log(escape_markup(packet["reasoning_context"]))
         self._submit_turn(
             "Use these live research sources when you answer. Cite them.\n\n"
             + packet["reasoning_context"]
