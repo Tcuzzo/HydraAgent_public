@@ -362,6 +362,17 @@ def _auto_route_role(args: argparse.Namespace) -> dict | None:
     return classify(args.prompt)
 
 
+def _setup_command(provider: str | None) -> str:
+    """The setup command to suggest; never an empty `--provider`."""
+    if provider:
+        return f"python3 -m hydra setup --provider {provider}"
+    return "python3 -m hydra setup"
+
+
+def _already_reported(err: BaseException) -> bool:
+    return bool(getattr(err, "hydra_reported", False))
+
+
 def _make_client_or_setup(args: argparse.Namespace):
     env_dir = getattr(args, "env_dir", None)
     try:
@@ -372,10 +383,11 @@ def _make_client_or_setup(args: argparse.Namespace):
         if not getattr(args, "setup_if_needed", False):
             print(
                 f"provider error: {e}\n"
-                f"Run `python3 -m hydra setup --provider {args.provider}` "
+                f"Run `{_setup_command(args.provider)}` "
                 f"or pass --setup-if-needed.",
                 file=sys.stderr,
             )
+            e.hydra_reported = True  # callers must not print it again
             raise
         if not sys.stdin.isatty():
             print(
@@ -383,6 +395,7 @@ def _make_client_or_setup(args: argparse.Namespace):
                 "--setup-if-needed requires an interactive terminal.",
                 file=sys.stderr,
             )
+            e.hydra_reported = True
             raise
         # In-surface setup panel — built for non-programmers. Renders on the same
         # Rich canvas the chat uses, so it's one seamless surface. Returns the
@@ -785,7 +798,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
     try:
         client, cfg = _make_client_or_setup(args)
     except (ProviderError, LlmError) as e:
-        print(f"provider error: {e}", file=sys.stderr)
+        if not _already_reported(e):
+            print(f"provider error: {e}", file=sys.stderr)
         return 2
     model = args.model or cfg.model or model
     if not model:
@@ -899,7 +913,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
             try:
                 client, cfg = _make_client_or_setup(args)
             except (ProviderError, LlmError) as e:
-                print(f"provider error: {e}", file=sys.stderr)
+                if not _already_reported(e):
+                    print(f"provider error: {e}", file=sys.stderr)
                 return True
             model = args.model or cfg.model or runtime["model"]
             tui.reconfigure_runtime(client=client, cfg=cfg, model=model, runtime=runtime)

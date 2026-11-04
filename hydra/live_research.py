@@ -24,6 +24,7 @@ def _headers() -> dict[str, str]:
 
 _DDG_URL = "https://html.duckduckgo.com/html/"
 _MAX_EXTRACT = 8000
+_MAX_PAGE_BYTES = 512_000  # read past a long <head> before extracting text
 
 
 class LiveResearchError(Exception):
@@ -182,10 +183,48 @@ def _guard_public_host(url: str) -> None:
 
 
 def _fetch_page(url: str) -> str:
+    """The page's readable text, not its markup: the model reasons over words."""
     _guard_public_host(url)
     req = urllib.request.Request(url, headers=_headers())
     with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.read(_MAX_EXTRACT).decode("utf-8", errors="replace")
+        raw = resp.read(_MAX_PAGE_BYTES).decode("utf-8", errors="replace")
+        content_type = str(getattr(resp, "headers", {}).get("Content-Type", "") or "").lower()
+    looks_html = "html" in content_type or raw.lstrip()[:15].lower().startswith(("<!doctype", "<html"))
+    text = _page_text(raw) if looks_html else " ".join(raw.split())
+    return text[:_MAX_EXTRACT]
+
+
+class _TextParser(HTMLParser):
+    _SKIP = {"script", "style", "noscript", "template", "svg", "iframe"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._skipping = 0
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        if tag == "body":
+            self._skipping = 0  # an unclosed head-only tag never hides the body
+        elif tag in self._SKIP:
+            self._skipping += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SKIP and self._skipping:
+            self._skipping -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._skipping and data.strip():
+            self.parts.append(data.strip())
+
+
+def _page_text(html: str) -> str:
+    parser = _TextParser()
+    try:
+        parser.feed(html)
+        parser.close()
+    except Exception:  # noqa: BLE001 - broken markup still yields what was read
+        pass
+    return " ".join(" ".join(parser.parts).split())
 
 
 def _post_json(url: str, body: dict, headers: dict) -> tuple[int, Any]:
