@@ -9,7 +9,7 @@ markdown-it-py==4.2.0
 mdit-py-plugins==0.6.1
 mdurl==0.1.2
 packaging==26.3
-platformdirs==4.13.5
+platformdirs==4.14.2
 prompt_toolkit==3.0.53
 psutil==7.2.2
 pyfiglet==1.0.4
@@ -30,5 +30,5 @@ wcwidth==0.9.4
 # reproducible and never RED on a missing plugin.
 iniconfig==2.3.1
 pluggy==1.7.0
-pytest==9.1.1
-pytest-asyncio==1.4.0
+pytest==9.2.0
+pytest-asyncio==1.4.1
