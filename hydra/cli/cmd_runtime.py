@@ -59,7 +59,7 @@ def _make_client_or_setup(args: argparse.Namespace):
         if not getattr(args, "setup_if_needed", False):
             print(
                 f"provider error: {e}\n"
-                f"Run `python3 -m hydra setup --provider {args.provider}` "
+                f"Run `python3 -m hydra setup{' --provider ' + args.provider if args.provider else ''}` "
                 f"or pass --setup-if-needed.",
                 file=sys.stderr,
             )
