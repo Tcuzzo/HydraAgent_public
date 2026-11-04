@@ -160,3 +160,10 @@ def test_page_text_after_a_long_head_still_reaches_the_extract(monkeypatch):
         lambda req, timeout=20: _Resp(page.encode("utf-8")),
     )
     assert "Body fact 42." in live_research._fetch_page("https://example.invalid/long")
+
+
+def test_page_without_closing_head_still_yields_body_text():
+    from hydra.live_research import _page_text
+
+    html = "<html><head><title>T</title><noscript>x<body><p>Visible body.</p>"
+    assert "Visible body." in _page_text(html)

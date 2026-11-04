@@ -42,6 +42,19 @@ from hydra.cli.cmd_chat import (
 DEFAULT_ASK_MAX_ITERATIONS = 20
 
 
+def _rejection_summary(text: str, status: int | None) -> str:
+    """One readable line: the provider's own "message" when the body is JSON."""
+    from hydra.provider_health import safe_message
+
+    found = re.search(r'"message"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+    if found:
+        message = " ".join(found.group(1).replace('\\"', '"').split())
+        line = f"HTTP {status}: {message}" if status else message
+    else:
+        line = " ".join(text.split())
+    return safe_message(line)[:240]
+
+
 def _auth_rejection_message(provider: str, error: LlmError) -> str | None:
     """A bad or missing key is not a reason to try another model."""
     kind = getattr(error, "kind", "")
@@ -57,7 +70,7 @@ def _auth_rejection_message(provider: str, error: LlmError) -> str | None:
     if not auth:
         return None
     key_var = re.sub(r"[^A-Za-z0-9]", "_", str(provider or "provider")).upper() + "_API_KEY"
-    summary = text.splitlines()[0][:240]
+    summary = _rejection_summary(text, status)
     return f"{provider} rejected the API key ({summary}). Check {key_var}."
 
 
@@ -239,7 +252,8 @@ def cmd_ask(args: argparse.Namespace) -> int:
     try:
         client, cfg = _make_client_or_setup(args)
     except (ProviderError, LlmError) as e:
-        print(f"provider error: {e}", file=sys.stderr)
+        if not getattr(e, "hydra_reported", False):  # the helper already said it
+            print(f"provider error: {e}", file=sys.stderr)
         return 2
     model = args.model or cfg.model
     if not model:

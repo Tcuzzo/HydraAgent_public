@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
+from textual.markup import escape
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
@@ -32,11 +33,12 @@ class ApprovalModal(ModalScreen[str]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="approval-card"):
-            yield Static(f"Approve {self.summary}?")
+            # Tool text is shown as typed: brackets in a command are not markup.
+            yield Static(f"Approve {self.summary}?", markup=False)
             with Horizontal(id="approval-actions"):
-                yield Button("Yes [y]", id="yes")
-                yield Button("No [n]", id="no")
-                yield Button("Always [a]", id="always")
+                yield Button(escape("Yes [y]"), id="yes")
+                yield Button(escape("No [n]"), id="no")
+                yield Button(escape("Always [a]"), id="always")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss({"yes": "y", "no": "n", "always": "always"}.get(event.button.id or "", "n"))
