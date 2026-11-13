@@ -31,4 +31,4 @@ wcwidth==0.9.4
 iniconfig==2.3.1
 pluggy==1.7.0
 pytest==9.2.0
-pytest-asyncio==1.4.1
+pytest-asyncio==1.4.1.post1
