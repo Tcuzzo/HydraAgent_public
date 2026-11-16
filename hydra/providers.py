@@ -34,7 +34,22 @@ from pathlib import Path
 from hydra.llm import LlmError, OllamaClient
 
 
+#: Where the operator's provider env files live when no directory is given.
+#: ``HYDRA_ENV_DIR`` overrides it; read through :func:`default_env_dir` so a
+#: changed environment takes effect without a restart.
 DEFAULT_ENV_DIR = Path(os.path.expanduser("~/.hydraAgent/workspace"))
+
+
+def default_env_dir() -> Path:
+    """The directory holding the operator's ``.env.<provider>`` files.
+
+    ``HYDRA_ENV_DIR`` wins; otherwise ``~/.hydraAgent/workspace``. Read at call
+    time (not frozen at import) so an exported override is always honoured.
+    """
+    override = os.environ.get("HYDRA_ENV_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path(os.path.expanduser("~/.hydraAgent/workspace"))
 
 
 # Compatibility export; model families are selected by the user.
@@ -120,6 +135,11 @@ _PROVIDER_ALIASES: dict[str, str] = {
 _ENV_KEY_ALIASES: dict[str, tuple[str, ...]] = {
     "OLLAMA_ENDPOINT": ("OLLAMA_BASE_URL",),
     "OLLAMA_CLOUD_ENDPOINT": ("OLLAMA_CLOUD_BASE_URL",),
+    # The BACKS host: the rung resolver exports it as HYDRA_BACKS_URL, while the
+    # provider registry reads the operator's file under BACKS_ENDPOINT. One host,
+    # two names, so both readers must agree on the value.
+    "BACKS_ENDPOINT": ("BACKS_URL", "HYDRA_BACKS_URL"),
+    "BACKS_URL": ("BACKS_ENDPOINT", "HYDRA_BACKS_URL"),
 }
 
 
@@ -211,12 +231,39 @@ def cli_transport_installed(which) -> bool:
     return which(CLI_TRANSPORT) is not None
 
 
+def _env_key_candidates(key: str) -> tuple[str, ...]:
+    """Every name the same setting may be stored under.
+
+    ``<NAME>_ENDPOINT`` and ``<NAME>_BASE_URL`` are the same setting, so they are
+    aliases for every provider -- not only the ones named in ``_ENV_KEY_ALIASES``.
+    """
+    candidates = [key]
+    if key.endswith("_ENDPOINT"):
+        candidates.append(key[: -len("_ENDPOINT")] + "_BASE_URL")
+    elif key.endswith("_BASE_URL"):
+        candidates.append(key[: -len("_BASE_URL")] + "_ENDPOINT")
+    candidates.extend(_ENV_KEY_ALIASES.get(key, ()))
+    seen: set[str] = set()
+    return tuple(c for c in candidates if not (c in seen or seen.add(c)))
+
+
 def _lookup_env_value(env: dict[str, str], key: str) -> str | None:
-    for candidate in (key, *_ENV_KEY_ALIASES.get(key, ())):
-        if candidate in env and env[candidate]:
-            return env[candidate]
-        if candidate in os.environ and os.environ[candidate]:
-            return os.environ[candidate]
+    """The value for ``key``: the process environment wins over the env file.
+
+    An exported variable is an explicit, one-off override (a sandbox, a CI run,
+    a different host). A value left in the operator's file is the standing
+    default. When both are present the process environment wins -- the same
+    order the rung resolver already uses for the BACKS host.
+    """
+    candidates = _env_key_candidates(key)
+    for candidate in candidates:
+        value = os.environ.get(candidate, "").strip()
+        if value:
+            return value
+    for candidate in candidates:
+        value = str(env.get(candidate, "")).strip()
+        if value:
+            return value
     return None
 
 
@@ -260,7 +307,7 @@ def resolve(
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
         raise ProviderError(f"provider name must use letters, digits, underscores, or hyphens, got {name!r}")
     name = _canonical_provider_name(name)
-    env_root = Path(env_dir) if env_dir else DEFAULT_ENV_DIR
+    env_root = Path(env_dir) if env_dir else default_env_dir()
 
     spec = _BUILTINS.get(name)
     if spec is None:
@@ -352,7 +399,7 @@ def local_num_ctx(name: str, *, env_dir: str | Path | None = None) -> int:
     from the provider's env file (or the process env). 0 = server default."""
     name = _canonical_provider_name(name)
     spec = _BUILTINS.get(name)
-    env_root = Path(env_dir) if env_dir else DEFAULT_ENV_DIR
+    env_root = Path(env_dir) if env_dir else default_env_dir()
     env = _parse_env_file(env_root / (spec.env_file if spec else f".env.{name}"))
     raw = _lookup_env_value(env, f"{_env_prefix(name)}_NUM_CTX") or ""
     try:

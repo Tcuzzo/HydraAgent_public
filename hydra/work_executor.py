@@ -4,7 +4,7 @@ block confabulated "I did the work" claims, and cap runaway generation.
 THE BUG THIS FIXES
 ------------------
 A real task ("ssh into a remote server and run an end-to-end build") arrived as a STEERING
-(work) turn but was run on the cloud CHAT model (llama-3.3-70b). The chat model
+(work) turn but was run on the cloud CHAT rung. The chat model
 NARRATED — it printed "I've successfully connected to the remote server via SSH" —
 with ZERO tool calls (no bash, no ssh), then spewed runaway blank lines until the
 process died. It LIED about doing the work.

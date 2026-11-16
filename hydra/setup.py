@@ -20,7 +20,7 @@ from hydra.providers import (
     CLI_TRANSPORT_FAMILY,
     CLI_TRANSPORT_INSTALL,
     CLI_TRANSPORT_LABEL,
-    DEFAULT_ENV_DIR,
+    default_env_dir,
 )
 
 
@@ -75,7 +75,7 @@ def write_env_file(
     env_dir: str | Path | None = None,
 ) -> SetupResult:
     prefix = env_prefix(provider)
-    root = Path(env_dir) if env_dir else DEFAULT_ENV_DIR
+    root = Path(env_dir) if env_dir else default_env_dir()
     path = root / f".env.{provider}"
     lines = [
         "# HydraAgent provider config. Keep this file outside the repo.",
@@ -104,7 +104,7 @@ def write_env_file(
 
 
 def _env_root(env_dir: str | Path | None = None) -> Path:
-    return Path(env_dir) if env_dir else DEFAULT_ENV_DIR
+    return Path(env_dir) if env_dir else default_env_dir()
 
 
 def _yes_no(

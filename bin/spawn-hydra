@@ -20,11 +20,11 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from hydra.telegram_listener_runtime import start_telegram_listener_if_configured
 from hydra.cli.cmd_chat import (
-    DEFAULT_ENV_DIR,
     DEFAULT_MEMORY_ROOT,
     LOCAL_MEMORY_MAX_CHARS,
     cmd_chat,
 )
+from hydra.providers import default_env_dir
 
 
 def main():
@@ -66,7 +66,7 @@ def _launch_elite_chat(args):
         profile="auto",
         provider=None,
         model=None,
-        env_dir=DEFAULT_ENV_DIR,
+        env_dir=str(default_env_dir()),
         setup_if_needed=False,
         root=str(args.root),
         memory_root=str(DEFAULT_MEMORY_ROOT),
