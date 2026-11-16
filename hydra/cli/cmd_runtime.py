@@ -9,7 +9,7 @@ from pathlib import Path
 from hydra.declarative_runtime import build_runtime_brief, doctor_runtime_catalog, load_runtime_catalog
 from hydra.llm import LlmError
 from hydra.providers import (
-    DEFAULT_ENV_DIR,
+    default_env_dir as provider_env_dir,
     ProviderError,
     list_providers as list_providers_fn,
     make_client,
@@ -28,7 +28,9 @@ def register_runtime_commands(sub: argparse._SubParsersAction) -> None:
 
     p_models = sub.add_parser("models", help="list models the provider exposes")
     p_models.add_argument("--provider", default="ollama")
-    p_models.add_argument("--env-dir", default=None, help=f"provider env dir (default: {DEFAULT_ENV_DIR})")
+    p_models.add_argument(
+        "--env-dir", default=None,
+        help=f"provider env dir (default: {provider_env_dir()})")
     p_models.add_argument(
         "--setup-if-needed",
         action="store_true",

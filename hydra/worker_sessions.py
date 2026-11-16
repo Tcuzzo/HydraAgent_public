@@ -13,6 +13,10 @@ from hydra.worker_jobs import WorkerJobError, run_worker_job
 
 WORKER_SESSION_SCHEMA = "hydra.worker_session.v1"
 
+#: A hung git command must not wedge a worker session.
+LS_FILES_TIMEOUT_SECONDS = 60.0
+SESSION_GIT_TIMEOUT_SECONDS = 120.0
+
 
 class WorkerSessionError(Exception):
     """Worker session setup or execution failure."""
@@ -81,13 +85,17 @@ def _copy_tracked_repo(root: Path, session_repo: Path) -> None:
 
 
 def _tracked_files(root: Path) -> list[Path]:
-    proc = subprocess.run(
-        ["git", "ls-files", "-z"],
-        cwd=root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=LS_FILES_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise WorkerSessionError(f"git ls-files timed out after {exc.timeout:g}s") from exc
     if proc.returncode != 0:
         raise WorkerSessionError(f"git ls-files failed: {proc.stdout.decode(errors='replace').strip()}")
     return [Path(raw.decode()) for raw in proc.stdout.split(b"\0") if raw]
@@ -102,14 +110,19 @@ def _init_session_git(session_repo: Path) -> None:
         ["git", "commit", "-m", "session baseline"],
     ]
     for command in commands:
-        proc = subprocess.run(
-            command,
-            cwd=session_repo,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
+        try:
+            proc = subprocess.run(
+                command,
+                cwd=session_repo,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+                timeout=SESSION_GIT_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise WorkerSessionError(
+                f"{' '.join(command)} timed out after {exc.timeout:g}s") from exc
         if proc.returncode != 0:
             raise WorkerSessionError(f"{' '.join(command)} failed: {proc.stderr.strip()}")
 

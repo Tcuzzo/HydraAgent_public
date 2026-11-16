@@ -337,7 +337,7 @@ def _run_agent_message(text: str, *, context: OperatorContext | None = None) -> 
     model = args.model or cfg.model or runtime["model"]
 
     # Chat budget: if a NON-operator sender has used up today's real-chat budget,
-    # keep talking on the cheap LOCAL model (qwen2.5-coder) instead of spending more
+    # keep talking on the cheap LOCAL rung instead of spending more
     # cloud. The operator is never silently downgraded, mirroring the injection-guard
     # exemption above. The decision is real-tested in hydra.chat_budget.
     budget_key = _chat_budget_key(context)
@@ -422,7 +422,7 @@ def _run_agent_message(text: str, *, context: OperatorContext | None = None) -> 
             if attempted_provider_fallback:
                 raise
             if args.provider == "ollama":
-                # Local failed → cloud reasoning model (qwen3.5).
+                # Local failed → the cloud reasoning rung.
                 try:
                     fallback = make_client("ollama-cloud", env_dir=getattr(args, "env_dir", None))
                 except ProviderError:

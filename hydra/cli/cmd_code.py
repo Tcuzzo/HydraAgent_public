@@ -12,6 +12,19 @@ from pathlib import Path
 from rich.console import Console
 from rich.syntax import Syntax
 
+#: A hung compiler or child program must not wedge the CLI forever.
+COMPILE_TIMEOUT_SECONDS = 120.0
+RUN_TIMEOUT_SECONDS = 300.0
+#: Conventional exit status for a command that ran out of time.
+TIMEOUT_EXIT_CODE = 124
+
+
+def _command_text(cmd: object) -> str:
+    """The command as readable text for an error message."""
+    if isinstance(cmd, (list, tuple)):
+        return " ".join(str(part) for part in cmd)
+    return str(cmd)
+
 
 def register_code_command(sub: argparse._SubParsersAction) -> None:
     """Register code subcommand."""
@@ -95,16 +108,22 @@ def cmd_code(args: argparse.Namespace) -> int:
         if lang in compile_then_run:
             compiler = compile_then_run[lang]
             compile_cmd = [compiler, str(file_path), "-o", str(binary)]
-            compile_result = subprocess.run(compile_cmd, capture_output=True, text=True)
+            compile_result = subprocess.run(
+                compile_cmd, capture_output=True, text=True, timeout=COMPILE_TIMEOUT_SECONDS)
             if compile_result.returncode != 0:
                 console.print(f"\n❌ {lang} compile failed:\n{compile_result.stderr}")
                 return compile_result.returncode
-            run_result = subprocess.run([str(binary)], capture_output=False, text=True)
+            run_result = subprocess.run(
+                [str(binary)], capture_output=False, text=True, timeout=RUN_TIMEOUT_SECONDS)
             return run_result.returncode
         cmd = direct_executors[lang]
-        result = subprocess.run(cmd, capture_output=False, text=True)
+        result = subprocess.run(cmd, capture_output=False, text=True, timeout=RUN_TIMEOUT_SECONDS)
         return result.returncode
+    except subprocess.TimeoutExpired as exc:
+        print(f"\n❌ {lang} timed out after {exc.timeout:g}s: {_command_text(exc.cmd)}",
+              file=sys.stderr)
+        return TIMEOUT_EXIT_CODE
     except FileNotFoundError:
-        console.print(f"\n❌ Executor not found for {lang}. Install the runtime first.", file=sys.stderr)
+        print(f"\n❌ Executor not found for {lang}. Install the runtime first.", file=sys.stderr)
         return 1
 

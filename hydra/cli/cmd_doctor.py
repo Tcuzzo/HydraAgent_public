@@ -14,6 +14,11 @@ import sys
 
 from hydra import doctor
 
+#: A pip upgrade that hangs must not wedge the CLI.
+UPGRADE_TIMEOUT_SECONDS = 120.0
+#: Conventional exit status for a command that ran out of time.
+TIMEOUT_EXIT_CODE = 124
+
 
 def register_doctor_command(sub) -> None:
     p = sub.add_parser(
@@ -124,7 +129,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     if args.fix:
         print(f"\nUpgrading: {' '.join(fixes)}", flush=True)
-        rc = subprocess.call(doctor.upgrade_command(fixes))
+        upgrade_cmd = doctor.upgrade_command(fixes)
+        try:
+            rc = subprocess.call(upgrade_cmd, timeout=UPGRADE_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired as exc:
+            print(f"hydra doctor: upgrade timed out after {exc.timeout:g}s — "
+                  f"{' '.join(str(part) for part in (exc.cmd or upgrade_cmd))}. "
+                  "Run the pip command above manually.",
+                  file=sys.stderr)
+            return TIMEOUT_EXIT_CODE
         if rc != 0:
             print("hydra doctor: upgrade failed — run the pip command above manually.",
                   file=sys.stderr)
