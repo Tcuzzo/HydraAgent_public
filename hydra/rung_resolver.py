@@ -89,12 +89,17 @@ class RungResolutionError(LlmError):
 
 
 def backs_url(env_dir: str | Path | None = None) -> str:
-    url = os.environ.get(URL_ENV, "").strip()
-    if not url:
-        from hydra.providers import DEFAULT_ENV_DIR, _parse_env_file
+    """The BACKS host: the process environment wins, the env file is the fallback.
 
-        root = Path(env_dir) if env_dir else DEFAULT_ENV_DIR
-        url = _parse_env_file(root / ENV_FILE).get(ENV_FILE_KEY, "").strip()
+    ``HYDRA_BACKS_URL`` (exported) and ``BACKS_ENDPOINT`` (in the operator's
+    ``.env.backs``) name the same host, so both readers -- this resolver and
+    ``providers.resolve("backs")`` -- must land on the same value.
+    """
+    from hydra.providers import _lookup_env_value, _parse_env_file, default_env_dir
+
+    root = Path(env_dir) if env_dir else default_env_dir()
+    env = _parse_env_file(root / ENV_FILE)
+    url = _lookup_env_value(env, ENV_FILE_KEY) or ""
     if not url:
         raise RungResolutionError(
             f"BACKS rung resolver location is not set: export {URL_ENV} or put "

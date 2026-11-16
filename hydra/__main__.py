@@ -53,7 +53,7 @@ REPO_ROOT = HERE.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from hydra.policy import POLICY_CHOICES  # noqa: E402
-from hydra.providers import DEFAULT_ENV_DIR  # noqa: E402
+from hydra.providers import default_env_dir as provider_env_dir  # noqa: E402
 from hydra.cli.cmd_ask import cmd_ask, register_ask_command  # noqa: E402
 from hydra.cli.cmd_watch import cmd_watch, register_watch_command  # noqa: E402
 from hydra.cli.cmd_doctor import cmd_doctor, register_doctor_command  # noqa: E402
@@ -170,7 +170,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     register_ask_command(
         sub,
-        default_env_dir=DEFAULT_ENV_DIR,
+        default_env_dir=provider_env_dir(),
         policy_choices=POLICY_CHOICES,
     )
 
@@ -180,7 +180,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     register_chat_commands(
         sub,
-        default_env_dir=DEFAULT_ENV_DIR,
+        default_env_dir=provider_env_dir(),
         default_memory_root=DEFAULT_MEMORY_ROOT,
         local_memory_max_chars=LOCAL_MEMORY_MAX_CHARS,
         policy_choices=POLICY_CHOICES,
@@ -197,7 +197,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     register_ops_surface_commands(sub)
 
-    register_setup_commands(sub, default_env_dir=DEFAULT_ENV_DIR)
+    register_setup_commands(sub, default_env_dir=provider_env_dir())
 
     register_execution_commands(sub, policy_choices=POLICY_CHOICES)
 

@@ -15,6 +15,11 @@ if TYPE_CHECKING:
 
 ACI_RESULT_SCHEMA = "hydra.worker_aci_result.v1"
 
+#: A hung git command must not wedge a worker job.
+LS_FILES_TIMEOUT_SECONDS = 120.0
+REV_PARSE_TIMEOUT_SECONDS = 60.0
+GIT_TIMEOUT_SECONDS = 120.0
+
 
 class WorkerAciError(Exception):
     """ACI command validation or execution failure."""
@@ -201,7 +206,10 @@ def _finish(root: Path) -> dict[str, Any]:
 
 
 def _tracked_files(root: Path) -> list[Path]:
-    proc = subprocess.run(["git", "ls-files", "-z"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    try:
+        proc = subprocess.run(["git", "ls-files", "-z"], cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False, timeout=LS_FILES_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        raise WorkerAciError(f"git ls-files timed out after {exc.timeout:g}s") from exc
     if proc.returncode != 0:
         raise WorkerAciError(f"git ls-files failed: {proc.stdout.decode(errors='replace').strip()}")
     return [Path(raw.decode()) for raw in proc.stdout.split(b"\0") if raw]
@@ -209,10 +217,16 @@ def _tracked_files(root: Path) -> list[Path]:
 
 def _is_git_repo(root: Path) -> bool:
     """Return True if root is inside a git working tree (fast check)."""
-    proc = subprocess.run(
-        ["git", "rev-parse", "--is-inside-work-tree"],
-        cwd=root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+            timeout=REV_PARSE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # A hung probe is a failure, not a "not a repo" answer: reporting False here
+        # would make every diff silently come back empty.
+        raise WorkerAciError(f"git rev-parse timed out after {exc.timeout:g}s") from exc
     return proc.returncode == 0
 
 
@@ -223,7 +237,10 @@ def _git(root: Path, args: list[str]) -> str:
     non-repo tmp directory used in tests)."""
     if not _is_git_repo(root):
         return ""
-    proc = subprocess.run(["git", *args], cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    try:
+        proc = subprocess.run(["git", *args], cwd=root, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False, timeout=GIT_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        raise WorkerAciError(f"git {' '.join(args)} timed out after {exc.timeout:g}s") from exc
     return proc.stdout
 
 

@@ -147,7 +147,7 @@ def _brief_models() -> dict[str, str]:
     return {
         "planner": routing.role_entry("planner").model,   # cloud-planner model
         "doer": routing.role_entry("doer").model,         # cloud-doer model
-        "verifier": routing.verifier_pair()[1],           # llama-3.3-70b-versatile
+        "verifier": routing.verifier_pair()[1],           # the local verifier rung's model
     }
 
 

@@ -14,7 +14,12 @@ from hydra.inter_agent import use_correlation_id, use_trace_id
 from hydra.llm import LlmError
 from hydra.loop import AgentLoop, LoopError
 from hydra.policy import POLICY_CHOICES
-from hydra.providers import DEFAULT_ENV_DIR, ProviderError, is_local_provider, make_client
+from hydra.providers import (
+    ProviderError,
+    default_env_dir as provider_env_dir,
+    is_local_provider,
+    make_client,
+)
 from hydra.model_routing import RoutingConfigError, load_routing
 from hydra.roles import RoleError, resolve_roles
 from hydra.skill_spine import build_agent_system_prompt, build_routed_skill_context
@@ -137,7 +142,7 @@ def _default_ask_max_iterations() -> int:
 def register_ask_command(
     sub: argparse._SubParsersAction,
     *,
-    default_env_dir: str = DEFAULT_ENV_DIR,
+    default_env_dir: str | Path | None = None,
     policy_choices: tuple[str, ...] = POLICY_CHOICES,
 ) -> None:
     p_ask = sub.add_parser("ask", help="run the agent loop on a prompt")
@@ -150,7 +155,9 @@ def register_ask_command(
     )
     p_ask.add_argument("--provider", default=None, help="override provider selected by --profile")
     p_ask.add_argument("--model", default=None)
-    p_ask.add_argument("--env-dir", default=None, help=f"provider env dir (default: {default_env_dir})")
+    p_ask.add_argument(
+        "--env-dir", default=None,
+        help=f"provider env dir (default: {default_env_dir or provider_env_dir()})")
     p_ask.add_argument(
         "--runtime-only",
         action="store_true",

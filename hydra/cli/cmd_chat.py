@@ -14,7 +14,7 @@ from hydra.inter_agent import redact_text
 from hydra.llm import LlmError
 from hydra.policy import POLICY_CHOICES
 from hydra.providers import (
-    DEFAULT_ENV_DIR,
+    default_env_dir as provider_env_dir,
     ProviderError,
     list_providers as list_providers_fn,
     make_client,
@@ -492,7 +492,7 @@ def _resolve_chat_runtime(args: argparse.Namespace) -> dict[str, str]:
     if not provider and profile == "auto":
         # Setup writes provider env files. A rung BACKS answered for wins; when the
         # rung fell back to the local GPU, the operator's own setup goes first.
-        env_root = Path(env_dir) if env_dir else DEFAULT_ENV_DIR
+        env_root = Path(env_dir) if env_dir else provider_env_dir()
         setup: list[str] = []
         if env_root.is_dir():
             setup += [p.name[5:] for p in sorted(env_root.glob(".env.*"))
@@ -1017,7 +1017,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
 def register_chat_commands(
     sub: argparse._SubParsersAction,
     *,
-    default_env_dir: str = DEFAULT_ENV_DIR,
+    default_env_dir: str | Path | None = None,
     default_memory_root: Path = DEFAULT_MEMORY_ROOT,
     local_memory_max_chars: int = LOCAL_MEMORY_MAX_CHARS,
     policy_choices: tuple[str, ...] = POLICY_CHOICES,
@@ -1038,7 +1038,9 @@ def register_chat_commands(
     )
     p_chat.add_argument("--provider", default=None, help="override provider selected by --profile")
     p_chat.add_argument("--model", default=None)
-    p_chat.add_argument("--env-dir", default=None, help=f"provider env dir (default: {default_env_dir})")
+    p_chat.add_argument(
+        "--env-dir", default=None,
+        help=f"provider env dir (default: {default_env_dir or provider_env_dir()})")
     p_chat.add_argument(
         "--setup-if-needed",
         action="store_true",
