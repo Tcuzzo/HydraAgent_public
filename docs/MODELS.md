@@ -19,7 +19,8 @@ hydra ask "Explain the startup flow" --provider myserver --approval-policy deny
 Custom provider variables follow the provider name: `MYSERVER_ENDPOINT`,
 `MYSERVER_MODEL`, and optional `MYSERVER_API_KEY`. A local env file is named
 `~/.hydraAgent/workspace/.env.myserver`; exported process variables are also
-supported. Files take precedence when both are present. A project `.env` file
+supported. The process environment takes precedence when both are present, so an
+exported variable overrides the file for that run. A project `.env` file
 is not automatically imported.
 
 `--provider` and `--model` select a particular runtime. Native Anthropic Messages

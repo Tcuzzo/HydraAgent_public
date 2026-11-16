@@ -14,6 +14,11 @@ import sys
 
 DEFAULT_REPO_URL = "https://github.com/Tcuzzo/HydraAgent_public.git"
 
+#: A pip install that hangs (network stall, resolver loop) must not wedge the CLI.
+UPDATE_TIMEOUT_SECONDS = 600.0
+#: Conventional exit status for a command that ran out of time.
+TIMEOUT_EXIT_CODE = 124
+
 
 def build_update_command(repo_url: str) -> list[str]:
     """The pip command that force-reinstalls Hydra from the repo's latest commit.
@@ -49,7 +54,14 @@ def cmd_update(args: argparse.Namespace) -> int:
         return 0
 
     print(f"Updating Hydra from {args.repo}\n(current: {current}) ...", flush=True)
-    rc = subprocess.call(cmd)
+    try:
+        rc = subprocess.call(cmd, timeout=UPDATE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        print(f"hydra update: timed out after {exc.timeout:g}s — "
+              f"{' '.join(str(part) for part in (exc.cmd or cmd))}. "
+              "Run the pip command manually, or check your network.",
+              file=sys.stderr)
+        return TIMEOUT_EXIT_CODE
     if rc != 0:
         print("hydra update: failed — run the pip command above manually, or check your network.",
               file=sys.stderr)

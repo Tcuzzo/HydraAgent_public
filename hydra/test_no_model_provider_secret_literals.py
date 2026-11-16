@@ -211,9 +211,25 @@ def _word(token: str) -> re.Pattern[str]:
 
 
 def test_no_backs_ladder_names_in_hydra():
+    """No live ladder vocabulary may appear in Hydra's routing surface.
+
+    When BACKS is reachable the live vocabulary is scanned, which catches the exact
+    families and providers the ladder currently serves. When it is not reachable --
+    every CI run -- the guard still runs the structural scan
+    (``hydra.test_provider_agnosticism_guard``), which catches model-shaped
+    literals without needing a host or a committed vocabulary. The guard no longer
+    skips: there is always an enforcement path.
+    """
     vocab = _backs_vocab()
     if vocab is None:
-        pytest.skip("BACKS rung ladder not reachable here; live-vocabulary scan not run")
+        from hydra.test_provider_agnosticism_guard import _structural_hits
+
+        structural = _structural_hits(_surface_files())
+        assert not structural, (
+            "model-shaped literals in Hydra's routing surface (name the rung, not the model):\n"
+            + "\n".join(structural)
+        )
+        return
     models, providers = vocab
     files = _surface_files()
     hits = []

@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from hydra.providers import CLI_TRANSPORT
+from hydra.providers import CLI_TRANSPORT, default_env_dir as provider_env_dir
 from hydra.setup import (
     AUTOMATION_POLICIES,
     SUDO_POLICIES,
@@ -18,7 +18,7 @@ from hydra.setup import (
 )
 
 
-def register_setup_commands(sub: argparse._SubParsersAction, *, default_env_dir: object) -> None:
+def register_setup_commands(sub: argparse._SubParsersAction, *, default_env_dir: object = None) -> None:
     p_setup = sub.add_parser(
         "setup",
         help="configure the local rung, cloud/API providers, and the CLI transport sign-in path",
@@ -37,7 +37,9 @@ def register_setup_commands(sub: argparse._SubParsersAction, *, default_env_dir:
     p_setup.add_argument("--model", default=None)
     p_setup.add_argument("--api-key", default=None)
     p_setup.add_argument("--codex-oauth-path", default=None)
-    p_setup.add_argument("--env-dir", default=None, help=f"provider env dir (default: {default_env_dir})")
+    p_setup.add_argument(
+        "--env-dir", default=None,
+        help=f"provider env dir (default: {default_env_dir or provider_env_dir()})")
     p_setup.add_argument(
         "--automation-policy",
         choices=sorted(AUTOMATION_POLICIES),
