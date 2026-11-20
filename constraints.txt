@@ -5,8 +5,8 @@ attrs==26.1.0
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 linkify-it-py==2.2.0
-markdown-it-py==4.2.0
-mdit-py-plugins==0.6.1
+markdown-it-py==4.3.0
+mdit-py-plugins==0.7.0
 mdurl==0.1.2
 packaging==26.3
 platformdirs==4.14.5
@@ -31,4 +31,4 @@ wcwidth==0.9.4
 iniconfig==2.3.1
 pluggy==1.7.0
 pytest==9.2.0
-pytest-asyncio==1.4.1.post1
+pytest-asyncio==1.5.0
