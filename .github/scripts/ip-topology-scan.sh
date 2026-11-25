@@ -13,6 +13,9 @@
 #   * SSRF test vectors (RFC1918)     192.168.0.1  10.0.0.1  172.16.0.1
 #   * cloud-metadata SSRF vector      169.254.169.254
 #   * link-local network base         169.254.0.0
+#   * sealed-contract SSRF vectors    169.254.10.10  10.255.255.1
+#   * RFC1918 network bases           10.0.0.0  172.16.0.0  192.168.0.0  (the
+#     stdlib's own registry lists them; the version-stability contract pins them)
 #   * RFC5737 documentation ranges    198.51.100.0/24  203.0.113.0/24  192.0.2.0/24
 #
 # Detected (fail) ranges: RFC1918 (10/8, 172.16/12, 192.168/16) and link-local
@@ -33,7 +36,7 @@ candidates="$(git grep -I -nEo '([0-9]{1,3}\.){3}[0-9]{1,3}' -- . || true)"
 findings="$(printf '%s\n' "$candidates" | awk -F: '
   BEGIN {
     # Exact IPs the project legitimately ships (SSRF/CIDR test vectors, loopback).
-    split("127.0.0.1 0.0.0.0 192.168.0.1 10.0.0.1 172.16.0.1 169.254.169.254 169.254.0.0", A, " ");
+    split("127.0.0.1 0.0.0.0 192.168.0.1 10.0.0.1 172.16.0.1 169.254.169.254 169.254.0.0 169.254.10.10 10.255.255.1 10.0.0.0 172.16.0.0 192.168.0.0", A, " ");
     for (i in A) allow[A[i]] = 1;
   }
   # git grep output is path:line:ip; the ip is the last field and holds no colon.

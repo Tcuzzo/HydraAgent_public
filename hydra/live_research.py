@@ -15,6 +15,8 @@ from collections.abc import Callable
 from html.parser import HTMLParser
 from typing import Any
 
+from hydra.http_policy import EgressDenied, open_checked
+
 
 def _headers() -> dict[str, str]:
     from hydra.http_identity import attribution_headers
@@ -152,7 +154,6 @@ def _keyed_search(query: str, limit: int, *, post: Callable | None) -> list[dict
 
 
 def _duckduckgo_search(query: str, limit: int) -> list[dict[str, str]]:
-    _guard_public_host(_DDG_URL)
     body = urllib.parse.urlencode({"q": query}).encode("utf-8")
     req = urllib.request.Request(
         _DDG_URL,
@@ -161,7 +162,7 @@ def _duckduckgo_search(query: str, limit: int) -> list[dict[str, str]]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with _open_guarded(req) as resp:
             html = resp.read().decode("utf-8", errors="replace")
     except (urllib.error.URLError, OSError) as exc:
         raise LiveResearchError(f"DuckDuckGo search failed: {exc}") from exc
@@ -176,17 +177,29 @@ def _guard_public_host(url: str) -> None:
 
     try:
         allowed, reason = _is_ip_allowed(host)
-    except OSError as exc:
+    except (OSError, EgressDenied) as exc:
         raise LiveResearchError(str(exc)) from exc
     if not allowed:
         raise LiveResearchError(f"refused: {host} ({reason})")
 
 
+def _open_guarded(req: urllib.request.Request):
+    """Open `req` through the egress door: the guard runs on every hop, and the
+    socket dials the very address the guard judged. A refusal by the door
+    itself (a non-http scheme) reads like any other refusal."""
+    try:
+        return open_checked(req, validate=_guard_public_host, timeout=20)
+    except EgressDenied as exc:
+        raise LiveResearchError(str(exc)) from exc
+
+
 def _fetch_page(url: str) -> str:
     """The page's readable text, not its markup: the model reasons over words."""
-    _guard_public_host(url)
     req = urllib.request.Request(url, headers=_headers())
-    with urllib.request.urlopen(req, timeout=20) as resp:
+    # The door validates the URL once, before it connects, and again on every
+    # redirect hop, so a chain like public -> internal -> public never reaches
+    # the internal host. A final-URL check after urlopen cannot do that.
+    with _open_guarded(req) as resp:
         raw = resp.read(_MAX_PAGE_BYTES).decode("utf-8", errors="replace")
         content_type = str(getattr(resp, "headers", {}).get("Content-Type", "") or "").lower()
     looks_html = "html" in content_type or raw.lstrip()[:15].lower().startswith(("<!doctype", "<html"))
@@ -227,6 +240,21 @@ def _page_text(html: str) -> str:
     return " ".join(" ".join(parser.parts).split())
 
 
+class _RefuseRedirect(urllib.request.HTTPRedirectHandler):
+    """The keyed provider answers where it was configured, or the call fails.
+
+    urllib would forward the Authorization header to a redirect target, so a
+    provider that redirects must never be followed.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise LiveResearchError(
+            f"live provider answered HTTP {code} with Location {newurl}; a redirect is never "
+            "followed because it would carry the API key to another host. Set HYDRA_LIVE_ENDPOINT "
+            "to the final URL."
+        )
+
+
 def _post_json(url: str, body: dict, headers: dict) -> tuple[int, Any]:
     req = urllib.request.Request(
         url,
@@ -235,7 +263,7 @@ def _post_json(url: str, body: dict, headers: dict) -> tuple[int, Any]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.build_opener(_RefuseRedirect).open(req, timeout=20) as resp:
             raw = resp.read().decode("utf-8")
             status = resp.status
     except urllib.error.HTTPError as exc:
