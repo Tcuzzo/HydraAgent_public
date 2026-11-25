@@ -385,12 +385,7 @@ _SAFE_COMMANDS: dict[str, _Safe] = {
     "docker": _s(
         checker="subs",
         subs={
-            "uptime": _s("-p -s"),
-    "whoami": _NO_ARGS,
-    "hostname": _NO_ARGS,
-    "uname": _s("-a -r -s -m -n -o"),
-    "date": _s("-u -I"),
-    "ps": _s("-a -q -s -l --no-trunc", valued="--format -f --filter -n"),
+            "ps": _s("-a -q -s -l --no-trunc", valued="--format -f --filter -n"),
             "images": _s("-a -q --no-trunc", valued="--format --filter"),
             "version": _NO_ARGS,
             "info": _NO_ARGS,
