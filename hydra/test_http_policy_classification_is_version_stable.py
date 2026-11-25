@@ -2,23 +2,31 @@
 
 CPython changes the standard library's own address tables between releases, so
 the verdict for the SAME address can change with the interpreter that happens
-to run the guard. Measured on the three interpreters on this host -- CPython
-3.11.7, 3.12.3 and 3.14.3 -- the ranges whose class moved are these EIGHT:
+to run the guard. This file does not claim to list every range that has ever
+moved; the corpus test at the end measures that at test time. What was
+observed, on the interpreters that were actually run (CPython 3.11.7, 3.12.3,
+3.12.16 in CI, and 3.14.3), and is now pinned in ``hydra/http_policy.py``'s
+``_SPECIAL`` table so the guard's verdict no longer follows the standard
+library:
 
-  * ``::ffff:0:0/96`` (IPv4-mapped): 3.11 treats the whole range as reserved,
-    3.12 and later judge an address in it by the IPv4 address inside it, so the
-    very same address can come out public.
-  * ``2002::/16`` (6to4): public on 3.11, private from 3.12 on.
+  * ``::ffff:0:0/96`` (IPv4-mapped): 3.11.7 and 3.12.3 treat the whole range
+    as reserved. A later 3.12 patch release (seen on 3.12.16 in CI) and 3.14.3
+    judge an address in it by the IPv4 address inside it, so the very same
+    address can come out public. Pinned ``reserved``.
+  * ``2002::/16`` (6to4): public on 3.11.7, private on 3.12.3 and 3.14.3.
+    Pinned ``private``.
   * ``2001:1::1/128`` (PCP anycast), ``2001:1::2/128`` (TURN anycast),
     ``2001:3::/32`` (AMT), ``2001:4:112::/48`` (AS112-v6), ``2001:20::/28``
-    and ``2001:30::/28`` (ORCHIDv2): private on 3.11, public from 3.12 on.
+    and ``2001:30::/28`` (ORCHIDv2): private on 3.11.7, public on 3.12.3 and
+    3.14.3. Pinned ``private``.
+  * ``3fff::/20`` (documentation), ``64:ff9b:1::/48`` (local-use NAT64) and
+    ``192.0.0.0/24`` (IETF protocol assignments) also moved between those
+    releases; the table already pinned them before this contract existed.
 
-The direction of that last group is the dangerous one: under the STRICT posture
-(a URL somebody else chose) 3.11 REFUSED those six ranges and 3.12 and later
-ALLOW them. The guard owns all eight ranges now, so its verdict is the guard's
-own on every release and does not follow the standard library when the
-standard library changes its mind. The guard's own table is checked BEFORE the
-``ipaddress`` properties, so a pinned row wins.
+The direction of the ``2001:`` group is the dangerous one: under the STRICT
+posture (a URL somebody else chose) 3.11.7 REFUSED those six ranges and 3.12.3
+and 3.14.3 ALLOW them. The guard's own table is checked BEFORE the
+``ipaddress`` properties, so a pinned row wins on every release.
 
 The corpus test at the end is what catches the NEXT move. It reads the
 standard library's own registry tables AT TEST TIME, so a range that a future
