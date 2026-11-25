@@ -7,7 +7,14 @@ import sys
 from pathlib import Path
 
 from hydra.capability_cards import CapabilityCardError, load_cards, render_card_list, render_route
-from hydra.capability_truth import capability_truth_report, render_text as render_capability_truth_text, to_json as capability_truth_json
+from hydra.capability_truth import (
+    capability_risk_report,
+    capability_truth_report,
+    render_risk_text,
+    render_text as render_capability_truth_text,
+    to_json as capability_truth_json,
+    write_policy_files,
+)
 from hydra.lessons import LessonError, remember_lesson
 from hydra.local_memory import (
     DEFAULT_MAX_CHARS as LOCAL_MEMORY_MAX_CHARS,
@@ -52,6 +59,9 @@ def register_memory_commands(sub: argparse._SubParsersAction) -> None:
     capabilities_truth = capabilities_sub.add_parser("truth", help="prove visible capability claims")
     capabilities_truth.add_argument("--claimed-production-count", type=int, default=1200)
     capabilities_truth.add_argument("--format", choices=("text", "json"), default="text")
+    capabilities_risk = capabilities_sub.add_parser("risk", help="one risk table: per-tool approval class and contract agreement")
+    capabilities_risk.add_argument("--format", choices=("text", "json"), default="text")
+    capabilities_risk.add_argument("--write", action="store_true", help="regenerate trust-tiers.yaml and danger-gates.yaml from the table")
 
     p_memory = sub.add_parser(
         "local-memory",
@@ -129,6 +139,8 @@ def cmd_capabilities(args: argparse.Namespace) -> int:
         else:
             print(render_capability_truth_text(report), end="")
         return 0 if report["status"] == "PROVEN" else 1
+    if args.capabilities_cmd == "risk":
+        return _cmd_capabilities_risk(args)
     try:
         cards = load_cards(REPO_ROOT / ".hydraAgent/capabilities")
         if args.capabilities_cmd == "list":
@@ -141,6 +153,15 @@ def cmd_capabilities(args: argparse.Namespace) -> int:
         print(f"capabilities error: {e}", file=sys.stderr)
         return 2
     return 0
+
+
+def _cmd_capabilities_risk(args: argparse.Namespace) -> int:
+    if args.write:
+        for path in write_policy_files(REPO_ROOT):
+            print(f"wrote {path.relative_to(REPO_ROOT).as_posix()}", file=sys.stderr)
+    report = capability_risk_report(REPO_ROOT)
+    print(json.dumps(report, indent=2, sort_keys=True) if args.format == "json" else render_risk_text(report), end="\n" if args.format == "json" else "")
+    return 0 if not report["disagreements"] else 1
 
 
 def cmd_wiki(args: argparse.Namespace) -> int:
