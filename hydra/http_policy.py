@@ -58,6 +58,12 @@ _SPECIAL = tuple(
         ("2001::/32", "reserved"),  # Teredo
         ("2001:2::/48", "reserved"),  # benchmarking
         ("2001:10::/28", "reserved"),  # ORCHID
+        ("2001:1::1/128", "private"),  # PCP anycast; the stdlib's classification of this range moved between Python releases, so the guard owns it
+        ("2001:1::2/128", "private"),  # TURN anycast; same reason
+        ("2001:3::/32", "private"),  # AMT; same reason
+        ("2001:4:112::/48", "private"),  # AS112-v6; same reason
+        ("2001:20::/28", "private"),  # ORCHIDv2; same reason
+        ("2001:30::/28", "private"),  # ORCHIDv2 (deprecated); same reason
         ("2001:db8::/32", "reserved"),  # documentation
         ("3fff::/20", "reserved"),  # documentation
         ("5f00::/16", "reserved"),  # SRv6 segment identifiers
