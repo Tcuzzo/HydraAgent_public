@@ -852,7 +852,10 @@ def _escape(raw: str, cwd: str | None, root: str, windows: bool) -> str | None:
         return None
     if _cwd_unknown(text, cwd, windows):
         return f"{raw} (working directory unknown after cd)"
-    path = _resolve(text, cwd or root, windows)
+    try:
+        path = _resolve(text, cwd or root, windows)
+    except OSError:  # e.g. /proc/1/root: unresolvable means outside, fail closed
+        return f"{raw} (cannot be resolved: permission denied or unreadable)"
     return None if _inside(path, root, windows) else path
 
 
