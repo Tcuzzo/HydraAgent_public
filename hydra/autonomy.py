@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import shlex
 import re
+from fnmatch import fnmatchcase
 from typing import Any
 
 
@@ -100,8 +101,13 @@ _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash", "csh", "tcsh", "
 _SCRIPT_READERS = _SHELLS | {"source", ".", "at", "batch"}
 _STDIN_SHELL_FLAG = re.compile(r"^-[a-z]*s[a-z]*$")
 _ENV_ASSIGNMENT = re.compile(r"^[a-z_][a-z0-9_]*=\S*$")
-# A command word that is itself an expansion: $x, ${X:-cp}, cp${IFS}a, c*, {c,}p.
-_EXPANSION = re.compile(r"[$*?]|\{[^}]*,")
+# A command word counts as a plain command only when, after quote removal, it is
+# made of these characters. Anything else (glob, bracket, brace, $, ~, backslash,
+# backtick) may expand into any command and is gated, whatever the form.
+_LITERAL_WORD = re.compile(r"[A-Za-z0-9_./+-]+")
+_BUILTIN_WORDS = frozenset({"[", "[[", ":"})
+_EXPANSION_CHARS = re.compile(r"[$\\`\[{]")
+_GLOB_TARGETS = DESTRUCTIVE_COMMAND_WORDS | {"rm"}
 _EXPECT, _CAND, _ARGS = "expect", "candidate", "args"
 
 # Policy: plain ssh/scp/sftp/rsync/network commands are NOT destructive on
@@ -311,19 +317,135 @@ def _runs_unseen_script(word: str, rest: list[str]) -> bool:
     return any(_STDIN_SHELL_FLAG.match(arg) for arg in rest) or all(arg.startswith("-") for arg in rest)
 
 
+# Words that can run code the classifier cannot read. Each rule takes
+# (word, args-to-the-next-separator) and returns True when it must be gated.
+# A plain script FILE given to an interpreter is not judged here (out of 1A scope).
+_CODE_FLAG = re.compile(r"^-[a-z]*[ce]$|^--(eval|print|command)$|^-[pr]$")
+_SAFE_MODULES = frozenset({"pytest", "hydra", "json.tool", "unittest", "py_compile", "ruff", "radon"})
+_INFO_FLAGS = frozenset({"--version", "-v", "--help", "-h"})
+_RUNNER_COMMANDS = frozenset(
+    {
+        "run", "run-script", "exec", "x", "start", "test", "t", "restart", "stop", "install",
+        "i", "add", "ci", "init", "create", "rebuild", "task", "eval",
+    }
+)
+_GIT_EXEC_KEY = re.compile(r"^(core\.(sshcommand|pager|fsmonitor|editor)|alias\.)|!")
+_AWK_EXEC = re.compile(r"system\s*\(|\|\s*[\"']|[\"']\s*\|\s*getline|\|&")
+_SED_EXEC = re.compile(r"(^|[;{}\s\d$])e(\s|$|;)|/[gpim0-9]*e[gpim0-9]*(\s|$|;|\})")
+
+
+def _reads_stdin(rest: list[str]) -> bool:
+    return any(arg == "-" or arg.startswith("<") for arg in rest)
+
+
+def _module_unsafe(rest: list[str]) -> bool:
+    if "-m" not in rest:
+        return False
+    after = rest[rest.index("-m") + 1 :]
+    return not after or after[0] not in _SAFE_MODULES
+
+
+def _interpreter_runs_code(word: str, rest: list[str]) -> bool:
+    """-c/-e style code, a module that runs commands, stdin or a bare `-`, or no
+    target at all (the program is then read from stdin) — unless it only asks for
+    --version/--help."""
+    if _reads_stdin(rest) or _module_unsafe(rest) or any(_CODE_FLAG.match(arg) for arg in rest):
+        return True
+    has_target = any(not arg.startswith("-") for arg in rest)
+    return not has_target and not _INFO_FLAGS.intersection(rest)
+
+
+def _runner_runs_code(word: str, rest: list[str]) -> bool:
+    """`npm run`, `npm test`, `npm install`... run package scripts."""
+    commands = [arg for arg in rest if not arg.startswith("-")]
+    return bool(commands) and commands[0] in _RUNNER_COMMANDS
+
+
+def _package_runner_runs_code(word: str, rest: list[str]) -> bool:
+    return _runner_runs_code(word, rest) or _interpreter_runs_code(word, rest)
+
+
+def _always_runs_code(word: str, rest: list[str]) -> bool:
+    return True
+
+
+def _stdin_runs_code(word: str, rest: list[str]) -> bool:
+    return _reads_stdin(rest)
+
+
+def _git_runs_hook_subcommand(words: set[str]) -> bool:
+    return "filter-branch" in words or {"submodule", "foreach"} <= words or {"bisect", "run"} <= words
+
+
+def _git_rebase_exec(rest: list[str]) -> bool:
+    return "rebase" in rest and any(arg == "-x" or arg.startswith("--exec") for arg in rest)
+
+
+def _git_config_exec(rest: list[str]) -> bool:
+    return "config" in rest and any(_GIT_EXEC_KEY.search(arg) for arg in rest if not arg.startswith("-"))
+
+
+def _git_subcommand_runs_code(rest: list[str]) -> bool:
+    return _git_runs_hook_subcommand(set(rest)) or _git_rebase_exec(rest) or _git_config_exec(rest)
+
+
+def _git_runs_code(word: str, rest: list[str]) -> bool:
+    if any(arg.startswith("--exec-path") for arg in rest):
+        return True
+    if any(flag == "-c" and _GIT_EXEC_KEY.search(value) for flag, value in zip(rest, rest[1:])):
+        return True
+    return _git_subcommand_runs_code(rest)
+
+
+def _pattern_runs_code(pattern: str):
+    compiled = re.compile(pattern)
+    return lambda word, rest: any(compiled.search(arg) for arg in rest)
+
+
+_RUNS_CODE = {
+    **{word: _runs_unseen_script for word in _SCRIPT_READERS},
+    **{word: _interpreter_runs_code for word in ("python", "python3", "node", "perl", "ruby", "php")},
+    **{word: _package_runner_runs_code for word in ("bun", "deno")},
+    "npm": _package_runner_runs_code,
+    **{word: _always_runs_code for word in ("npx", "bunx", "pnpx")},
+    **{word: _stdin_runs_code for word in ("pip", "pip3")},
+    "git": _git_runs_code,
+    "awk": _pattern_runs_code(_AWK_EXEC.pattern),
+    "sed": _pattern_runs_code(_SED_EXEC.pattern),
+    "man": _pattern_runs_code(r"^(-p$|--pager)"),
+    "rg": _pattern_runs_code(r"^--pre(=|$)"),
+    "ag": _pattern_runs_code(r"^--pager"),
+    "pytest": _pattern_runs_code(r"^-[pc]"),
+}
+
+
 def _string_destructive(token: str) -> bool:
     """A quoted multi-word argument behind a non-inert command (`-c 'cp a b'`,
     `ssh host "cp a b"`, `env -S '...'`) is judged as a script by the same rule."""
     return any(char.isspace() for char in token) and is_destructive_bash_command(token)
 
 
+def _is_literal_word(token: str) -> bool:
+    return token in _BUILTIN_WORDS or bool(_LITERAL_WORD.fullmatch(token))
+
+
+def _could_become_command(token: str) -> bool:
+    """A non-literal word behind an unknown command (`timeout 5 /bin/[m]v`) is
+    gated when it holds an expansion or a glob that can match a destructive word."""
+    if token == "{}" or _is_literal_word(token) or any(char.isspace() for char in token):
+        return False
+    base = token.split("/")[-1]
+    return bool(_EXPANSION_CHARS.search(token)) or any(fnmatchcase(word, base) for word in _GLOB_TARGETS)
+
+
 def _word_destructive(tokens: list[str], index: int, token: str, at_command: bool) -> bool:
     base = token.split("/")[-1]
     if base in DESTRUCTIVE_COMMAND_WORDS or _string_destructive(token):
         return True
-    if at_command and _EXPANSION.search(token):
+    if (at_command and not _is_literal_word(token)) or _could_become_command(token):
         return True
-    return base in _SCRIPT_READERS and _runs_unseen_script(base, _segment_args(tokens, index))
+    runs_code = _RUNS_CODE.get(base)
+    return runs_code is not None and runs_code(base, _segment_args(tokens, index))
 
 
 def _has_destructive_command_word(tokens: list[str]) -> bool:
