@@ -490,6 +490,12 @@ _POSIX_WRITE_VERBS = {
 _WINDOWS_WRITE_VERBS = {
     "copy": ("last", ()), "xcopy": ("last", ()), "move": ("all", ()),
     "md": ("all", ()), "mkdir": ("all", ()), "robocopy": (1, ()), "mklink": (0, ()),
+    # Git Bash, MSYS and WSL ship the POSIX write verbs on Windows, so a write
+    # through one of them must be confined exactly like a cmd.exe one.
+    "touch": ("all", ()), "tee": ("all", ()), "truncate": ("all", ()),
+    "cp": ("last", _TARGET_DIR), "mv": ("all", _TARGET_DIR),
+    "install": ("last", _TARGET_DIR), "ln": ("last", _TARGET_DIR),
+    "rsync": ("last", ()), "dd": ("of", ()),
 }
 # (opener, closer, stand-in).  A process substitution is a pipe, so its stand-in
 # is a harmless sink; a command substitution is unknowable, so its stand-in is
@@ -843,6 +849,11 @@ def _cwd_unknown(text: str, cwd: str | None, windows: bool) -> bool:
     return cwd is None and not (ntpath if windows else posixpath).isabs(text)
 
 
+def _drive_relative(text: str) -> bool:
+    """A leading-slash path with no drive letter: the drive is implied, not named."""
+    return text.startswith(("/", "\\")) and not ntpath.splitdrive(text)[0]
+
+
 def _escape(raw: str, cwd: str | None, root: str, windows: bool) -> str | None:
     """The blocked path text when writing ``raw`` leaves ``root``, else ``None``."""
     text = _expand(raw, windows)
@@ -852,6 +863,14 @@ def _escape(raw: str, cwd: str | None, root: str, windows: bool) -> str | None:
         return None
     if _cwd_unknown(text, cwd, windows):
         return f"{raw} (working directory unknown after cd)"
+    if windows and _drive_relative(text):
+        # "/proc/1/root/x" names no Windows drive: the drive is implied, so it is
+        # read against the root's own drive. The refusal keeps the path that was
+        # asked for, so the caller sees what it wrote, and the place it lands.
+        path = _resolve(text, root, windows)
+        if _inside(path, root, windows):
+            return None
+        return f"{raw} (resolved to {path})"
     try:
         path = _resolve(text, cwd or root, windows)
     except OSError:  # e.g. /proc/1/root: unresolvable means outside, fail closed
