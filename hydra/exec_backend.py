@@ -126,59 +126,19 @@ def shell_sandbox_state() -> str:
     return "unavailable"
 
 
-def _linked_worktree_gitdir(workspace: Path) -> Path | None:
-    """The private gitdir of a linked worktree at/above ``workspace``, else ``None``.
-
-    A linked worktree has a ``.git`` FILE (``gitdir: <repo>/.git/worktrees/<n>``)
-    whose target lives outside the workspace.  Anything unreadable or malformed
-    resolves to ``None``: the caller then keeps the plain (read-only) behaviour.
-    """
-    for base in (workspace, *workspace.parents):
-        dot_git = base / ".git"
-        try:
-            if not dot_git.is_file():
-                continue
-            line = dot_git.read_text(encoding="utf-8").splitlines()[0]
-        except (OSError, UnicodeDecodeError, IndexError):
-            return None
-        if not line.startswith("gitdir:"):
-            return None
-        gitdir = (base / line[len("gitdir:"):].strip()).resolve()
-        return gitdir if gitdir.is_dir() else None
-    return None
-
-
-def _worktree_writable_paths(workspace: Path) -> list[str]:
-    """Paths outside ``workspace`` that a ``git commit`` from a linked worktree writes.
-
-    This worktree's own gitdir plus the shared ``objects``, ``refs`` and ``logs``
-    of the common dir.  ``config``, ``hooks`` and the main tree stay read-only.
-    """
-    gitdir = _linked_worktree_gitdir(workspace)
-    if gitdir is None:
-        return []
-    try:
-        common = (gitdir / (gitdir / "commondir").read_text(encoding="utf-8").strip()).resolve()
-    except (OSError, UnicodeDecodeError):
-        return []
-    shared = [common / name for name in ("objects", "refs", "logs")]
-    return [str(gitdir), *(str(p) for p in shared if p.is_dir())]
-
-
 def confine_shell_argv(argv: Sequence[str], workspace: Path) -> list[str]:
     """Prefix ``argv`` with bwrap: ``workspace`` read-write, everything else read-only.
 
     The whole filesystem stays readable (reads outside the root are not refused);
     a write anywhere but ``workspace`` fails at the kernel with EROFS, whatever the
-    command text looks like.  Network is shared, like the host path.  A linked git
-    worktree also gets its own gitdir and the common objects/refs/logs writable so
-    ``git commit`` works; if those cannot be resolved the plain behaviour stays.
+    command text looks like.  Network is shared, like the host path.  Shared git
+    state (a linked worktree's gitdir, the common objects/refs) stays read-only on
+    purpose: git writes there by renaming, so any writable bind is an escape.
     """
     root = str(workspace)
-    binds = [b for path in [root, *_worktree_writable_paths(workspace)] for b in ("--bind", path, path)]
     return [
         "bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
-        *binds, "--die-with-parent", "--new-session",
+        "--bind", root, root, "--die-with-parent", "--new-session",
         "--chdir", root, *argv,
     ]
 
