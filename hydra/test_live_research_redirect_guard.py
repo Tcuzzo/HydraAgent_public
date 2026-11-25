@@ -37,7 +37,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             "/to-localhost": f"http://localhost:{port}/internal",
             "/hop1": f"http://127.0.0.1:{port}/hop2",
             "/to-metadata": "http://169.254.169.254/latest/meta-data/",
-            "/to-private": "http://10.255.255.1/secret",
+            "/to-private": "http://10.0.0.1/secret",
         }
         if self.path in targets:
             self.send_response(302)
