@@ -51,6 +51,7 @@ _SPECIAL = tuple(
     (ipaddress.ip_network(net), kind)
     for net, kind in (
         ("::ffff:0:0/96", "reserved"),  # IPv4-mapped; the stdlib's classification of this range moved between Python releases, so the guard owns it
+        ("2002::/16", "private"),  # 6to4; the stdlib's classification of this range moved between Python releases too, so the guard owns it
         ("100.64.0.0/10", "private"),  # RFC 6598 carrier-grade NAT (Tailscale; a cloud metadata address)
         ("192.0.0.0/24", "private"),  # RFC 6890 IETF protocol assignments
         ("198.18.0.0/15", "benchmark"),  # RFC 2544; a proxy answers public names from it
