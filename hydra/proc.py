@@ -47,10 +47,19 @@ Public API
 ``kill_tree(proc)``
     Kill ``proc`` and its entire process subtree.  No-op if the process has
     already exited.  Safe to call from a timeout handler.
+
+``confinement_violation(command, root)``
+    Static write-target check for a shell string: the first path the command
+    would write outside ``root`` (redirections and write-shaped verbs), or
+    ``None``.  Per-OS grammar: bash on POSIX, cmd.exe on Windows.
 """
 from __future__ import annotations
 
+import ntpath
 import os
+import posixpath
+import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -427,3 +436,290 @@ def run_shell(
         command=command,
         cwd=cwd_str,
     )
+
+
+# ── Workspace write-target confinement ────────────────────────────────────────
+#
+# Per-OS contract.  The check is static: it reads the command string the same
+# way the shell that will run it does, and refuses a write whose resolved path
+# leaves ``root``.  It is a path rule, not a sandbox; it applies on every OS.
+#   POSIX   (bash):    ``>`` ``>>`` ``&>`` redirections; cp/mv/install/ln/touch/
+#                      mkdir/tee operands; ``dd of=``; ``-t DIR``; ``cd`` and
+#                      ``bash -c`` / ``eval`` are followed.
+#   Windows (cmd.exe): ``>`` ``>>`` redirections; copy/xcopy/robocopy/move/md/
+#                      mkdir/mklink operands; ``cd`` / ``cmd /c`` are followed.
+# Reads are never refused.  A target that cannot be resolved statically (an
+# unexpanded ``$VAR``, ``$(...)``, ``%VAR%``) is refused rather than guessed.
+
+_SEPARATORS = frozenset(";&|()")
+_PUNCTUATION = _SEPARATORS | frozenset("<>")
+_ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
+_PASSTHROUGH = frozenset({"sudo", "env", "command", "exec", "nohup", "time", "nice"})
+_POSIX_SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh"})
+_POSIX_SINKS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"})
+_WINDOWS_SINKS = frozenset({"nul"})
+# verb -> which operands are write targets: "all", "last", or an operand index.
+_POSIX_WRITE_VERBS = {
+    "touch": "all", "mkdir": "all", "tee": "all", "mv": "all",
+    "cp": "last", "install": "last", "ln": "last", "dd": "of",
+}
+_WINDOWS_WRITE_VERBS = {
+    "copy": "last", "xcopy": "last", "move": "all", "md": "all", "mkdir": "all",
+    "robocopy": 1, "mklink": 0,
+}
+_TARGET_DIR_FLAGS = frozenset({"-t", "--target-directory"})
+_MAX_NESTING = 3
+
+
+def _tokenize(command: str, windows: bool) -> list[str]:
+    """Split ``command`` into words and shell punctuation tokens."""
+    text = command.replace("\r", "\n").replace("\n", " ; ")
+    try:
+        lex = shlex.shlex(text, posix=not windows, punctuation_chars=True)
+        lex.whitespace_split = True
+        lex.commenters = ""
+        tokens = list(lex)
+    except ValueError:  # unbalanced quote: the shell will reject it too; scan bare
+        lex = shlex.shlex(re.sub(r"[\"']", " ", text), posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        lex.commenters = ""
+        tokens = list(lex)
+    return [t.strip('"') for t in tokens] if windows else tokens
+
+
+def _is_separator(token: str) -> bool:
+    return bool(token) and set(token) <= _SEPARATORS
+
+
+def _flush(commands: list, words: list[str], redirects: list[str]) -> None:
+    if words or redirects:
+        commands.append((words, redirects))
+
+
+def _redirect_target(token: str, nxt: str | None) -> str | None:
+    """The file a redirection operator writes to; ``None`` for reads and fd dups."""
+    if ">" not in token or nxt is None:
+        return None
+    if token.endswith("&") and re.fullmatch(r"\d+|-", nxt):
+        return None  # ``2>&1`` duplicates a descriptor, it does not name a file
+    return nxt
+
+
+def _split_commands(tokens: list[str]) -> list[tuple[list[str], list[str]]]:
+    """Group tokens into simple commands: ``(words, redirection_targets)``."""
+    commands: list[tuple[list[str], list[str]]] = []
+    words: list[str] = []
+    redirects: list[str] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if _is_separator(token):
+            _flush(commands, words, redirects)
+            words, redirects = [], []
+        elif set(token) <= _PUNCTUATION:  # a redirection operator, not a quoted word
+            target = _redirect_target(token, tokens[i + 1] if i + 1 < len(tokens) else None)
+            if target is not None:
+                redirects.append(target)
+            if words and words[-1].isdigit():
+                words.pop()  # the fd number in ``2>file``
+            i += 1  # the next token belongs to the redirection
+        else:
+            words.append(token)
+        i += 1
+    _flush(commands, words, redirects)
+    return commands
+
+
+def _verb_name(word: str, windows: bool) -> str:
+    name = (ntpath if windows else posixpath).basename(word)
+    if windows:
+        name = name.lower().removesuffix(".exe")
+    return name
+
+
+def _strip_wrappers(words: list[str], windows: bool) -> list[str]:
+    """Drop leading ``VAR=x`` assignments and pass-through wrappers (sudo, env...)."""
+    words = list(words)
+    while words:
+        if _ASSIGNMENT.match(words[0]) or (
+            not windows and _verb_name(words[0], windows) in _PASSTHROUGH
+        ):
+            words.pop(0)
+            while words and words[0].startswith("-") and not windows:
+                words.pop(0)
+        else:
+            break
+    return words
+
+
+def _is_option(word: str, windows: bool) -> bool:
+    if windows:
+        return word.startswith("/") and not re.search(r"[\\/]", word[1:])
+    return word.startswith("-") and word != "-"
+
+
+def _operands(args: list[str], windows: bool) -> list[str]:
+    """Positional operands: options skipped; after ``--`` everything is positional."""
+    out: list[str] = []
+    positional = False
+    for word in args:
+        if not positional and word == "--":
+            positional = True
+        elif positional or not _is_option(word, windows):
+            out.append(word)
+    return out
+
+
+def _target_dir(args: list[str]) -> tuple[str | None, list[str]]:
+    """Pull ``-t DIR`` / ``--target-directory[=]DIR`` out of ``args``."""
+    for i, word in enumerate(args):
+        if word in _TARGET_DIR_FLAGS and i + 1 < len(args):
+            return args[i + 1], args[:i] + args[i + 2:]
+        if word.startswith("--target-directory="):
+            return word.split("=", 1)[1], args[:i] + args[i + 1:]
+    return None, args
+
+
+def _select(operands: list[str], mode: str | int) -> list[str]:
+    if mode == "all":
+        return operands
+    if mode == "last":
+        return operands[-1:]
+    return operands[mode:mode + 1]
+
+
+def _write_operands(args: list[str], mode: str | int, windows: bool) -> list[str]:
+    if mode == "of":  # dd of=PATH
+        return [a[3:] for a in args if a.startswith("of=")]
+    directory, args = (None, args) if windows else _target_dir(args)
+    targets = _select(_operands(args, windows), mode)
+    return targets if directory is None else [*targets, directory]
+
+
+def _verb_targets(words: list[str], windows: bool) -> list[str]:
+    """Write targets named by a write-shaped command's operands."""
+    if not words:
+        return []
+    table = _WINDOWS_WRITE_VERBS if windows else _POSIX_WRITE_VERBS
+    mode = table.get(_verb_name(words[0], windows))
+    return [] if mode is None else _write_operands(words[1:], mode, windows)
+
+
+def _windows_nested(verb: str, args: list[str]) -> str | None:
+    flags = [i for i, a in enumerate(args) if a.lower() in ("/c", "/k")]
+    return " ".join(args[flags[0] + 1:]) if verb == "cmd" and flags else None
+
+
+def _posix_nested(verb: str, args: list[str]) -> str | None:
+    if verb == "eval":
+        return " ".join(args)
+    if verb not in _POSIX_SHELLS:
+        return None
+    for i, arg in enumerate(args[:-1]):
+        if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", arg):
+            return args[i + 1]
+    return None
+
+
+def _nested_script(words: list[str], windows: bool) -> str | None:
+    """The script text of ``bash -c ...`` / ``eval ...`` / ``cmd /c ...``."""
+    if not words:
+        return None
+    pick = _windows_nested if windows else _posix_nested
+    return pick(_verb_name(words[0], windows), words[1:])
+
+
+def _expand(raw: str, windows: bool) -> str | None:
+    """Expand ``~`` and defined variables; ``None`` when still unresolvable."""
+    text = os.path.expanduser(os.path.expandvars(raw))
+    unresolved = ("%",) if windows else ("$", "`")
+    return None if any(ch in text for ch in unresolved) else text
+
+
+def _resolve(text: str, cwd: str, windows: bool) -> str:
+    """Absolute, normalised path; symlinks resolved when the flavour is this OS."""
+    mod = ntpath if windows else posixpath
+    joined = mod.join(cwd, text)
+    if windows == (os.name == "nt"):
+        return os.path.realpath(joined)
+    return mod.normpath(joined)
+
+
+def _inside(path: str, root: str, windows: bool) -> bool:
+    mod = ntpath if windows else posixpath
+    try:
+        return mod.commonpath([mod.normcase(path), mod.normcase(root)]) == mod.normcase(root)
+    except ValueError:  # different drives
+        return False
+
+
+def _is_sink(text: str, windows: bool) -> bool:
+    return text.lower() in _WINDOWS_SINKS if windows else text in _POSIX_SINKS
+
+
+def _cwd_unknown(text: str, cwd: str | None, windows: bool) -> bool:
+    return cwd is None and not (ntpath if windows else posixpath).isabs(text)
+
+
+def _escape(raw: str, cwd: str | None, root: str, windows: bool) -> str | None:
+    """The blocked path text when writing ``raw`` leaves ``root``, else ``None``."""
+    text = _expand(raw, windows)
+    if text is None:
+        return f"{raw} (cannot be resolved before the command runs)"
+    if _is_sink(text, windows):
+        return None
+    if _cwd_unknown(text, cwd, windows):
+        return f"{raw} (working directory unknown after cd)"
+    path = _resolve(text, cwd or root, windows)
+    return None if _inside(path, root, windows) else path
+
+
+def _next_cwd(words: list[str], cwd: str | None, windows: bool) -> str | None:
+    """The working directory after ``cd`` / ``pushd`` / ``chdir``; unchanged otherwise."""
+    if not words or _verb_name(words[0], windows) not in ("cd", "chdir", "pushd"):
+        return cwd
+    ops = _operands(words[1:], windows)
+    if not ops:
+        return cwd if windows else os.path.expanduser("~")
+    text = _expand(ops[0], windows)
+    if text is None or text == "-" or cwd is None:
+        return None
+    return _resolve(text, cwd, windows)
+
+
+def _nested_violation(
+    words: list[str], root: str, cwd: str | None, windows: bool, depth: int
+) -> str | None:
+    script = _nested_script(words, windows)
+    if not script or depth >= _MAX_NESTING:
+        return None
+    return _scan(script, root, cwd, windows, depth + 1)
+
+
+def _scan(
+    command: str, root: str, cwd: str | None, windows: bool, depth: int
+) -> str | None:
+    for words, redirects in _split_commands(_tokenize(command, windows)):
+        words = _strip_wrappers(words, windows)
+        for raw in [*redirects, *_verb_targets(words, windows)]:
+            blocked = _escape(raw, cwd, root, windows)
+            if blocked:
+                return blocked
+        blocked = _nested_violation(words, root, cwd, windows, depth)
+        if blocked:
+            return blocked
+        cwd = _next_cwd(words, cwd, windows)
+    return None
+
+
+def confinement_violation(
+    command: str, root: str | Path, *, windows: bool | None = None
+) -> str | None:
+    """First path ``command`` would write outside ``root``, or ``None``.
+
+    ``windows`` selects the grammar (default: this OS).  Never raises on
+    odd input: what cannot be parsed is scanned bare, what cannot be resolved
+    is reported as blocked.
+    """
+    windows = (os.name == "nt") if windows is None else windows
+    return _scan(command, str(root), str(root), windows, 0)

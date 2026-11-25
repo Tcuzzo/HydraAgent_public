@@ -4,10 +4,13 @@ Mirror of OpenMono's `BashTool` (`src/OpenMono.Cli/Tools/BashTool.cs`),
 adapted to HydraAgent's skill protocol.
 
 Constraints (enforced, not advised):
-  - Runs with `cwd=root`; the command itself is the operator's
-    responsibility (the §10.7 hook stack — `worktree_scope`,
-    `authority_class_routing` — is where danger-pattern gating
-    belongs). This skill is the boundary, not the policy.
+  - Runs with `cwd=root`, and refuses a command whose WRITE TARGETS
+    (redirections; cp/mv/touch/mkdir/tee/dd of=/install/ln operands;
+    copy/move/md on Windows) resolve outside `root`
+    (`hydra.proc.confinement_violation`). The path rule applies on every
+    OS, sandbox or not; reads are never refused. Danger-pattern gating
+    beyond write paths stays with the §10.7 hook stack (`worktree_scope`,
+    `authority_class_routing`).
   - Wall-clock bounded by `timeout`; the process is killed on
     expiry and the partial output is returned with `timed_out=True`.
   - stdout+stderr captured separately, each truncated at
@@ -28,7 +31,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from hydra.proc import kill_tree, popen_portable, _shell_argv
+from hydra.proc import confinement_violation, kill_tree, popen_portable, _shell_argv
 from skills.fs_read import SkillError
 
 DEFAULT_TIMEOUT_S = 30.0
@@ -41,16 +44,30 @@ def _truncate(buf: bytes, limit: int) -> tuple[str, bool]:
     return buf[:limit].decode("utf-8", errors="replace"), True
 
 
-def run(
-    command: str,
-    root: str | Path,
-    *,
-    timeout: float = DEFAULT_TIMEOUT_S,
-    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
-) -> dict:
-    """Run `command` (shell string) with `cwd=root`. Raise `SkillError`
-    on input refusal; otherwise return a structured result dict — even
-    when the command itself failed or timed out."""
+def _confinement_refusal(command: str, root: Path) -> dict | None:
+    """Structured refusal naming the blocked path, or None when writes stay inside."""
+    blocked = confinement_violation(command, root)
+    if blocked is None:
+        return None
+    return {
+        "ok": False,
+        "exit_code": -1,
+        "stdout": "",
+        "stderr": (
+            f"refused: write target outside the workspace root: {blocked} "
+            f"(workspace root: {root})"
+        ),
+        "duration_s": 0.0,
+        "timed_out": False,
+        "truncated": False,
+        "command": command,
+        "cwd": str(root),
+        "reason": "write-outside-workspace-root",
+        "blocked_path": blocked,
+    }
+
+
+def _validate(command: object, timeout: float, max_output_bytes: int) -> None:
     if not isinstance(command, str) or not command.strip():
         raise SkillError("command must be a non-empty string")
     if timeout <= 0:
@@ -60,44 +77,14 @@ def run(
             f"max_output_bytes must be positive, got {max_output_bytes}"
         )
 
-    root_resolved = Path(root).resolve()
-    if not root_resolved.is_dir():
-        raise SkillError(f"root is not a directory: {root_resolved}")
 
-    # --- OPT-IN container cage (HYDRA_EXEC_SANDBOX=1) ---
-    # Default is OFF — normal host subprocess path is used when unset/empty.
-    if os.environ.get("HYDRA_EXEC_SANDBOX"):
-        from hydra.container_sandbox import detect_sandbox_engine, run_in_sandbox
-        if detect_sandbox_engine():
-            start = time.monotonic()
-            result = run_in_sandbox(
-                command=command,
-                cwd_mount=str(root_resolved),
-                network=True,
-                timeout=timeout,
-            )
-            duration_s = time.monotonic() - start
-            # Apply the same truncation contract as the host path.
-            # run_in_sandbox returns str; encode to bytes for _truncate.
-            stdout, t1 = _truncate(
-                result["stdout"].encode("utf-8", errors="replace"), max_output_bytes
-            )
-            stderr, t2 = _truncate(
-                result["stderr"].encode("utf-8", errors="replace"), max_output_bytes
-            )
-            exit_code = result["exit_code"] if result["exit_code"] is not None else -1
-            timed_out = result["timed_out"]
-            return {
-                "ok": exit_code == 0 and not timed_out,
-                "exit_code": exit_code,
-                "stdout": stdout,
-                "stderr": stderr,
-                "duration_s": duration_s,
-                "timed_out": timed_out,
-                "truncated": t1 or t2,
-                "command": command,
-                "cwd": str(root_resolved),
-            }
+def _run_in_container(
+    command: str, root: Path, timeout: float, max_output_bytes: int
+) -> dict:
+    """OPT-IN container cage (HYDRA_EXEC_SANDBOX=1); never falls back to the host."""
+    from hydra.container_sandbox import detect_sandbox_engine, run_in_sandbox
+
+    if not detect_sandbox_engine():
         # An explicitly requested boundary must never silently become host execution.
         return {
             "ok": False,
@@ -108,11 +95,40 @@ def run(
             "timed_out": False,
             "truncated": False,
             "command": command,
-            "cwd": str(root_resolved),
+            "cwd": str(root),
             "reason": "no-container-engine",
         }
-    # --- end container cage ---
+    start = time.monotonic()
+    result = run_in_sandbox(
+        command=command, cwd_mount=str(root), network=True, timeout=timeout
+    )
+    duration_s = time.monotonic() - start
+    # Apply the same truncation contract as the host path.
+    # run_in_sandbox returns str; encode to bytes for _truncate.
+    stdout, t1 = _truncate(
+        result["stdout"].encode("utf-8", errors="replace"), max_output_bytes
+    )
+    stderr, t2 = _truncate(
+        result["stderr"].encode("utf-8", errors="replace"), max_output_bytes
+    )
+    exit_code = result["exit_code"] if result["exit_code"] is not None else -1
+    timed_out = result["timed_out"]
+    return {
+        "ok": exit_code == 0 and not timed_out,
+        "exit_code": exit_code,
+        "stdout": stdout,
+        "stderr": stderr,
+        "duration_s": duration_s,
+        "timed_out": timed_out,
+        "truncated": t1 or t2,
+        "command": command,
+        "cwd": str(root),
+    }
 
+
+def _run_on_host(
+    command: str, root: Path, timeout: float, max_output_bytes: int
+) -> dict:
     start = time.monotonic()
     timed_out = False
     # Route through hydra.proc.popen_portable + kill_tree so this code path
@@ -124,7 +140,7 @@ def run(
     argv = _shell_argv(command)
     proc = popen_portable(
         argv,
-        cwd=str(root_resolved),
+        cwd=str(root),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -153,5 +169,30 @@ def run(
         "timed_out": timed_out,
         "truncated": t1 or t2,
         "command": command,
-        "cwd": str(root_resolved),
+        "cwd": str(root),
     }
+
+
+def run(
+    command: str,
+    root: str | Path,
+    *,
+    timeout: float = DEFAULT_TIMEOUT_S,
+    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+) -> dict:
+    """Run `command` (shell string) with `cwd=root`. Raise `SkillError`
+    on input refusal; otherwise return a structured result dict — even
+    when the command itself failed, timed out, or was refused for writing
+    outside `root` (`reason="write-outside-workspace-root"`)."""
+    _validate(command, timeout, max_output_bytes)
+    root_resolved = Path(root).resolve()
+    if not root_resolved.is_dir():
+        raise SkillError(f"root is not a directory: {root_resolved}")
+    # The path rule runs first, on every OS, sandbox or not.
+    refusal = _confinement_refusal(command, root_resolved)
+    if refusal is not None:
+        return refusal
+    # Default is OFF — the normal host subprocess path is used when unset/empty.
+    if os.environ.get("HYDRA_EXEC_SANDBOX"):
+        return _run_in_container(command, root_resolved, timeout, max_output_bytes)
+    return _run_on_host(command, root_resolved, timeout, max_output_bytes)
