@@ -159,7 +159,7 @@ def bind_mcp_tools(config_path: str | Path, policy, *, read_only: bool = False) 
         if read_only and effect != 'mcp_read':
             from hydra.policy import ApprovalDenied
             raise ApprovalDenied('This specialist cannot invoke mutating or unclassified MCP tools')
-        policy.require(effect, {'server': server, 'tool': tool}, non_destructive_auto_allow=False)
+        policy.require(effect, {'server': server, 'tool': tool, 'arguments': arguments}, non_destructive_auto_allow=False)
         return invoke(servers[server], tool, arguments)
 
     def schema(properties):

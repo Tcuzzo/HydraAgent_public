@@ -38,10 +38,17 @@ EXTENSION_POLL_WINDOW_SECONDS = 300
 EXTENSION_NONCE_TTL_SECONDS = 600
 VALID_MODES = frozenset({"operator", "iteration", "yolo"})
 _IS_WINDOWS = os.name == "nt"
-AUTH_FILE_NAMES = ("totp.json", "unlock_state.json")
-#: Argument names that carry file content, not a path or a command.
-_CONTENT_ARGS = frozenset({"content", "old_string", "new_string", "text", "body", "message"})
+#: Tool argument names that carry a filesystem path.
+_PATH_ARGS = frozenset({
+    "path", "paths", "file", "files", "filename", "dir", "directory", "source", "src",
+    "dest", "destination", "target", "cwd", "root", "from", "to",
+})
+_COMMAND_ARGS = frozenset({"command", "cmd"})
 _log = logging.getLogger(__name__)
+#: Yolo authority, held ONLY in this process's memory: auth dir -> unlocked_until.
+#: It is set by an operator unlock and never read back from a file, so no file an
+#: agent can write or sign is ever yolo authority, and a restart ends it.
+_YOLO_UNLOCKS: dict[Path, float] = {}
 
 
 class OperatorAuthError(Exception):
@@ -219,6 +226,8 @@ class OperatorAuth:
     def extend_yolo(self, nonce: str, *, now: float | None = None) -> AuthStatus:
         current_time = _now(now)
         state = self._load_state()
+        if not self._state_yolo_active(state, current_time):
+            raise OperatorAuthError("yolo is not unlocked in this process; unlock it with your authenticator code")
         expected = str(state.get("extension_nonce") or "")
         expires_at = state.get("extension_expires_at")
         if not expected or not hmac.compare_digest(expected, str(nonce)):
@@ -289,6 +298,15 @@ class OperatorAuth:
         }
 
     def _load_state(self) -> dict[str, Any]:
+        state = self._persisted_state()
+        held = _YOLO_UNLOCKS.get(self.auth_dir)
+        if held is not None:
+            state.update(mode="yolo", unlocked_until=held)
+        return state
+
+    def _persisted_state(self) -> dict[str, Any]:
+        """The state file as bookkeeping only: it can carry the mode, activity time and
+        extension nonce, but never yolo authority (that lives in memory)."""
         if not self.state_path.exists():
             return self._base_state()
         raw = self._read_json(self.state_path)
@@ -296,20 +314,29 @@ class OperatorAuth:
             return self._base_state()
         state = self._base_state()
         state.update(raw)
-        # Fail closed: an unlock state the operator's authenticator did not sign is
-        # just a file. A process that can only write JSON gets no authority.
-        if not self._signature_valid(state):
-            if state.get("unlocked_until") is not None or state.get("mode") != "operator":
-                _log.warning(
-                    "operator auth: dropped %s because it is not signed by your authenticator "
-                    "(an old or hand-edited unlock); unlock yolo again with your code",
-                    self.state_path,
-                )
+        claims_yolo = state.get("unlocked_until") is not None or state.get("mode") == "yolo"
+        valid = self._signature_valid(state)
+        if claims_yolo or (not valid and state.get("mode") != "operator"):
+            _log.warning(
+                "operator auth: ignored the unlock in %s (a file is never yolo authority); "
+                "unlock yolo again with your authenticator code",
+                self.state_path,
+            )
+        if not valid:
             return self._base_state()
+        if claims_yolo:
+            state.update(mode="operator", unlocked_until=None)
         return state
 
     def _write_state(self, state: dict[str, Any]) -> None:
-        state.pop(STATE_SIGNATURE_KEY, None)
+        unlocked_until = state.get("unlocked_until")
+        if state.get("mode") == "yolo" and isinstance(unlocked_until, (int, float)):
+            _YOLO_UNLOCKS[self.auth_dir] = float(unlocked_until)
+        else:
+            _YOLO_UNLOCKS.pop(self.auth_dir, None)
+        state = {k: v for k, v in state.items() if k != STATE_SIGNATURE_KEY}
+        if state.get("mode") == "yolo":
+            state.update(mode="operator", unlocked_until=None)
         if self.secret_path.exists():  # no authenticator yet: unsigned, and unsigned carries no authority
             state[STATE_SIGNATURE_KEY] = _state_signature(self.load_secret(), state)
         self._write_json_private(self.state_path, state)
@@ -516,45 +543,51 @@ def _auth_roots() -> list[Path]:
     return list({OperatorAuth().auth_dir, DEFAULT_AUTH_DIR.resolve()})
 
 
-def _string_values(value: Any, key: str = "") -> list[str]:
-    if isinstance(value, str):
-        return [] if key in _CONTENT_ARGS else [value]
+def _args_by_kind(value: Any, key: str = "") -> list[tuple[str, str]]:
+    """Walk tool arguments and keep only what is a command or a path:
+    (kind, text) pairs. Free text (a pattern, a message, file content) is ignored."""
     if isinstance(value, dict):
-        return [text for k, v in value.items() for text in _string_values(v, str(k))]
+        return [pair for k, v in value.items() for pair in _args_by_kind(v, str(k))]
     if isinstance(value, (list, tuple)):
-        return [text for v in value for text in _string_values(v, key)]
+        return [pair for v in value for pair in _args_by_kind(v, key)]
+    if isinstance(value, str) and key in _COMMAND_ARGS:
+        return [("command", value)]
+    if isinstance(value, str) and key in _PATH_ARGS:
+        return [("path", value)]
     return []
 
 
 def _token_paths(token: str) -> list[Path]:
-    candidate = os.path.expanduser(token.split("=", 1)[-1])
+    candidate = os.path.expandvars(os.path.expanduser(token.split("=", 1)[-1]))
     matches = glob.glob(candidate) if glob.has_magic(candidate) else []
     return [Path(m).resolve() for m in (matches or [candidate])]
 
 
-def _hits_auth_dir(text: str, roots: list[Path]) -> bool:
+def _in_roots(token: str, roots: list[Path]) -> bool:
+    return any(path == root or root in path.parents for path in _token_paths(token) for root in roots)
+
+
+def _command_hits_auth_dir(text: str, roots: list[Path]) -> bool:
     text = os.path.expandvars(text.replace("~/", str(Path.home()) + "/"))
-    if any(str(root) in text for root in roots) or any(name in text for name in AUTH_FILE_NAMES):
+    if any(str(root) in text for root in roots):  # e.g. a path inside `python -c "..."`
         return True
     try:
         tokens = shlex.split(text)
     except ValueError:
         tokens = text.split()
-    return any(
-        path == root or root in path.parents
-        for token in tokens
-        for path in _token_paths(token)
-        for root in roots
-    )
+    return any(_in_roots(token, roots) for token in tokens)
 
 
 def tool_touches_auth_dir(arguments: dict[str, Any]) -> bool:
-    """True when any path or command argument of a tool call names the operator
-    auth directory or a file in it (through ~, env vars, relative paths, links or
-    globs). The agent acts only through tools, so refusing these calls keeps the
-    authenticator secret out of the agent's reach."""
+    """Belt and braces: True when a tool's command or path argument names the
+    operator auth directory (through ~, env vars, relative paths, links or globs).
+    This is NOT what keeps yolo safe — yolo authority lives only in process memory
+    — it only keeps the authenticator secret out of casual reach."""
     roots = _auth_roots()
-    return any(_hits_auth_dir(text, roots) for text in _string_values(arguments))
+    return any(
+        _command_hits_auth_dir(text, roots) if kind == "command" else _in_roots(text, roots)
+        for kind, text in _args_by_kind(arguments)
+    )
 
 
 def _decode_base32_secret(secret_base32: str) -> bytes:
