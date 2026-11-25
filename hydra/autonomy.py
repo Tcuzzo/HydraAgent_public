@@ -71,25 +71,38 @@ DESTRUCTIVE_BASH_TOKENS = frozenset(
     }
 )
 
-# These only count when they are the command being run (not an argument such as
-# `grep cp notes.txt`). See _command_words: the one scanner that finds every word
-# a shell would run, wherever it sits.
-DESTRUCTIVE_COMMAND_WORDS = frozenset({"mv", "cp", "chown", "chmod"})
+# Command words that are destructive when something runs them. A word counts
+# when a shell would run it as a command, or when it sits behind any word that
+# is not known to treat its arguments as plain data (see _INERT): the default is
+# to gate, so an unlisted wrapper (`flock`, `ssh host`, `strace`) is covered the
+# same way as a listed one. `alias` is here because a defined alias hides the word.
+DESTRUCTIVE_COMMAND_WORDS = frozenset({"mv", "cp", "chown", "chmod", "alias"})
 _SEPARATORS = frozenset({"&&", "||", ";", "|", "&", "(", ")"})
 # Shell keywords that hand the next word over to be run as the command.
 _KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}"})
-# Words that run the words after them as a command (fail closed: every later word
-# in the segment counts, because an option may take a value we cannot know).
-_WRAPPERS = frozenset(
+# Commands whose arguments are data, never another command. Everything else is
+# treated as possibly running its arguments (fail closed).
+_INERT = frozenset(
     {
-        "env", "command", "builtin", "nohup", "xargs", "time", "exec", "nice",
-        "ionice", "timeout", "busybox", "stdbuf", "setsid", "chrt", "watch", "doas",
+        "echo", "printf", "grep", "egrep", "fgrep", "rg", "ag", "which", "whereis", "type",
+        "man", "cat", "ls", "head", "tail", "wc", "sort", "uniq", "diff", "cmp", "stat",
+        "file", "du", "df", "pwd", "true", "false", "test", "[", "[[", "git", "pytest",
+        "python", "python3", "ruff", "radon", "cd", "mkdir", "touch", "awk", "sed", "cut",
+        "tr", "basename", "dirname", "realpath", "readlink", "date", "whoami", "id",
+        "uname", "jq", "tree", "less", "more", "sleep", "export", "set", "unset", "local",
+        "declare", "for", "case", "select", "find", "pip", "pip3", "npm", "node", "ps",
+        "seq", "hostname", "uptime", "free",
     }
 )
 _EXEC_FLAGS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash", "csh", "tcsh", "fish"})
-_INLINE_FLAG = re.compile(r"^-[a-z]*c[a-z]*$")
-_EXPECT, _WRAP, _ARGS = "expect", "wrap", "args"
+# Words that run a script read from stdin, a pipe, a here-string or a substitution.
+_SCRIPT_READERS = _SHELLS | {"source", ".", "at", "batch"}
+_STDIN_SHELL_FLAG = re.compile(r"^-[a-z]*s[a-z]*$")
+_ENV_ASSIGNMENT = re.compile(r"^[a-z_][a-z0-9_]*=\S*$")
+# A command word that is itself an expansion: $x, ${X:-cp}, cp${IFS}a, c*, {c,}p.
+_EXPANSION = re.compile(r"[$*?]|\{[^}]*,")
+_EXPECT, _CAND, _ARGS = "expect", "candidate", "args"
 
 # Policy: plain ssh/scp/sftp/rsync/network commands are NOT destructive on
 # their own and must NOT be approval-gated. They were formerly
@@ -165,9 +178,10 @@ def is_destructive_bash_command(command: str) -> bool:
         tokens = _shell_tokens(command)
     except ValueError:
         return True
-    if not tokens:
-        return False
-    lowered = [token.lower() for token in tokens]
+    return bool(tokens) and _tokens_destructive(command, [token.lower() for token in tokens])
+
+
+def _tokens_destructive(command: str, lowered: list[str]) -> bool:
     if "$(" in command or "`" in command:
         return True
     if any(token.split("/")[-1] in DESTRUCTIVE_BASH_TOKENS for token in lowered):
@@ -254,28 +268,26 @@ def _has_destructive_rsync(tokens: list[str]) -> bool:
 
 
 def _skippable(token: str) -> bool:
-    return token in _KEYWORDS or token.startswith("-") or "=" in token
+    return token in _KEYWORDS or token.startswith("-") or bool(_ENV_ASSIGNMENT.match(token))
 
 
-def _state_after(state: str, base: str) -> str:
-    return _WRAP if state == _WRAP or base in _WRAPPERS else _ARGS
+def _state_after(state: str, token: str) -> str:
+    return _CAND if state == _CAND or token.split("/")[-1] not in _INERT else _ARGS
 
 
 def _command_words(tokens: list[str]):
-    """Yield ``(index, word)`` for every word a shell would run as a command:
-    the first word of each segment (after separators, subshell parens, keywords
-    such as ``if``/``do``, env assignments), every word behind a wrapper
-    (``timeout 5 cp``), and the word after ``find -exec``."""
+    """Yield ``(index, token, at_command_position)`` for every word a shell might
+    run as a command: the first word of each segment (after separators, subshell
+    parens, keywords such as ``if``/``do``, env assignments, ``find -exec``), and
+    every later word of a segment whose command is not known to take plain data
+    (so an unlisted wrapper is covered the way a listed one is)."""
     state = _EXPECT
     for index, token in enumerate(tokens):
-        if token in _SEPARATORS:
-            state = _EXPECT
-        elif token in _EXEC_FLAGS:
+        if token in _SEPARATORS or token in _EXEC_FLAGS:
             state = _EXPECT
         elif state != _ARGS and not _skippable(token):
-            base = token.split("/")[-1]
-            yield index, base
-            state = _state_after(state, base)
+            yield index, token, state == _EXPECT
+            state = _state_after(state, token)
 
 
 def _segment_args(tokens: list[str], index: int) -> list[str]:
@@ -288,28 +300,36 @@ def _segment_args(tokens: list[str], index: int) -> list[str]:
     return rest
 
 
-def _shell_inline_script(rest: list[str]) -> str | None:
-    """The script given to a shell via ``-c`` (``""`` when -c has none), else None."""
-    for position, token in enumerate(rest):
-        if _INLINE_FLAG.match(token):
-            return rest[position + 1] if position + 1 < len(rest) else ""
-    return None
+def _runs_unseen_script(word: str, rest: list[str]) -> bool:
+    """A shell (or `source`/`at`) whose script comes from stdin, a pipe, a
+    here-string, a heredoc or a process substitution cannot be read here: gated.
+    A shell given a script file or a -c string is judged on that string instead."""
+    if any(arg.startswith("<") for arg in rest):
+        return True
+    if word not in _SHELLS:
+        return False
+    return any(_STDIN_SHELL_FLAG.match(arg) for arg in rest) or all(arg.startswith("-") for arg in rest)
 
 
-def _inline_script_destructive(tokens: list[str], index: int, word: str) -> bool:
-    """`bash -c '<script>'` / `eval '<script>'`: judge the script by the same rule.
-    A shell given -c with no script, or a script that cannot be parsed, is gated."""
-    rest = _segment_args(tokens, index)
-    if word == "eval":
-        return is_destructive_bash_command(" ".join(rest))
-    script = _shell_inline_script(rest) if word in _SHELLS else None
-    return script is not None and (not script or is_destructive_bash_command(script))
+def _string_destructive(token: str) -> bool:
+    """A quoted multi-word argument behind a non-inert command (`-c 'cp a b'`,
+    `ssh host "cp a b"`, `env -S '...'`) is judged as a script by the same rule."""
+    return any(char.isspace() for char in token) and is_destructive_bash_command(token)
+
+
+def _word_destructive(tokens: list[str], index: int, token: str, at_command: bool) -> bool:
+    base = token.split("/")[-1]
+    if base in DESTRUCTIVE_COMMAND_WORDS or _string_destructive(token):
+        return True
+    if at_command and _EXPANSION.search(token):
+        return True
+    return base in _SCRIPT_READERS and _runs_unseen_script(base, _segment_args(tokens, index))
 
 
 def _has_destructive_command_word(tokens: list[str]) -> bool:
     return any(
-        word in DESTRUCTIVE_COMMAND_WORDS or _inline_script_destructive(tokens, index, word)
-        for index, word in _command_words(tokens)
+        _word_destructive(tokens, index, token, at_command)
+        for index, token, at_command in _command_words(tokens)
     )
 
 

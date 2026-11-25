@@ -67,6 +67,14 @@ def _prompt_approval(policy: "ApprovalPolicy", summary: str) -> str:
     return policy.input_fn(f"Approve {summary}? [y/N] ")
 
 
+def _refuse_auth_dir_access(tool_name: str, arguments: dict) -> None:
+    if tool_touches_auth_dir(arguments):
+        raise ApprovalDenied(
+            f"refused: {tool_name!r} touches the operator auth directory; "
+            "no tool may read or write the authenticator secret or unlock state"
+        )
+
+
 @dataclass
 class ApprovalPolicy:
     """Decide whether a tool call may run.
@@ -163,11 +171,7 @@ class ApprovalPolicy:
         self._wait_this_call = self.wait_for_approval if wait is None else bool(wait)
         # The operator's authenticator secret and unlock state are off limits to every
         # tool call, in every mode, even self-heal and yolo. Refused, never queued.
-        if tool_touches_auth_dir(arguments):
-            raise ApprovalDenied(
-                f"refused: {tool_name!r} touches the operator auth directory; "
-                "no tool may read or write the authenticator secret or unlock state"
-            )
+        _refuse_auth_dir_access(tool_name, arguments)
         self._last_approved_request_id = None
         # Slice 4 — PLAN/ACT gate (checked before everything else).
         # In plan_mode, only reads are allowed.  Any mutating tool is denied
