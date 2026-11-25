@@ -278,23 +278,32 @@ def _command_words(tokens: list[str]):
             state = _state_after(state, base)
 
 
-def _inline_script_destructive(tokens: list[str], index: int, word: str) -> bool:
-    """`bash -c '<script>'` / `eval '<script>'`: judge the script by the same rule.
-    A shell given -c with no script, or a script that cannot be parsed, is gated."""
-    rest = []
+def _segment_args(tokens: list[str], index: int) -> list[str]:
+    """The words after ``tokens[index]`` up to the next separator."""
+    rest: list[str] = []
     for token in tokens[index + 1 :]:
         if token in _SEPARATORS:
             break
         rest.append(token)
-    if word == "eval":
-        return is_destructive_bash_command(" ".join(rest))
-    if word not in _SHELLS:
-        return False
+    return rest
+
+
+def _shell_inline_script(rest: list[str]) -> str | None:
+    """The script given to a shell via ``-c`` (``""`` when -c has none), else None."""
     for position, token in enumerate(rest):
         if _INLINE_FLAG.match(token):
-            script = rest[position + 1] if position + 1 < len(rest) else ""
-            return not script or is_destructive_bash_command(script)
-    return False
+            return rest[position + 1] if position + 1 < len(rest) else ""
+    return None
+
+
+def _inline_script_destructive(tokens: list[str], index: int, word: str) -> bool:
+    """`bash -c '<script>'` / `eval '<script>'`: judge the script by the same rule.
+    A shell given -c with no script, or a script that cannot be parsed, is gated."""
+    rest = _segment_args(tokens, index)
+    if word == "eval":
+        return is_destructive_bash_command(" ".join(rest))
+    script = _shell_inline_script(rest) if word in _SHELLS else None
+    return script is not None and (not script or is_destructive_bash_command(script))
 
 
 def _has_destructive_command_word(tokens: list[str]) -> bool:
