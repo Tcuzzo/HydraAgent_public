@@ -312,10 +312,15 @@ def test_e_the_guard_owns_both_release_variable_ranges():
     Two ranges changed their class between Python releases: the IPv4-mapped
     range ``::ffff:0:0/96`` and the 6to4 range ``2002::/16``. The guard
     carries both, so its verdict cannot follow the standard library.
+
+    The ranges are compared as NETWORK OBJECTS, not as their printed form:
+    CPython 3.14 prints the mapped range as ``::ffff:0.0.0.0/96``, so a
+    string key would drift exactly like the property this contract exists to
+    pin shut.
     """
-    owned = {str(network): kind for network, kind in http_policy._SPECIAL}
-    assert owned.get("::ffff:0:0/96") == "reserved", owned
-    assert owned.get("2002::/16") == "private", owned
+    owned = {network: kind for network, kind in http_policy._SPECIAL}
+    assert owned.get(ipaddress.ip_network("::ffff:0:0/96")) == "reserved", owned
+    assert owned.get(ipaddress.ip_network("2002::/16")) == "private", owned
 
 
 @pytest.mark.parametrize("address", _RELEASE_VARIABLE_TRANSITION_FORMS)
