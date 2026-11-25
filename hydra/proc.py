@@ -454,6 +454,11 @@ def run_shell(
 #                      (``A=x``, ``export A=x``, ``for A in x y``, ``$PWD``).
 #   Windows (cmd.exe): ``>`` ``>>`` redirections; copy/xcopy/robocopy/move/md/
 #                      mkdir/mklink operands; ``cd`` / ``cmd /c`` are followed.
+# This scan is the cheap, named FIRST layer.  The boundary is the kernel: on Linux
+# ``skills.bash`` runs the command inside bwrap by default (workspace read-write,
+# the rest read-only; ``hydra.exec_backend.confine_shell_argv``), so a write the
+# scan cannot see still fails.  macOS and Windows have no such sandbox here: they
+# run on the host with this scan only.  Kill switch: HYDRA_SHELL_SANDBOX=0.
 # Reads are never refused.  A write target or a command word that cannot be
 # resolved statically (an unset ``$VAR``, ``%VAR%``, a substitution) is refused
 # and named, never guessed.

@@ -11,6 +11,13 @@ Constraints (enforced, not advised):
     OS, sandbox or not; reads are never refused. Danger-pattern gating
     beyond write paths stays with the §10.7 hook stack (`worktree_scope`,
     `authority_class_routing`).
+  - On Linux the command runs inside the bwrap kernel sandbox BY DEFAULT: the
+    workspace root read-write, the rest of the filesystem read-only, so a write
+    outside the root fails at the kernel whatever the command text looks like
+    (the static scan above is the cheap, named first layer, not the boundary).
+    `HYDRA_SHELL_SANDBOX=0` is the loud kill switch (a WARNING line on every
+    call); no bwrap -> host execution + the scan + one loud install line.
+    macOS and Windows: host execution + the static scan, as before.
   - Wall-clock bounded by `timeout`; the process is killed on
     expiry and the partial output is returned with `timed_out=True`.
   - stdout+stderr captured separately, each truncated at
@@ -28,9 +35,11 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
+from hydra.exec_backend import confine_shell_argv, shell_sandbox_state
 from hydra.proc import confinement_violation, kill_tree, popen_portable, _shell_argv
 from skills.fs_read import SkillError
 
@@ -127,7 +136,7 @@ def _run_in_container(
 
 
 def _run_on_host(
-    command: str, root: Path, timeout: float, max_output_bytes: int
+    command: str, root: Path, timeout: float, max_output_bytes: int, argv: list[str]
 ) -> dict:
     start = time.monotonic()
     timed_out = False
@@ -137,7 +146,6 @@ def _run_on_host(
     # shell=True is replaced by an explicit argv built by hydra.proc._shell_argv
     # so we can use bash -lc on POSIX (same effective behaviour as before) and
     # cmd.exe /c on Windows.
-    argv = _shell_argv(command)
     proc = popen_portable(
         argv,
         cwd=str(root),
@@ -173,6 +181,35 @@ def _run_on_host(
     }
 
 
+def _sandbox_notice(state: str) -> str:
+    """One loud line when the sandbox is not protecting this call; empty otherwise."""
+    if state == "off(kill switch)":
+        return (
+            "WARNING: shell sandbox is OFF (HYDRA_SHELL_SANDBOX kill switch): this command "
+            "ran on the host with only the static path scan. Unset it to turn the sandbox back on."
+        )
+    if state == "unavailable" and sys.platform.startswith("linux"):
+        return (
+            "WARNING: shell sandbox unavailable: bwrap (bubblewrap) is missing or user "
+            "namespaces are disabled; this command ran on the host with only the static "
+            "path scan. Install it: apt install bubblewrap (dnf/pacman: bubblewrap)."
+        )
+    return ""
+
+
+def _annotate(result: dict, state: str) -> dict:
+    result["sandbox"] = state
+    notice = _sandbox_notice(state)
+    if notice:
+        result["stderr"] = f"{notice}\n{result['stderr']}"
+    return result
+
+
+def _host_argv(command: str, root: Path, state: str) -> list[str]:
+    argv = _shell_argv(command)
+    return confine_shell_argv(argv, root) if state == "on" else argv
+
+
 def run(
     command: str,
     root: str | Path,
@@ -183,7 +220,8 @@ def run(
     """Run `command` (shell string) with `cwd=root`. Raise `SkillError`
     on input refusal; otherwise return a structured result dict — even
     when the command itself failed, timed out, or was refused for writing
-    outside `root` (`reason="write-outside-workspace-root"`)."""
+    outside `root` (`reason="write-outside-workspace-root"`). Every result
+    carries `sandbox`: "on" | "off(kill switch)" | "unavailable" | "container"."""
     _validate(command, timeout, max_output_bytes)
     root_resolved = Path(root).resolve()
     if not root_resolved.is_dir():
@@ -194,5 +232,8 @@ def run(
         return refusal
     # Default is OFF — the normal host subprocess path is used when unset/empty.
     if os.environ.get("HYDRA_EXEC_SANDBOX"):
-        return _run_in_container(command, root_resolved, timeout, max_output_bytes)
-    return _run_on_host(command, root_resolved, timeout, max_output_bytes)
+        result = _run_in_container(command, root_resolved, timeout, max_output_bytes)
+        return _annotate(result, "container")
+    state = shell_sandbox_state()
+    argv = _host_argv(command, root_resolved, state)
+    return _annotate(_run_on_host(command, root_resolved, timeout, max_output_bytes, argv), state)
