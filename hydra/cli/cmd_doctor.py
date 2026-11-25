@@ -75,6 +75,20 @@ def _print_rungs(decisions: dict, *, fmt: str) -> None:
     print("This report places no paid call.")
 
 
+def _approval_policy_report() -> dict:
+    """The effective approval gate, so the operator can read what is gated."""
+    from hydra.operator_auth import is_yolo_active
+    from hydra.policy import ApprovalPolicy
+
+    return {**ApprovalPolicy().describe(), "yolo_active": is_yolo_active()}
+
+
+def _print_approval_policy(report: dict) -> None:
+    print("Approval gate")
+    print(f"  mode: {report['mode']}   yolo unlocked: {report['yolo_active']}")
+    print(f"  gated tools: {', '.join(report['gated_tools'])}")
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     if getattr(args, "rungs", False):
         _print_rungs(doctor.decision_configuration(), fmt=args.format)
@@ -104,6 +118,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             "summary": summary,
             "packages": [_report_dict(r) for r in reports],
             "decisions": decisions,
+            "approval_policy": _approval_policy_report(),
             "paid_calls": False,
         }, indent=2))
     else:
@@ -117,6 +132,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
               f"{summary['vulnerable']} vulnerable")
         if offline:
             print("note: could not reach PyPI/OSV — version & vulnerability checks were skipped.")
+        print()
+        _print_approval_policy(_approval_policy_report())
         print()
         _print_rungs(decisions, fmt="text")
 

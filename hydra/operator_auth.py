@@ -23,6 +23,7 @@ from typing import Any
 
 SECRET_SCHEMA = "hydra.operator_auth_secret.v1"
 AUTH_STATE_SCHEMA = "hydra.operator_auth_state.v1"
+STATE_SIGNATURE_KEY = "sig"
 DEFAULT_AUTH_DIR = Path("~/.hydraAgent/workspace/auth").expanduser()
 AUTH_DIR_ENV_VAR = "HYDRA_OPERATOR_AUTH_DIR"
 DEFAULT_ISSUER = "HydraAgent"
@@ -147,7 +148,7 @@ class OperatorAuth:
                 "extension_notified_at": None,
             }
         )
-        self._write_json_private(self.state_path, state)
+        self._write_state(state)
         return self.status(now=current_time)
 
     def set_mode(self, mode: str, *, now: float | None = None) -> AuthStatus:
@@ -165,7 +166,7 @@ class OperatorAuth:
                 "extension_notified_at": None,
             }
         )
-        self._write_json_private(self.state_path, state)
+        self._write_state(state)
         return self.status(now=now)
 
     def lock(self, *, now: float | None = None) -> AuthStatus:
@@ -177,7 +178,7 @@ class OperatorAuth:
         if state.get("mode") == "yolo" and self._state_yolo_active(state, current_time):
             state["unlocked_until"] = current_time + self.ttl_seconds
         state["last_operator_activity_at"] = current_time
-        self._write_json_private(self.state_path, state)
+        self._write_state(state)
         return self.status(now=current_time)
 
     def prepare_extension_poll(self, *, now: float | None = None) -> ExtensionPoll:
@@ -205,7 +206,7 @@ class OperatorAuth:
         state["extension_nonce"] = nonce
         state["extension_expires_at"] = current_time + EXTENSION_NONCE_TTL_SECONDS
         state["extension_notified_at"] = current_time
-        self._write_json_private(self.state_path, state)
+        self._write_state(state)
         return ExtensionPoll(True, nonce, max(1, int((remaining + 59) // 60)), "expiry window")
 
     def extend_yolo(self, nonce: str, *, now: float | None = None) -> AuthStatus:
@@ -227,7 +228,7 @@ class OperatorAuth:
                 "extension_notified_at": None,
             }
         )
-        self._write_json_private(self.state_path, state)
+        self._write_state(state)
         return self.status(now=current_time)
 
     def status(self, *, now: float | None = None) -> AuthStatus:
@@ -239,7 +240,7 @@ class OperatorAuth:
         yolo_active = mode == "yolo" and self._state_yolo_active(state, current_time)
         if mode == "yolo" and not yolo_active:
             state.update({"mode": "operator", "unlocked_until": None})
-            self._write_json_private(self.state_path, state)
+            self._write_state(state)
             mode = "operator"
         unlocked_until = state.get("unlocked_until")
         unlocked_until_float = float(unlocked_until) if isinstance(unlocked_until, (int, float)) else None
@@ -288,7 +289,24 @@ class OperatorAuth:
             return self._base_state()
         state = self._base_state()
         state.update(raw)
+        # Fail closed: an unlock state the operator's authenticator did not sign is
+        # just a file. A process that can only write JSON gets no authority.
+        if not self._signature_valid(state):
+            return self._base_state()
         return state
+
+    def _write_state(self, state: dict[str, Any]) -> None:
+        state.pop(STATE_SIGNATURE_KEY, None)
+        if self.secret_path.exists():  # no authenticator yet: unsigned, and unsigned carries no authority
+            state[STATE_SIGNATURE_KEY] = _state_signature(self.load_secret(), state)
+        self._write_json_private(self.state_path, state)
+
+    def _signature_valid(self, state: dict[str, Any]) -> bool:
+        claimed = state.get(STATE_SIGNATURE_KEY)
+        if not isinstance(claimed, str) or not self.secret_path.exists():
+            return False
+        expected = _state_signature(self.load_secret(), state)
+        return hmac.compare_digest(claimed, expected)
 
     def _state_yolo_active(self, state: dict[str, Any], now: float) -> bool:
         unlocked_until = state.get("unlocked_until")
@@ -391,6 +409,15 @@ def _write_text_private(path: Path, text: str) -> None:
         raise
     with handle:
         handle.write(text)
+
+
+def _state_signature(secret_base32: str, state: dict[str, Any]) -> str:
+    """HMAC over every state field except the signature itself, keyed by the
+    operator's authenticator secret. Minting authority now needs that secret, not
+    just write access to the state file."""
+    body = {k: v for k, v in state.items() if k != STATE_SIGNATURE_KEY}
+    payload = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hmac.new(_decode_base32_secret(secret_base32), payload, hashlib.sha256).hexdigest()
 
 
 def generate_secret_base32(byte_count: int = 20) -> str:
