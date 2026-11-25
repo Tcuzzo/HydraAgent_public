@@ -137,9 +137,9 @@ def test_fetched_page_is_text_not_html(monkeypatch):
 
     monkeypatch.setattr(live_research, "_guard_public_host", lambda url: None)
     monkeypatch.setattr(
-        live_research.urllib.request,
-        "urlopen",
-        lambda req, timeout=20: _Resp(_PAGE.encode("utf-8")),
+        live_research,
+        "open_checked",
+        lambda req, *, validate, timeout: _Resp(_PAGE.encode("utf-8")),
     )
     text = live_research._fetch_page("https://example.invalid/release")
     assert "Example 9.9.9 is the latest stable release." in text
@@ -155,9 +155,9 @@ def test_page_text_after_a_long_head_still_reaches_the_extract(monkeypatch):
     page = "<!doctype html><html>" + head + "<body><p>Body fact 42.</p></body></html>"
     monkeypatch.setattr(live_research, "_guard_public_host", lambda url: None)
     monkeypatch.setattr(
-        live_research.urllib.request,
-        "urlopen",
-        lambda req, timeout=20: _Resp(page.encode("utf-8")),
+        live_research,
+        "open_checked",
+        lambda req, *, validate, timeout: _Resp(page.encode("utf-8")),
     )
     assert "Body fact 42." in live_research._fetch_page("https://example.invalid/long")
 
