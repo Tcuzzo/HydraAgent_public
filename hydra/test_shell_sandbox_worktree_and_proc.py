@@ -127,10 +127,15 @@ def test_c_a_proc_path_is_refused_cleanly_not_raised(tmp_path):
 # --- D: one regression case per grader probe -------------------------------------
 
 _WRITER = (
-    "python3 -c \"import os,sys; "
-    "[open(os.path.join(sys.argv[1], n), 'w').write('pwn') for n in "
-    "('objects/pwn', 'refs/pwn', 'logs/pwn', 'HEAD', 'commondir', 'config.worktree')]; "
-    "__import__('shutil').rmtree(os.path.join(sys.argv[1], 'objects'))\" {victim}"
+    "python3 -c \"import os,shutil,sys\n"
+    "for n in ('objects/pwn', 'refs/pwn', 'logs/pwn', 'HEAD', 'commondir', 'config.worktree'):\n"
+    "    try: open(os.path.join(sys.argv[1], n), 'w').write('pwn')\n"
+    "    except OSError as e: print(e, file=sys.stderr)\n"
+    "for n in ('objects', 'refs', 'logs', 'HEAD'):\n"
+    "    p = os.path.join(sys.argv[1], n)\n"
+    "    try: shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)\n"
+    "    except OSError as e: print(e, file=sys.stderr)\n"
+    "sys.exit(1)\" {victim}"
 )
 
 
