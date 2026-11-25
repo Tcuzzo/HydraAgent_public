@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import base64
 import getpass
+import glob
 import hmac
 import hashlib
 import json
+import logging
 import os
 import secrets
+import shlex
 import socket
 import struct
 import subprocess
@@ -35,6 +38,10 @@ EXTENSION_POLL_WINDOW_SECONDS = 300
 EXTENSION_NONCE_TTL_SECONDS = 600
 VALID_MODES = frozenset({"operator", "iteration", "yolo"})
 _IS_WINDOWS = os.name == "nt"
+AUTH_FILE_NAMES = ("totp.json", "unlock_state.json")
+#: Argument names that carry file content, not a path or a command.
+_CONTENT_ARGS = frozenset({"content", "old_string", "new_string", "text", "body", "message"})
+_log = logging.getLogger(__name__)
 
 
 class OperatorAuthError(Exception):
@@ -292,6 +299,12 @@ class OperatorAuth:
         # Fail closed: an unlock state the operator's authenticator did not sign is
         # just a file. A process that can only write JSON gets no authority.
         if not self._signature_valid(state):
+            if state.get("unlocked_until") is not None or state.get("mode") != "operator":
+                _log.warning(
+                    "operator auth: dropped %s because it is not signed by your authenticator "
+                    "(an old or hand-edited unlock); unlock yolo again with your code",
+                    self.state_path,
+                )
             return self._base_state()
         return state
 
@@ -495,6 +508,53 @@ def is_yolo_active(*, auth_dir: str | Path | None = None, now: float | None = No
         return OperatorAuth(auth_dir=auth_dir).status(now=now).yolo_active
     except OperatorAuthError:
         return False
+
+
+def _auth_roots() -> list[Path]:
+    """Every directory that holds the operator's authenticator secret and unlock
+    state, from this module's own path resolution (env override and default)."""
+    return list({OperatorAuth().auth_dir, DEFAULT_AUTH_DIR.resolve()})
+
+
+def _string_values(value: Any, key: str = "") -> list[str]:
+    if isinstance(value, str):
+        return [] if key in _CONTENT_ARGS else [value]
+    if isinstance(value, dict):
+        return [text for k, v in value.items() for text in _string_values(v, str(k))]
+    if isinstance(value, (list, tuple)):
+        return [text for v in value for text in _string_values(v, key)]
+    return []
+
+
+def _token_paths(token: str) -> list[Path]:
+    candidate = os.path.expanduser(token.split("=", 1)[-1])
+    matches = glob.glob(candidate) if glob.has_magic(candidate) else []
+    return [Path(m).resolve() for m in (matches or [candidate])]
+
+
+def _hits_auth_dir(text: str, roots: list[Path]) -> bool:
+    text = os.path.expandvars(text.replace("~/", str(Path.home()) + "/"))
+    if any(str(root) in text for root in roots) or any(name in text for name in AUTH_FILE_NAMES):
+        return True
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
+        tokens = text.split()
+    return any(
+        path == root or root in path.parents
+        for token in tokens
+        for path in _token_paths(token)
+        for root in roots
+    )
+
+
+def tool_touches_auth_dir(arguments: dict[str, Any]) -> bool:
+    """True when any path or command argument of a tool call names the operator
+    auth directory or a file in it (through ~, env vars, relative paths, links or
+    globs). The agent acts only through tools, so refusing these calls keeps the
+    authenticator secret out of the agent's reach."""
+    roots = _auth_roots()
+    return any(_hits_auth_dir(text, roots) for text in _string_values(arguments))
 
 
 def _decode_base32_secret(secret_base32: str) -> bytes:

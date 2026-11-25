@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from hydra.autonomy import classify_tool_call
+from hydra.operator_auth import tool_touches_auth_dir
 from hydra.workbench_approvals import DEFAULT_APPROVAL_QUEUE_PATH
 from hydra.workbench_approvals import append_record as append_approval_record
 from hydra.workbench_approvals import create_request
@@ -160,6 +161,13 @@ class ApprovalPolicy:
         # toggled per turn — so a snapshot clone would go stale).  Reset the
         # per-call resolved-request marker guarded() reads after we return.
         self._wait_this_call = self.wait_for_approval if wait is None else bool(wait)
+        # The operator's authenticator secret and unlock state are off limits to every
+        # tool call, in every mode, even self-heal and yolo. Refused, never queued.
+        if tool_touches_auth_dir(arguments):
+            raise ApprovalDenied(
+                f"refused: {tool_name!r} touches the operator auth directory; "
+                "no tool may read or write the authenticator secret or unlock state"
+            )
         self._last_approved_request_id = None
         # Slice 4 — PLAN/ACT gate (checked before everything else).
         # In plan_mode, only reads are allowed.  Any mutating tool is denied
