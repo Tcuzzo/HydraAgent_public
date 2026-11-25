@@ -11,8 +11,9 @@ A literal word is a quoted string with no ``$``, backtick or backslash in a doub
 quote, or an unquoted word made only of ``[A-Za-z0-9_./+=:@%,^~-]`` (``*`` and ``?``
 only for commands marked ``globs``). Brackets, braces, parentheses, ``!`` and ``#``
 never appear in a literal word, so no glob, brace, extglob or expansion form can name
-a command. The table lists exact command names; ``python3.12`` or ``/bin/cp`` are not
-on it. Environment assignments in front of a command are never auto-allowed.
+a command. The table lists exact command names; a versioned interpreter name or
+an absolute path is not on it. Environment assignments in front of a command are
+never auto-allowed.
 
 File mutation tools (``fs_write``, ``fs_edit``) need approval; every other tool is
 auto-allowed. ``deny`` mode blocks whatever ask mode would ask about.
