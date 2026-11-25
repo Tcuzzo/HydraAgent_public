@@ -72,11 +72,24 @@ DESTRUCTIVE_BASH_TOKENS = frozenset(
 )
 
 # These only count when they are the command being run (not an argument such as
-# `grep cp notes.txt`). See _command_words.
+# `grep cp notes.txt`). See _command_words: the one scanner that finds every word
+# a shell would run, wherever it sits.
 DESTRUCTIVE_COMMAND_WORDS = frozenset({"mv", "cp", "chown", "chmod"})
-_SEPARATORS = frozenset({"&&", "||", ";", "|"})
-# Words that hand the next word over to be run as the command.
-_WRAPPERS = frozenset({"env", "command", "nohup", "xargs", "time", "exec", "nice", "-exec", "-execdir"})
+_SEPARATORS = frozenset({"&&", "||", ";", "|", "&", "(", ")"})
+# Shell keywords that hand the next word over to be run as the command.
+_KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}"})
+# Words that run the words after them as a command (fail closed: every later word
+# in the segment counts, because an option may take a value we cannot know).
+_WRAPPERS = frozenset(
+    {
+        "env", "command", "builtin", "nohup", "xargs", "time", "exec", "nice",
+        "ionice", "timeout", "busybox", "stdbuf", "setsid", "chrt", "watch", "doas",
+    }
+)
+_EXEC_FLAGS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash", "csh", "tcsh", "fish"})
+_INLINE_FLAG = re.compile(r"^-[a-z]*c[a-z]*$")
+_EXPECT, _WRAP, _ARGS = "expect", "wrap", "args"
 
 # Policy: plain ssh/scp/sftp/rsync/network commands are NOT destructive on
 # their own and must NOT be approval-gated. They were formerly
@@ -164,8 +177,9 @@ def is_destructive_bash_command(command: str) -> bool:
 
 def _shell_tokens(command: str) -> list[str]:
     spaced = _strip_safe_redirections(command).replace("\n", " ; ")
-    for marker in (">>|", ">|", ">>", ">", "&&", "||", ";", "|"):
+    for marker in (">>|", ">|", ">>", ">", "&&", "||", ";", "|", "(", ")"):
         spaced = spaced.replace(marker, f" {marker} ")
+    spaced = re.sub(r"(?<![&>])&(?![&>])", " & ", spaced)
     try:
         return shlex.split(spaced)
     except ValueError:
@@ -239,22 +253,55 @@ def _has_destructive_rsync(tokens: list[str]) -> bool:
     return False
 
 
+def _skippable(token: str) -> bool:
+    return token in _KEYWORDS or token.startswith("-") or "=" in token
+
+
+def _state_after(state: str, base: str) -> str:
+    return _WRAP if state == _WRAP or base in _WRAPPERS else _ARGS
+
+
 def _command_words(tokens: list[str]):
-    """Yield the word each pipeline segment actually runs (first word after a
-    separator, skipping env assignments, wrapper words and their options)."""
-    expecting = True
-    for token in tokens:
+    """Yield ``(index, word)`` for every word a shell would run as a command:
+    the first word of each segment (after separators, subshell parens, keywords
+    such as ``if``/``do``, env assignments), every word behind a wrapper
+    (``timeout 5 cp``), and the word after ``find -exec``."""
+    state = _EXPECT
+    for index, token in enumerate(tokens):
         if token in _SEPARATORS:
-            expecting = True
-        elif expecting and (token in _WRAPPERS or token.startswith("-") or "=" in token):
-            continue
-        elif expecting:
-            yield token.split("/")[-1]
-            expecting = False
+            state = _EXPECT
+        elif token in _EXEC_FLAGS:
+            state = _EXPECT
+        elif state != _ARGS and not _skippable(token):
+            base = token.split("/")[-1]
+            yield index, base
+            state = _state_after(state, base)
+
+
+def _inline_script_destructive(tokens: list[str], index: int, word: str) -> bool:
+    """`bash -c '<script>'` / `eval '<script>'`: judge the script by the same rule.
+    A shell given -c with no script, or a script that cannot be parsed, is gated."""
+    rest = []
+    for token in tokens[index + 1 :]:
+        if token in _SEPARATORS:
+            break
+        rest.append(token)
+    if word == "eval":
+        return is_destructive_bash_command(" ".join(rest))
+    if word not in _SHELLS:
+        return False
+    for position, token in enumerate(rest):
+        if _INLINE_FLAG.match(token):
+            script = rest[position + 1] if position + 1 < len(rest) else ""
+            return not script or is_destructive_bash_command(script)
+    return False
 
 
 def _has_destructive_command_word(tokens: list[str]) -> bool:
-    return any(word in DESTRUCTIVE_COMMAND_WORDS for word in _command_words(tokens))
+    return any(
+        word in DESTRUCTIVE_COMMAND_WORDS or _inline_script_destructive(tokens, index, word)
+        for index, word in _command_words(tokens)
+    )
 
 
 _OUTPUT_FLAG = re.compile(r"^-[a-z]*o[a-z]*$|^--output(-document|-file)?(=.*)?$")
