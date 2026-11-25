@@ -163,7 +163,7 @@ def _duckduckgo_search(query: str, limit: int) -> list[dict[str, str]]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with open_checked(req, validate=_guard_public_host, timeout=20) as resp:
             html = resp.read().decode("utf-8", errors="replace")
     except (urllib.error.URLError, OSError) as exc:
         raise LiveResearchError(f"DuckDuckGo search failed: {exc}") from exc
@@ -188,6 +188,9 @@ def _fetch_page(url: str) -> str:
     """The page's readable text, not its markup: the model reasons over words."""
     _guard_public_host(url)
     req = urllib.request.Request(url, headers=_headers())
+    # open_checked runs the guard on every redirect hop BEFORE it connects to
+    # that hop, so a chain like public -> internal -> public never reaches the
+    # internal host. A final-URL check after urlopen cannot do that.
     with open_checked(req, validate=_guard_public_host, timeout=20) as resp:
         raw = resp.read(_MAX_PAGE_BYTES).decode("utf-8", errors="replace")
         content_type = str(getattr(resp, "headers", {}).get("Content-Type", "") or "").lower()
