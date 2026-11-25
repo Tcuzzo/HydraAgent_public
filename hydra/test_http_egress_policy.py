@@ -46,7 +46,7 @@ from hydra.cli.tool_binding import bind_tools
 METADATA_HOST = "169.254.169.254"
 
 #: A link-local address that is not the metadata service.
-LINK_LOCAL_HOST = "169.254.0.0"
+LINK_LOCAL_HOST = "169.254.10.10"
 
 #: RFC 1918. The operator's own LAN — legal under the permissive posture only.
 PRIVATE_HOST = "10.0.0.1"
