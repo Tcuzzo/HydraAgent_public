@@ -197,8 +197,26 @@ def _sandbox_notice(state: str) -> str:
     return ""
 
 
+_GIT_READONLY_NOTICE = (
+    "NOTE: the shell sandbox keeps the shared git repo read-only (a commit writes outside "
+    "the workspace root). Commit from the host (or the orchestrator), or set "
+    "HYDRA_SHELL_SANDBOX=0 for this run."
+)
+
+
+def _git_readonly_notice(result: dict, state: str) -> str:
+    """One loud line when a sandboxed command hit EROFS on a path inside a git dir."""
+    stderr = result["stderr"]
+    if state == "on" and "Read-only file system" in stderr and ".git" in stderr:
+        return _GIT_READONLY_NOTICE
+    return ""
+
+
 def _annotate(result: dict, state: str) -> dict:
     result["sandbox"] = state
+    hint = _git_readonly_notice(result, state)
+    if hint:
+        result["stderr"] = f"{result['stderr'].rstrip()}\n{hint}\n"
     notice = _sandbox_notice(state)
     if notice:
         result["stderr"] = f"{notice}\n{result['stderr']}"
