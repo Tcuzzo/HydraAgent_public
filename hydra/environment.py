@@ -3,18 +3,16 @@ from __future__ import annotations
 
 import datetime as _dt
 import difflib
-import ipaddress
 import json
-import os
 import shutil
-import socket
+import socket  # noqa: F401 — the security bar patches environment.socket.getaddrinfo
 import subprocess
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 import urllib.request
 
-from hydra.http_policy import open_checked
+from hydra.http_policy import EgressDenied, is_ip_allowed, open_checked
 
 
 SESSION_SCHEMA = "hydra.environment.session.v1"
@@ -162,59 +160,18 @@ def write_session_file(
     return packet
 
 
-def _benchmark_range_allowed() -> bool:
-    if os.environ.get("HYDRA_FETCH_ALLOW_FAKEIP", "").strip() == "1":
-        return True
-    for name in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
-        if os.environ.get(name, "").strip():
-            return True
-    return False
-
-
 def _is_ip_allowed(host: str) -> tuple[bool, str | None]:
     """Check if a host resolves to allowed (public) IPs only.
-    
+
+    The classification lives in ``hydra.http_policy`` — one owner for every
+    address class in Hydra. This name stays because the security bar and the
+    live-research guard both reach this seam, and both patch it.
+
     Returns (True, None) if all resolved IPs are public.
     Returns (False, reason) if any IP is private/internal.
-    Raises EnvironmentError if the host cannot be resolved (fail closed).
+    Raises EgressDenied if the host cannot be resolved (fail closed).
     """
-    try:
-        addr_info = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-    except socket.gaierror as e:
-        # Fail closed, but say why: an unresolvable host is not a private address.
-        raise EnvironmentError(f"could not resolve host {host!r}: {e}") from e
-    
-    for family, _, _, _, sockaddr in addr_info:
-        ip_str = sockaddr[0]
-        try:
-            ip = ipaddress.ip_address(ip_str)
-        except ValueError:
-            continue
-        
-        # 198.18.0.0/15 is the RFC 2544 benchmark range. Python marks it private.
-        # Proxy and fake-IP DNS (common on VMs) use it for every public name.
-        if isinstance(ip, ipaddress.IPv4Address) and ip in ipaddress.ip_network("198.18.0.0/15"):
-            if _benchmark_range_allowed():
-                continue
-            return False, (
-                f"benchmark/fake-IP range {ip_str}. Set HYDRA_FETCH_ALLOW_FAKEIP=1 "
-                "or configure HTTP_PROXY/HTTPS_PROXY when a proxy answers public names."
-            )
-        # Check for private/internal ranges
-        if ip.is_loopback:
-            return False, f"loopback address {ip_str}"
-        if ip.is_link_local:
-            return False, f"link-local address {ip_str}"
-        if ip.is_private:
-            return False, f"private address {ip_str}"
-        if ip.is_multicast:
-            return False, f"multicast address {ip_str}"
-        # Check for 169.254.0.0/16 explicitly (link-local for IPv4)
-        if isinstance(ip, ipaddress.IPv4Address):
-            if ip in ipaddress.ip_network("169.254.0.0/16"):
-                return False, f"link-local metadata address {ip_str}"
-    
-    return True, None
+    return is_ip_allowed(host)
 
 
 def fetch_session_url(
@@ -231,7 +188,10 @@ def fetch_session_url(
         host = urlparse(target).hostname
         if host is None:
             raise EnvironmentError("invalid URL: missing host")
-        allowed, reason = _is_ip_allowed(host)
+        try:
+            allowed, reason = _is_ip_allowed(host)
+        except EgressDenied as exc:
+            raise EnvironmentError(str(exc)) from exc
         if not allowed:
             raise EnvironmentError(f"refusing to fetch private/internal address: {host} ({reason})")
 
@@ -243,7 +203,11 @@ def fetch_session_url(
     from hydra.http_identity import attribution_headers
 
     request = urllib.request.Request(url, headers=attribution_headers())
-    with open_checked(request, validate=validate, timeout=timeout_seconds) as response:
+    try:
+        response_cm = open_checked(request, validate=validate, timeout=timeout_seconds)
+    except EgressDenied as exc:
+        raise EnvironmentError(str(exc)) from exc
+    with response_cm as response:
         raw = response.read(max_chars + 1)
         text = raw[:max_chars].decode("utf-8", errors="replace")
         packet = {

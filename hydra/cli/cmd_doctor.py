@@ -13,6 +13,7 @@ import subprocess
 import sys
 
 from hydra import doctor
+from hydra.exec_backend import shell_sandbox_state
 
 #: A pip upgrade that hangs must not wedge the CLI.
 UPGRADE_TIMEOUT_SECONDS = 120.0
@@ -119,11 +120,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             "packages": [_report_dict(r) for r in reports],
             "decisions": decisions,
             "approval_policy": _approval_policy_report(),
+            "shell_sandbox": shell_sandbox_state(),
             "paid_calls": False,
         }, indent=2))
     else:
         print(f"hydra doctor · Python {platform.python_version()} · "
               f"{platform.system()} {platform.machine()}")
+        print(f"shell sandbox: {shell_sandbox_state()}")
         print(f"{'package':24}{'installed':14}{'latest':14}status")
         print("-" * 70)
         for r in sorted(reports, key=lambda r: r.name.lower()):

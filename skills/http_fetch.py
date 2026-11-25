@@ -3,6 +3,10 @@
 Constraints:
   - Caller must pass `allowed_hosts`. The URL's host must match (exact
     match against the netloc, case-insensitive). No regex, no wildcards.
+  - The host must also pass the egress address guard: link-local (where the
+    cloud metadata service answers with the host's credentials), multicast,
+    unspecified and reserved addresses are refused under every allow-list.
+    The operator's own loopback and LAN addresses are reachable.
   - Hard timeout (default 15s).
   - Max response size (default 256 KiB). Anything larger raises.
 
@@ -17,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from hydra.http_policy import open_checked
+from hydra.http_policy import EgressDenied, guard_host, open_checked
 
 
 class SkillError(Exception):
@@ -52,6 +56,14 @@ def run(
         host = (parsed.hostname or "").lower()
         if host not in allowed:
             raise SkillError(f"host {host!r} not in allow-list {sorted(allowed)}")
+        # The address guard. An allow-list may permit the operator's own
+        # loopback and LAN addresses; it may never permit link-local (where
+        # the cloud metadata service answers with the host's credentials),
+        # multicast, unspecified or reserved.
+        try:
+            guard_host(host, allow_private=True)
+        except EgressDenied as exc:
+            raise SkillError(str(exc)) from exc
 
     validate(url)
     req = urllib.request.Request(url, headers={"User-Agent": user_agent})
@@ -60,6 +72,8 @@ def run(
             raw = resp.read(max_bytes + 1)
             status = resp.status
             content_type = resp.headers.get("Content-Type", "")
+    except EgressDenied as e:
+        raise SkillError(str(e)) from e
     except urllib.error.HTTPError as e:
         raise SkillError(f"HTTPError: {e}") from e
     except urllib.error.URLError as e:
