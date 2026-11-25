@@ -140,7 +140,7 @@ class _Word:
 
 _SPACE = re.compile(r"[ \t]+")
 _SEPARATOR = re.compile(r"&&|\|\||;|\||&(?!>)|\n|\r")
-_FREE_REDIRECT = re.compile(r"(?:(?:[12]?>>?|&>)\s?/dev/null|2>&1)(?=[\s;&|]|$)")
+_FREE_REDIRECT = re.compile(r"(?:(?:[12]?>>?|&>)[ \t]?/dev/null|2>&1)(?=[ \t\r\n;&|]|$)")
 _PIECE = re.compile(r"""'([^']*)'|"([^"]*)"|(\\;)|([^\s;&|<>()$`"'\\]+)""")
 _UNQUOTED_OK = re.compile(r"[A-Za-z0-9_./+=:@%,^~*?-]+")
 _EXACT_WORDS = frozenset({"[", "]", "[[", "]]", "{}", "!="})
@@ -269,7 +269,8 @@ class _Safe:
     optval: frozenset[str] = frozenset()  # long flags that may carry =value
     args: bool = True  # non-flag arguments allowed
     maxargs: int = 99
-    globs: bool = False  # plain * and ? allowed (read-only commands only)
+    globs: bool = False  # a glob operand is allowed (never with an output operand or a maxargs limit)
+    dashsafe: bool = False  # no flag of the real tool writes or executes, so a glob that expands to a flag is harmless
     numeric: bool = False  # head/tail style -5
     checker: str = "generic"
     subs: dict[str, "_Safe"] = field(default_factory=dict)
@@ -311,11 +312,11 @@ _GIT_SUBS = {
     "config": _s("--get --list -l --local", checker="git_config"),
 }
 _SAFE_COMMANDS: dict[str, _Safe] = {
-    "ls": _s("-l -a -A -h -R -1 -t -r -S -d -F -i -s -k -G --all --almost-all --human-readable", optval="--color", globs=True),
-    "cat": _s("-n -b -s -A -E -T -v --number", globs=True),
-    "head": _s("-q -v", valued="-n -c", numeric=True, globs=True),
-    "tail": _s("-q -v", valued="-n -c", numeric=True, globs=True),
-    "wc": _s("-l -w -c -m -L", globs=True),
+    "ls": _s("-l -a -A -h -R -1 -t -r -S -d -F -i -s -k -G --all --almost-all --human-readable", optval="--color", globs=True, dashsafe=True),
+    "cat": _s("-n -b -s -A -E -T -v --number", globs=True, dashsafe=True),
+    "head": _s("-q -v", valued="-n -c", numeric=True, globs=True, dashsafe=True),
+    "tail": _s("-q -v", valued="-n -c", numeric=True, globs=True, dashsafe=True),
+    "wc": _s("-l -w -c -m -L", globs=True, dashsafe=True),
     "echo": _s("-n -e -E"),
     "printf": _s(),
     "pwd": _NO_ARGS,
@@ -325,21 +326,22 @@ _SAFE_COMMANDS: dict[str, _Safe] = {
     "which": _s("-a"),
     "man": _s(),
     "file": _s("-b -i -L --mime --mime-type", globs=True),
-    "stat": _s("-L -f -t", valued="-c --format", globs=True),
-    "du": _s("-h -s -a -c -k -m -x", valued="-d --max-depth", globs=True),
-    "df": _s("-h -T -i -k -a", globs=True),
+    "stat": _s("-L -f -t", valued="-c --format", globs=True, dashsafe=True),
+    "du": _s("-h -s -a -c -k -m -x", valued="-d --max-depth", globs=True, dashsafe=True),
+    "df": _s("-h -T -i -k -a", globs=True, dashsafe=True),
     "tree": _s("-a -d -f -i -C -F -h -s --noreport", valued="-L -I", globs=True),
-    "diff": _s("-u -r -q -y -w -b -i -B -N -c --brief --recursive --unified", optval="--color", globs=True),
-    "cmp": _s("-s -l", globs=True),
+    "diff": _s("-u -r -q -y -w -b -i -B -N -c --brief --recursive --unified", optval="--color", globs=True, dashsafe=True),
+    "cmp": _s("-s -l", globs=True, dashsafe=True),
     "sort": _s("-n -r -u -f -b -h -V -s -c -z -g -M", valued="-k -t", globs=True),
-    "uniq": _s("-c -d -u -i", maxargs=1, globs=True),
-    "cut": _s("-s -z", valued="-d -f -c -b", globs=True),
+    "uniq": _s("-c -d -u -i", maxargs=1),
+    "cut": _s("-s -z", valued="-d -f -c -b", globs=True, dashsafe=True),
     "tr": _s("-d -s -c"),
     "grep": _s(
         "-r -R -n -i -v -l -L -c -w -x -E -F -P -h -H -s -o -q -a -I -z",
         valued="-e -m -A -B -C --include --exclude --exclude-dir --max-count",
         optval="--color",
         globs=True,
+        dashsafe=True,
     ),
     "rg": _s(
         "-n -i -l -c -v -w -F -S -s -u -N -o -q --hidden --no-heading --files --json --no-ignore "
@@ -376,7 +378,7 @@ _SAFE_COMMANDS: dict[str, _Safe] = {
     "whoami": _NO_ARGS,
     "hostname": _NO_ARGS,
     "uname": _s("-a -r -s -m -n -o"),
-    "date": _s("-u -I"),
+    "date": _s("-u -I", args=False),
     "ps": _s("-e -f -a -x -u -l -A -w -H -j", valued="-o -p"),
     "free": _s("-h -m -g -b -k -t -w --human --si"),
     "nvidia-smi": _s("-L -q --list-gpus", valued="--query-gpu --format -i --id"),
@@ -401,7 +403,7 @@ _SAFE_COMMANDS: dict[str, _Safe] = {
     ),
     "ssh": _s("-q -v -T -4 -6 -C -n", valued="-p -i -l", checker="ssh"),
     "nmap": _s("-sn -Pn -n -v -F -sT -sV --open", valued="-p -T --top-ports"),
-    "awk": _s(valued="-F -v", checker="awk", globs=True),
+    "awk": _s(valued="-F", checker="awk", globs=True),
     "sed": _s("-n -E -r -s -z -u --quiet --silent --regexp-extended", valued="-e --expression", checker="sed", globs=True),
 }
 _HYDRA_SUBS = {
@@ -416,7 +418,7 @@ _HYDRA_SUBS = {
 _PY_MODULES = {
     "pytest": _PYTEST,
     "json.tool": _s("--sort-keys --compact --no-ensure-ascii", valued="--indent", maxargs=1),
-    "py_compile": _s(),
+    "py_compile": _s(checker="pycompile"),
     "hydra": _s(checker="subs", subs=_HYDRA_SUBS),
 }
 
@@ -428,16 +430,29 @@ def _not_safe(name: str, flag: str) -> _Unsafe:
     return _Unsafe(f"flag '{flag}' is not on {name}'s safe list")
 
 
-def _literal_value(name: str, word: _Word, spec: _Safe) -> str:
-    if word.glob and not spec.globs:
-        raise _Unsafe(f"glob '{word.text}' is not allowed for {name}")
+def _literal_value(name: str, word: _Word, glob_ok: bool = False) -> str:
+    if word.glob and not glob_ok:
+        raise _Unsafe(
+            f"glob '{word.text}' is not allowed for {name} here "
+            "(the shell could expand it to a flag or an extra operand)"
+        )
     return word.text
+
+
+def _glob_allowed(spec: _Safe, word: _Word, after_dashdash: bool) -> bool:
+    """A glob is judged before the shell expands it, so it must be unable to become a flag
+    or an extra operand: the command takes any number of operands (no output operand), and
+    the glob cannot match a dash-word (starts with ./ or a literal non-dash character, or
+    follows --), unless no flag of the real tool writes or runs anything."""
+    if not spec.globs or spec.maxargs != 99:
+        return False
+    return after_dashdash or spec.dashsafe or word.text.startswith("./") or word.text[0] not in "-*?"
 
 
 def _take_next(name: str, spec: _Safe, args: list[_Word], index: int, flag: str, values: list[tuple[str, str]]) -> int:
     if index >= len(args):
         raise _Unsafe(f"flag '{flag}' of {name} needs a value")
-    values.append((flag, _literal_value(name, args[index], spec)))
+    values.append((flag, _literal_value(name, args[index])))
     return index + 1
 
 
@@ -485,10 +500,10 @@ def _is_flag(word: _Word) -> bool:
     return word.text.startswith("-") and word.text != "-"
 
 
-def _check_positional(name: str, spec: _Safe, word: _Word, count: int) -> None:
+def _check_positional(name: str, spec: _Safe, word: _Word, count: int, after_dashdash: bool) -> None:
     if not spec.args or count >= spec.maxargs:
         raise _Unsafe(f"{name} does not take the argument '{word.text}' on the safe list")
-    _literal_value(name, word, spec)
+    _literal_value(name, word, _glob_allowed(spec, word, after_dashdash))
 
 
 @dataclass
@@ -508,7 +523,7 @@ def _parse_args(name: str, spec: _Safe, args: list[_Word]) -> _Parsed:
         elif not only_args and _is_flag(word):
             index = _take_flag(name, spec, args, index, parsed.values)
         else:
-            _check_positional(name, spec, word, len(parsed.positional))
+            _check_positional(name, spec, word, len(parsed.positional), only_args)
             parsed.positional.append(word)
             index += 1
     return parsed
@@ -541,7 +556,15 @@ _DEVICE_DIRS = frozenset({"..", "dev", "proc", "fd"})
 def _path_ok(text: str, banned: frozenset[str]) -> bool:
     """A path that stays in the workspace: relative, not '-', no '..', and none of the
     ``banned`` directory names (a script must also not live under dev/, proc/ or fd/)."""
-    return bool(text) and text[0] not in "/-~" and not banned.intersection(text.split("/"))
+    return bool(text) and "{}" not in text and text[0] not in "/-~" and not banned.intersection(text.split("/"))
+
+
+def _require_path(label: str, text: str, banned: frozenset[str]) -> None:
+    if not _path_ok(text, banned):
+        raise _Unsafe(
+            f"{label} '{text}' must be a relative path inside the workspace "
+            "(not absolute, not '-', no '..', no find placeholder, not under dev/, proc/ or fd/)"
+        )
 
 
 def _check_cd(name: str, spec: _Safe, args: list[_Word]) -> None:
@@ -552,13 +575,9 @@ def _check_cd(name: str, spec: _Safe, args: list[_Word]) -> None:
 
 def _check_script(name: str, args: list[_Word]) -> None:
     """The one rule for every command that runs a file: python, bash, sh (and so find -exec)."""
-    if not _path_ok(args[0].text, _DEVICE_DIRS):
-        raise _Unsafe(
-            f"{name} script '{args[0].text}' must be a relative path inside the workspace "
-            "(not absolute, not '-', no '..', not under dev/, proc/ or fd/)"
-        )
+    _require_path(f"{name} script", args[0].text, _DEVICE_DIRS)
     for word in args:
-        _literal_value(name, word, _s())
+        _literal_value(name, word)
 
 
 def _check_git(name: str, spec: _Safe, args: list[_Word]) -> None:
@@ -656,7 +675,7 @@ _FIND_PLAIN = frozenset(
 def _check_find(name: str, spec: _Safe, args: list[_Word]) -> None:
     index = 0
     while index < len(args) and not args[index].text.startswith("-"):
-        _literal_value(name, args[index], _s())
+        _require_path("find start path", _literal_value(name, args[index]), _DEVICE_DIRS)
         index += 1
     while index < len(args):
         index = _find_primary(args, index)
@@ -683,17 +702,21 @@ def _find_exec(args: list[_Word], index: int) -> int:
     return end + 1
 
 
-_AWK_PROGRAM = re.compile(r"[A-Za-z0-9_ \t${}\[\],;.=!+\-*/%()\"~^&:']*")
-_AWK_BANNED = re.compile(r"\b(system|getline|close|fflush)\b")
+_AWK_FIELD = r"\$(?:\d+|NF)"
+_AWK_ACTION = rf"\{{\s*print(?:\s+{_AWK_FIELD}(?:\s*,\s*{_AWK_FIELD})*)?\s*\}}"
+_AWK_PATTERN = r"(?:NR|NF|\$\d+)\s*(?:==|!=|<=|>=|<|>)\s*\d+"
+# optional pattern (NR/NF/field compared with an integer) and optional {print fields} action
+_AWK_PROGRAM = re.compile(rf"\s*(?:{_AWK_PATTERN})?\s*(?:{_AWK_ACTION})?\s*")
 
 
 def _check_awk(name: str, spec: _Safe, args: list[_Word]) -> None:
     positional = _check_generic(name, spec, args)
-    if not positional:
-        raise _Unsafe("awk without a program")
-    program = positional[0].text
-    if not _AWK_PROGRAM.fullmatch(program) or _AWK_BANNED.search(program):
-        raise _Unsafe("awk program with a pipe, redirection, system() or getline")
+    program = positional[0].text if positional else ""
+    if not program.strip() or not _AWK_PROGRAM.fullmatch(program):
+        raise _Unsafe(
+            "awk program is not a plain print of fields with an optional NR/NF/field comparison "
+            "(no function call, string, pipe, redirection or getline)"
+        )
 
 
 _SED_ADDR = r"(?:\d+|\$|/[^/\\\n]*/)"
@@ -724,6 +747,14 @@ def _check_sed(name: str, spec: _Safe, args: list[_Word]) -> None:
         raise _Unsafe("sed script that is not plain print/delete/substitute (no e, w, r or other commands)")
 
 
+def _check_pycompile(name: str, spec: _Safe, args: list[_Word]) -> None:
+    positional = _check_generic(name, spec, args)
+    if not positional:
+        raise _Unsafe(f"{name} needs at least one file")
+    for word in positional:
+        _require_path(f"{name} file", word.text, _DEVICE_DIRS)
+
+
 _CHECKERS: dict[str, Callable[[str, _Safe, list[_Word]], None]] = {
     "generic": _check_plain,
     "subs": _check_subs,
@@ -733,6 +764,7 @@ _CHECKERS: dict[str, Callable[[str, _Safe, list[_Word]], None]] = {
     "find": _check_find,
     "ssh": _check_ssh,
     "cd": _check_cd,
+    "pycompile": _check_pycompile,
     "git_config": _check_git_config_checker,
     "awk": _check_awk,
     "sed": _check_sed,
