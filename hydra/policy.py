@@ -71,12 +71,12 @@ class ApprovalPolicy:
     """Decide whether a tool call may run.
 
     Modes:
-      - allow: run without prompting.
-      - ask: prompt or queue only destructive commands; auto-allow normal tools.
-      - deny: refuse destructive commands.
+      - allow: run without prompting (explicit opt-in; never the default).
+      - ask: the default. Prompt or queue destructive commands; auto-allow normal tools.
+      - deny: refuse every risky tool, even when yolo authority is unlocked.
     """
 
-    mode: str = "allow"
+    mode: str = "ask"
     input_fn: Callable[[str], str] = input
     output_fn: Callable[[str], None] = print
     stdin_is_tty: Callable[[], bool] = field(default=lambda: sys.stdin.isatty())
@@ -123,6 +123,15 @@ class ApprovalPolicy:
             raise ValueError(
                 f"approval policy must be one of {POLICY_CHOICES}, got {self.mode!r}"
             )
+
+    def describe(self) -> dict[str, object]:
+        """The effective policy, readable by the operator (`hydra doctor`)."""
+        return {
+            "mode": self.mode,
+            "gated_tools": sorted(RISKY_TOOLS),
+            "plan_mode": self.plan_mode,
+            "surface_trusted": self.surface_trusted,
+        }
 
     def set_plan_mode(self, enabled: bool) -> None:
         """Toggle PLAN (read-only) vs ACT mode.  Thread-safe assignment."""
@@ -192,18 +201,18 @@ class ApprovalPolicy:
             return
         if not is_risky_tool(tool_name):
             return
-        if self._operator_has_yolo_authority():
-            return
-        # 'allow' means ALLOW. On the operator's own trusted surface, a tool launched
-        # in allow mode executes in real time — no hidden destructive sub-gate, no
-        # "blocked" friction. The untrusted-surface gate above still protects
-        # public/non-operator input, and 'deny'/'ask' modes still classify below.
-        if self.mode == "allow":
-            return
         if self.mode == "deny":
-            # Deny mode refuses all risky tools, not just destructive ones
+            # Deny mode refuses all risky tools, not just destructive ones. It is
+            # checked BEFORE yolo: an explicit deny is never overridden by an unlock.
             summary = _summarize(tool_name, arguments)
             raise ApprovalDenied(f"approval denied for {summary}")
+        if self._operator_has_yolo_authority():
+            return
+        # 'allow' is an explicit opt-in: a caller who passes it gets real-time
+        # execution with no destructive sub-gate. The untrusted-surface gate above
+        # still protects public/non-operator input, and 'ask' classifies below.
+        if self.mode == "allow":
+            return
         autonomy = classify_tool_call(tool_name, arguments, self.mode, mission_level=mission_level)
         if autonomy["decision"] == "auto_allow" and non_destructive_auto_allow:
             return

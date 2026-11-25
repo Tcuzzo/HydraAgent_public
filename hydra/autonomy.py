@@ -63,6 +63,10 @@ DESTRUCTIVE_BASH_TOKENS = frozenset(
         "umount",
         "sudo",
         "su",
+        "mv",
+        "cp",
+        "chown",
+        "chmod",
         "kill",
         "pkill",
         "killall",
@@ -150,18 +154,9 @@ def is_destructive_bash_command(command: str) -> bool:
     lowered = [token.lower() for token in tokens]
     if "$(" in command or "`" in command:
         return True
-    for token in lowered:
-        base = token.split("/")[-1]
-        if base in DESTRUCTIVE_BASH_TOKENS:
-            return True
-    return (
-        _has_destructive_git(lowered)
-        or _has_destructive_systemctl(lowered)
-        or _has_destructive_docker(lowered)
-        or _has_destructive_network_mutation(lowered)
-        or _has_destructive_rsync(lowered)
-        or _has_recursive_permission_change(lowered)
-    )
+    if any(token.split("/")[-1] in DESTRUCTIVE_BASH_TOKENS for token in lowered):
+        return True
+    return any(shape(lowered) for shape in _DESTRUCTIVE_SHAPES)
 
 
 def _shell_tokens(command: str) -> list[str]:
@@ -241,7 +236,31 @@ def _has_destructive_rsync(tokens: list[str]) -> bool:
     return False
 
 
-def _has_recursive_permission_change(tokens: list[str]) -> bool:
-    if not any(token in {"chmod", "chown"} for token in tokens):
+def _has_download_to_file(tokens: list[str]) -> bool:
+    # `wget -O file` / `curl -o file` write a downloaded body to disk. Tokens are
+    # lowercased, so -O and -o collapse to the same flag; both write a file.
+    if not any(token in {"curl", "wget"} for token in tokens):
         return False
-    return any(token in {"-r", "--recursive"} for token in tokens)
+    return any(
+        token in {"-o", "--output", "--output-document", "--output-file"}
+        or token.startswith(("--output=", "--output-document=", "--output-file="))
+        for token in tokens
+    )
+
+
+def _has_package_mutation(tokens: list[str]) -> bool:
+    # Installing or publishing a package runs third-party code or ships ours.
+    if any(token in {"pip", "pip3"} for token in tokens) and "install" in tokens:
+        return True
+    return "npm" in tokens and "publish" in tokens
+
+
+_DESTRUCTIVE_SHAPES = (
+    _has_destructive_git,
+    _has_destructive_systemctl,
+    _has_destructive_docker,
+    _has_destructive_network_mutation,
+    _has_destructive_rsync,
+    _has_download_to_file,
+    _has_package_mutation,
+)
