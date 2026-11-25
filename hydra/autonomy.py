@@ -486,7 +486,7 @@ def _take_short(name: str, spec: _Safe, args: list[_Word], index: int, values: l
 
 
 def _take_flag(name: str, spec: _Safe, args: list[_Word], index: int, values: list[tuple[str, str]]) -> int:
-    text = args[index].text
+    text = _literal_value(name, args[index])  # an unquoted glob in a flag word is expanded by the shell first
     if text in spec.flags:
         return index + 1
     if text.startswith("--"):
@@ -503,7 +503,7 @@ def _is_flag(word: _Word) -> bool:
 def _check_positional(name: str, spec: _Safe, word: _Word, count: int, after_dashdash: bool) -> None:
     if not spec.args or count >= spec.maxargs:
         raise _Unsafe(f"{name} does not take the argument '{word.text}' on the safe list")
-    _literal_value(name, word, _glob_allowed(spec, word, after_dashdash))
+    _literal_value(name, word, word.glob and _glob_allowed(spec, word, after_dashdash))
 
 
 @dataclass
@@ -664,9 +664,18 @@ def _check_ssh(name: str, spec: _Safe, args: list[_Word]) -> None:
         raise _Unsafe(f"the ssh remote command: {reason}")
 
 
-_FIND_VALUED = frozenset(
-    "-name -iname -path -ipath -type -maxdepth -mindepth -size -mtime -mmin -newer -perm -user -regex -iregex".split()
-)
+_FIND_PATTERNS = frozenset({"-name", "-iname", "-path", "-ipath", "-regex", "-iregex"})
+_FIND_NUMERIC = {
+    "-maxdepth": re.compile(r"\d+"),
+    "-mindepth": re.compile(r"\d+"),
+    "-mtime": re.compile(r"[+-]?\d+"),
+    "-mmin": re.compile(r"[+-]?\d+"),
+    "-size": re.compile(r"[+-]?\d+[cwbkMG]?"),
+    "-perm": re.compile(r"[-/]?[0-7]{1,4}"),
+    "-type": re.compile(r"[fdlbcps]"),
+    "-user": re.compile(r"[A-Za-z0-9_.-]+"),
+}
+_FIND_VALUED = _FIND_PATTERNS | frozenset(_FIND_NUMERIC) | {"-newer"}
 _FIND_PLAIN = frozenset(
     "-print -print0 -empty -not -and -or -a -o -prune -readable -writable -executable -true -false -depth -mount -xdev".split()
 )
@@ -681,11 +690,23 @@ def _check_find(name: str, spec: _Safe, args: list[_Word]) -> None:
         index = _find_primary(args, index)
 
 
+def _find_value(primary: str, word: _Word) -> None:
+    """Values of find primaries: an unquoted glob is expanded by the shell before find sees
+    it (quoted patterns are fine); numeric primaries take literal numbers; -newer takes a path."""
+    _literal_value("find", word)
+    pattern = _FIND_NUMERIC.get(primary)
+    if pattern is not None and not pattern.fullmatch(word.text):
+        raise _Unsafe(f"find {primary} needs a plain value, not '{word.text}'")
+    if primary == "-newer":
+        _require_path("find -newer file", word.text, _DEVICE_DIRS)
+
+
 def _find_primary(args: list[_Word], index: int) -> int:
     text = args[index].text
     if text in _FIND_PLAIN:
         return index + 1
     if text in _FIND_VALUED and index + 1 < len(args):
+        _find_value(text, args[index + 1])
         return index + 2
     if text in {"-exec", "-execdir"}:
         return _find_exec(args, index)
@@ -698,21 +719,64 @@ def _find_exec(args: list[_Word], index: int) -> int:
         end += 1
     if end >= len(args) or end == index + 1:
         raise _Unsafe("find -exec without a command and its closing ';'")
-    _judge_command(args[index + 1 : end])
+    command = args[index + 1 : end]
+    _judge_command(command)
+    if args[end].text == "+":
+        _check_plus(command)
     return end + 1
 
 
-_AWK_FIELD = r"\$(?:\d+|NF)"
-_AWK_ACTION = rf"\{{\s*print(?:\s+{_AWK_FIELD}(?:\s*,\s*{_AWK_FIELD})*)?\s*\}}"
-_AWK_PATTERN = r"(?:NR|NF|\$\d+)\s*(?:==|!=|<=|>=|<|>)\s*\d+"
-# optional pattern (NR/NF/field compared with an integer) and optional {print fields} action
-_AWK_PROGRAM = re.compile(rf"\s*(?:{_AWK_PATTERN})?\s*(?:{_AWK_ACTION})?\s*")
+def _check_plus(command: list[_Word]) -> None:
+    """With '+', find appends every match to one command line, so '{}' acts like an unbounded
+    glob operand: the same rule as a glob word, so a command with an output operand needs approval."""
+    spec = _SAFE_COMMANDS.get(command[0].text)
+    if spec is None or not _glob_allowed(spec, _Word("{}", glob=True), True):
+        raise _Unsafe(f"find -exec {command[0].text} ... + gives it many operands, one of which may be an output file")
+
+
+_AWK_TOKEN = re.compile(r"\s*(?:\$(?:\d+|NF)|NR|NF|print|==|!=|<=|>=|<|>|\d+|[{},])")
+_AWK_OPS = frozenset({"==", "!=", "<=", ">=", "<", ">"})
+
+
+def _awk_tokens(program: str) -> list[str] | None:
+    tokens: list[str] = []
+    pos = 0
+    while True:
+        found = _AWK_TOKEN.match(program, pos)
+        if found is None:
+            break
+        tokens.append(found.group(0).strip())
+        pos = found.end()
+    return tokens if not program[pos:].strip() else None
+
+
+def _awk_pattern_len(tokens: list[str]) -> int:
+    lhs = bool(tokens) and (tokens[0] in {"NR", "NF"} or (tokens[0][:1] == "$" and tokens[0][1:].isdigit()))
+    return 3 if lhs and len(tokens) >= 3 and tokens[1] in _AWK_OPS and tokens[2].isdigit() else 0
+
+
+def _awk_action_ok(tokens: list[str]) -> bool:
+    if tokens[:2] != ["{", "print"] or tokens[-1:] != ["}"]:
+        return False
+    body = tokens[2:-1]
+    fields, commas = body[0::2], body[1::2]
+    return not body or (len(body) % 2 == 1 and all(t[:1] == "$" for t in fields) and set(commas) <= {","})
+
+
+def _awk_program_ok(program: str) -> bool:
+    """optional pattern (NR/NF/$N compared with an integer) and optional {print fields} action"""
+    tokens = _awk_tokens(program)
+    if not tokens:
+        return False
+    size = _awk_pattern_len(tokens)
+    rest = tokens[size:]
+    return _awk_action_ok(rest) if rest else size > 0
 
 
 def _check_awk(name: str, spec: _Safe, args: list[_Word]) -> None:
     positional = _check_generic(name, spec, args)
     program = positional[0].text if positional else ""
-    if not program.strip() or not _AWK_PROGRAM.fullmatch(program):
+    if not _awk_program_ok(program):
         raise _Unsafe(
             "awk program is not a plain print of fields with an optional NR/NF/field comparison "
             "(no function call, string, pipe, redirection or getline)"
@@ -721,7 +785,7 @@ def _check_awk(name: str, spec: _Safe, args: list[_Word]) -> None:
 
 _SED_ADDR = r"(?:\d+|\$|/[^/\\\n]*/)"
 _SED_COMMAND = re.compile(
-    rf"\s*(?:{_SED_ADDR}(?:,{_SED_ADDR})?)?!?\s*"
+    rf"(?:{_SED_ADDR}(?:,{_SED_ADDR})?)?!?\s*"
     r"(?:[pdqnN=lP]"
     r"|s([^\w\s\\;])((?:(?!\1)[^\\\n])*)\1((?:(?!\1)[^\\\n])*)\1[gpiI0-9]*"
     r"|y([^\w\s\\;])((?:(?!\4)[^\\\n])*)\4((?:(?!\4)[^\\\n])*)\4)"
@@ -729,13 +793,16 @@ _SED_COMMAND = re.compile(
 )
 
 
+_SPACE_RUN = re.compile(r"\s*")
+
+
 def _sed_script_safe(script: str) -> bool:
-    pos = 0
+    pos = _SPACE_RUN.match(script, 0).end()
     while pos < len(script):
         found = _SED_COMMAND.match(script, pos)
         if found is None:
             return False
-        pos = found.end()
+        pos = _SPACE_RUN.match(script, found.end()).end()
     return True
 
 
