@@ -140,7 +140,7 @@ class _Word:
 
 _SPACE = re.compile(r"[ \t]+")
 _SEPARATOR = re.compile(r"&&|\|\||;|\||&(?!>)|\n|\r")
-_FREE_REDIRECT = re.compile(r"(?:[12]?>>?|&>)\s?/dev/null(?![\w/.])|2>&1(?!\w)")
+_FREE_REDIRECT = re.compile(r"(?:(?:[12]?>>?|&>)\s?/dev/null|2>&1)(?=[\s;&|]|$)")
 _PIECE = re.compile(r"""'([^']*)'|"([^"]*)"|(\\;)|([^\s;&|<>()$`"'\\]+)""")
 _UNQUOTED_OK = re.compile(r"[A-Za-z0-9_./+=:@%,^~*?-]+")
 _EXACT_WORDS = frozenset({"[", "]", "[[", "]]", "{}", "!="})
@@ -271,7 +271,6 @@ class _Safe:
     maxargs: int = 99
     globs: bool = False  # plain * and ? allowed (read-only commands only)
     numeric: bool = False  # head/tail style -5
-    anyflags: bool = False  # words that look like flags are plain arguments
     checker: str = "generic"
     subs: dict[str, "_Safe"] = field(default_factory=dict)
 
@@ -322,7 +321,7 @@ _SAFE_COMMANDS: dict[str, _Safe] = {
     "pwd": _NO_ARGS,
     "true": _NO_ARGS,
     "false": _NO_ARGS,
-    "cd": _s(args=True, maxargs=1),
+    "cd": _s(checker="cd"),
     "which": _s("-a"),
     "man": _s(),
     "file": _s("-b -i -L --mime --mime-type", globs=True),
@@ -405,11 +404,20 @@ _SAFE_COMMANDS: dict[str, _Safe] = {
     "awk": _s(valued="-F -v", checker="awk", globs=True),
     "sed": _s("-n -E -r -s -z -u --quiet --silent --regexp-extended", valued="-e --expression", checker="sed", globs=True),
 }
+_HYDRA_SUBS = {
+    "status": _NO_ARGS,
+    "roles": _NO_ARGS,
+    "providers": _NO_ARGS,
+    "models": _NO_ARGS,
+    "skills": _s(checker="subs", subs={"list": _NO_ARGS, "doctrine": _NO_ARGS}),
+    "ledger": _s(checker="subs", subs={"list": _NO_ARGS}),
+    "task-eval": _s(valued="--format", maxargs=1),
+}
 _PY_MODULES = {
     "pytest": _PYTEST,
     "json.tool": _s("--sort-keys --compact --no-ensure-ascii", valued="--indent", maxargs=1),
     "py_compile": _s(),
-    "hydra": _s(anyflags=True),
+    "hydra": _s(checker="subs", subs=_HYDRA_SUBS),
 }
 
 
@@ -426,46 +434,55 @@ def _literal_value(name: str, word: _Word, spec: _Safe) -> str:
     return word.text
 
 
-def _take_value(name: str, spec: _Safe, args: list[_Word], index: int, flag: str) -> int:
+def _take_next(name: str, spec: _Safe, args: list[_Word], index: int, flag: str, values: list[tuple[str, str]]) -> int:
     if index >= len(args):
         raise _Unsafe(f"flag '{flag}' of {name} needs a value")
-    _literal_value(name, args[index], spec)
+    values.append((flag, _literal_value(name, args[index], spec)))
     return index + 1
 
 
-def _take_long(name: str, spec: _Safe, args: list[_Word], index: int) -> int:
-    flag, equals, _value = args[index].text.partition("=")
+def _take_long(name: str, spec: _Safe, args: list[_Word], index: int, values: list[tuple[str, str]]) -> int:
+    flag, equals, value = args[index].text.partition("=")
+    if flag in spec.valued and equals:
+        values.append((flag, value))
+        return index + 1
     if flag in spec.valued:
-        return index + 1 if equals else _take_value(name, spec, args, index + 1, flag)
+        return _take_next(name, spec, args, index + 1, flag, values)
     if flag in spec.optval and equals:
         return index + 1
     raise _not_safe(name, flag)
 
 
-def _take_short(name: str, spec: _Safe, args: list[_Word], index: int) -> int:
+def _take_short(name: str, spec: _Safe, args: list[_Word], index: int, values: list[tuple[str, str]]) -> int:
+    """The one bundle parser: walk each letter; a letter that takes a value consumes the
+    rest of the bundle or the next word; an unknown letter is not safe."""
     text = args[index].text
     for position, letter in enumerate(text[1:], 1):
         flag = f"-{letter}"
         if flag in spec.valued:
-            return index + 1 if text[position + 1 :] else _take_value(name, spec, args, index + 1, flag)
+            rest = text[position + 1 :]
+            if rest:
+                values.append((flag, rest))
+                return index + 1
+            return _take_next(name, spec, args, index + 1, flag, values)
         if flag not in spec.flags:
             raise _not_safe(name, flag if len(text) == 2 else text)
     return index + 1
 
 
-def _take_flag(name: str, spec: _Safe, args: list[_Word], index: int) -> int:
+def _take_flag(name: str, spec: _Safe, args: list[_Word], index: int, values: list[tuple[str, str]]) -> int:
     text = args[index].text
     if text in spec.flags:
         return index + 1
     if text.startswith("--"):
-        return _take_long(name, spec, args, index)
+        return _take_long(name, spec, args, index, values)
     if spec.numeric and text[1:].isdigit():
         return index + 1
-    return _take_short(name, spec, args, index)
+    return _take_short(name, spec, args, index, values)
 
 
-def _is_flag(word: _Word, spec: _Safe) -> bool:
-    return word.text.startswith("-") and word.text != "-" and not spec.anyflags
+def _is_flag(word: _Word) -> bool:
+    return word.text.startswith("-") and word.text != "-"
 
 
 def _check_positional(name: str, spec: _Safe, word: _Word, count: int) -> None:
@@ -474,21 +491,31 @@ def _check_positional(name: str, spec: _Safe, word: _Word, count: int) -> None:
     _literal_value(name, word, spec)
 
 
-def _check_generic(name: str, spec: _Safe, args: list[_Word]) -> list[_Word]:
-    """Validate flags and arguments; returns the non-flag arguments."""
-    positional: list[_Word] = []
+@dataclass
+class _Parsed:
+    positional: list[_Word] = field(default_factory=list)
+    values: list[tuple[str, str]] = field(default_factory=list)  # (flag, value) for valued flags
+
+
+def _parse_args(name: str, spec: _Safe, args: list[_Word]) -> _Parsed:
+    """Validate flags and arguments for any table entry; returns what was taken."""
+    parsed = _Parsed()
     index, only_args = 0, False
     while index < len(args):
         word = args[index]
         if not only_args and word.text == "--":
             only_args, index = True, index + 1
-        elif not only_args and _is_flag(word, spec):
-            index = _take_flag(name, spec, args, index)
+        elif not only_args and _is_flag(word):
+            index = _take_flag(name, spec, args, index, parsed.values)
         else:
-            _check_positional(name, spec, word, len(positional))
-            positional.append(word)
+            _check_positional(name, spec, word, len(parsed.positional))
+            parsed.positional.append(word)
             index += 1
-    return positional
+    return parsed
+
+
+def _check_generic(name: str, spec: _Safe, args: list[_Word]) -> list[_Word]:
+    return _parse_args(name, spec, args).positional
 
 
 def _check_plain(name: str, spec: _Safe, args: list[_Word]) -> None:
@@ -504,14 +531,34 @@ def _check_subs(name: str, spec: _Safe, args: list[_Word]) -> None:
     sub = spec.subs.get(args[0].text)
     if sub is None:
         raise _Unsafe(f"{name} subcommand '{args[0].text}' is not on the safe list")
-    if sub.checker == "git_config":
-        _check_git_config(args[1:])
-        return
-    _check_generic(f"{name} {args[0].text}", sub, args[1:])
+    _CHECKERS[sub.checker](f"{name} {args[0].text}", sub, args[1:])
 
 
-def _workspace_relative(word: _Word) -> bool:
-    return not word.text.startswith("/") and ".." not in word.text.split("/")
+_PARENT = frozenset({".."})
+_DEVICE_DIRS = frozenset({"..", "dev", "proc", "fd"})
+
+
+def _path_ok(text: str, banned: frozenset[str]) -> bool:
+    """A path that stays in the workspace: relative, not '-', no '..', and none of the
+    ``banned`` directory names (a script must also not live under dev/, proc/ or fd/)."""
+    return bool(text) and text[0] not in "/-~" and not banned.intersection(text.split("/"))
+
+
+def _check_cd(name: str, spec: _Safe, args: list[_Word]) -> None:
+    positional = _check_generic(name, spec, args)
+    if len(positional) != 1 or not _path_ok(positional[0].text, _PARENT):
+        raise _Unsafe("cd only goes to one relative path inside the workspace (no .., /, ~ or -)")
+
+
+def _check_script(name: str, args: list[_Word]) -> None:
+    """The one rule for every command that runs a file: python, bash, sh (and so find -exec)."""
+    if not _path_ok(args[0].text, _DEVICE_DIRS):
+        raise _Unsafe(
+            f"{name} script '{args[0].text}' must be a relative path inside the workspace "
+            "(not absolute, not '-', no '..', not under dev/, proc/ or fd/)"
+        )
+    for word in args:
+        _literal_value(name, word, _s())
 
 
 def _check_git(name: str, spec: _Safe, args: list[_Word]) -> None:
@@ -525,9 +572,13 @@ def _git_global_option(args: list[_Word], index: int) -> int:
     text = args[index].text
     if text == "--no-pager":
         return index + 1
-    if text == "-C" and index + 1 < len(args) and _workspace_relative(args[index + 1]):
+    if text == "-C" and index + 1 < len(args) and _path_ok(args[index + 1].text, _PARENT):
         return index + 2
     raise _Unsafe(f"git option '{text}' is not on the safe list (no -c, --config-env, --exec-path or -C outside the workspace)")
+
+
+def _check_git_config_checker(name: str, spec: _Safe, args: list[_Word]) -> None:
+    _check_git_config(args)
 
 
 _GIT_SAFE_KEY = re.compile(r"(user|color|format)\.[\w.-]+|core\.whitespace")
@@ -552,15 +603,14 @@ def _check_python(name: str, spec: _Safe, args: list[_Word]) -> None:
         return
     if first.startswith("-"):
         raise _not_safe(name, first)
-    for word in args:
-        _literal_value(name, word, _s())
+    _check_script(name, args)
 
 
 def _check_python_module(name: str, args: list[_Word]) -> None:
     module = _PY_MODULES.get(args[0].text) if args else None
     if module is None:
         raise _Unsafe(f"{name} -m module '{args[0].text if args else ''}' is not on the safe list")
-    _check_generic(f"{name} -m {args[0].text}", module, args[1:])
+    _CHECKERS[module.checker](f"{name} -m {args[0].text}", module, args[1:])
 
 
 def _check_shell(name: str, spec: _Safe, args: list[_Word]) -> None:
@@ -571,8 +621,7 @@ def _check_shell(name: str, spec: _Safe, args: list[_Word]) -> None:
         return
     if args[0].text.startswith("-"):
         raise _not_safe(name, args[0].text)
-    for word in args:
-        _literal_value(name, word, _s())
+    _check_script(name, args)
 
 
 def _check_shell_script(name: str, args: list[_Word]) -> None:
@@ -584,15 +633,16 @@ def _check_shell_script(name: str, args: list[_Word]) -> None:
 
 
 def _check_ssh(name: str, spec: _Safe, args: list[_Word]) -> None:
-    """Plain ssh runs free (operator law). The remote command must itself be a safe
-    shape; ProxyCommand, -F and forwarding flags are not on the list."""
+    """Plain ssh runs free (operator law). ssh joins the remote words with spaces and the
+    remote shell parses them again, so the joined string is judged as a fresh command."""
     index = 0
     while index < len(args) and args[index].text.startswith("-"):
-        index = _take_flag(name, spec, args, index)
+        index = _take_flag(name, spec, args, index, [])
     if index >= len(args):
         raise _Unsafe("ssh without a host")
-    if args[index + 1 :]:
-        _judge_command(args[index + 1 :])
+    reason = unsafe_reason(" ".join(word.text for word in args[index + 1 :]))
+    if reason is not None:
+        raise _Unsafe(f"the ssh remote command: {reason}")
 
 
 _FIND_VALUED = frozenset(
@@ -633,7 +683,7 @@ def _find_exec(args: list[_Word], index: int) -> int:
     return end + 1
 
 
-_AWK_PROGRAM = re.compile(r"[A-Za-z0-9_ \t${}\[\],;.=!+\-*/%()\"~^&:@']*")
+_AWK_PROGRAM = re.compile(r"[A-Za-z0-9_ \t${}\[\],;.=!+\-*/%()\"~^&:']*")
 _AWK_BANNED = re.compile(r"\b(system|getline|close|fflush)\b")
 
 
@@ -666,19 +716,10 @@ def _sed_script_safe(script: str) -> bool:
     return True
 
 
-def _sed_scripts(args: list[_Word]) -> list[str]:
-    scripts: list[str] = []
-    for index, word in enumerate(args):
-        if word.text in {"-e", "--expression"} and index + 1 < len(args):
-            scripts.append(args[index + 1].text)
-        elif word.text.startswith(("--expression=", "-e")) and len(word.text) > 2:
-            scripts.append(word.text.split("=", 1)[1] if "=" in word.text else word.text[2:])
-    return scripts
-
-
 def _check_sed(name: str, spec: _Safe, args: list[_Word]) -> None:
-    positional = _check_generic(name, spec, args)
-    scripts = _sed_scripts(args) or [positional[0].text if positional else ""]
+    parsed = _parse_args(name, spec, args)
+    scripts = [value for flag, value in parsed.values if flag in {"-e", "--expression"}]
+    scripts = scripts or [parsed.positional[0].text if parsed.positional else ""]
     if not all(script and _sed_script_safe(script) for script in scripts):
         raise _Unsafe("sed script that is not plain print/delete/substitute (no e, w, r or other commands)")
 
@@ -691,6 +732,8 @@ _CHECKERS: dict[str, Callable[[str, _Safe, list[_Word]], None]] = {
     "shell": _check_shell,
     "find": _check_find,
     "ssh": _check_ssh,
+    "cd": _check_cd,
+    "git_config": _check_git_config_checker,
     "awk": _check_awk,
     "sed": _check_sed,
 }
