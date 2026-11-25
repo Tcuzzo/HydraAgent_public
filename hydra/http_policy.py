@@ -42,54 +42,55 @@ def _benchmark_range_allowed() -> bool:
     """Whether the benchmark/fake-IP range may be treated as public."""
     if os.environ.get("HYDRA_FETCH_ALLOW_FAKEIP", "").strip() == "1":
         return True
-    for name in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
-        if os.environ.get(name, "").strip():
-            return True
-    return False
+    return any(
+        os.environ.get(name, "").strip()
+        for name in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy")
+    )
 
 
-def resolve_addresses(host: str) -> list[str]:
-    """Every IP address `host` resolves to.
+def _refusal(host: str, *, allow_private: bool) -> str | None:
+    """Why `host` may not be contacted, or None when it may.
 
-    Fails closed: a host that cannot be resolved is refused, never attempted.
+    The one decision. Every other function in this module is an adapter over
+    it, so the product can never grow two answers to the same question.
     """
     try:
         addr_info = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except socket.gaierror as exc:
-        raise EgressDenied(f"could not resolve host {host!r}: {exc}") from exc
-    addresses: list[str] = []
+        return f"could not resolve host {host!r}: {exc}"
     for _family, _type, _proto, _canon, sockaddr in addr_info:
         ip_str = sockaddr[0]
-        if ip_str not in addresses:
-            addresses.append(ip_str)
-    return addresses
-
-
-def classify_address(ip_str: str) -> str | None:
-    """The address class of `ip_str`, or None when it is a public address.
-
-    "link-local" covers the cloud metadata range. "loopback" and "private" are
-    the operator's own machine and LAN. "benchmark" is checked before
-    "private" because Python counts 198.18.0.0/15 as private.
-    """
-    try:
-        ip = ipaddress.ip_address(ip_str)
-    except ValueError:
-        return None
-    if ip.is_unspecified:
-        return "unspecified"
-    if ip.is_link_local:
-        return "link-local"
-    if ip.is_multicast:
-        return "multicast"
-    if ip.is_reserved:
-        return "reserved"
-    if ip.is_loopback:
-        return "loopback"
-    if isinstance(ip, ipaddress.IPv4Address) and ip in _BENCHMARK_NETWORK:
-        return "benchmark"
-    if ip.is_private:
-        return "private"
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if ip.is_unspecified:
+            kind = "unspecified"
+        elif ip.is_link_local:
+            kind = "link-local"
+        elif ip.is_multicast:
+            kind = "multicast"
+        elif ip.is_reserved:
+            kind = "reserved"
+        elif ip.is_loopback:
+            kind = "loopback"
+        elif isinstance(ip, ipaddress.IPv4Address) and ip in _BENCHMARK_NETWORK:
+            kind = "benchmark"
+        elif ip.is_private:
+            kind = "private"
+        else:
+            continue
+        if kind == "benchmark":
+            if _benchmark_range_allowed():
+                continue
+            return (
+                f"benchmark/fake-IP range {ip_str}. Set HYDRA_FETCH_ALLOW_FAKEIP=1 "
+                "or configure HTTP_PROXY/HTTPS_PROXY when a proxy answers public names."
+            )
+        if kind in _ALWAYS_REFUSED:
+            return f"{kind} address {ip_str} is never a legitimate fetch target"
+        if kind in _OPERATOR_CLASSES and not allow_private:
+            return f"{kind} address {ip_str}"
     return None
 
 
@@ -97,67 +98,27 @@ def guard_host(host: str, *, allow_private: bool = False) -> None:
     """Refuse `host` when the egress policy forbids it.
 
     Raises :class:`EgressDenied` naming the blocked address class.
-
-    `allow_private=False` — the strict posture: only public addresses.
-    `allow_private=True` — the permissive posture: the operator's own loopback
-    and LAN addresses are reachable too. Link-local (metadata), unspecified,
-    multicast and reserved are refused under BOTH.
     """
     if not host:
         raise EgressDenied("refusing to fetch a URL with no host")
-    for ip_str in resolve_addresses(host):
-        address_class = classify_address(ip_str)
-        if address_class is None:
-            continue
-        if address_class == "benchmark":
-            if _benchmark_range_allowed():
-                continue
-            raise EgressDenied(
-                f"refusing {host} ({ip_str}): benchmark/fake-IP range {ip_str}. "
-                "Set HYDRA_FETCH_ALLOW_FAKEIP=1 or configure HTTP_PROXY/HTTPS_PROXY "
-                "when a proxy answers public names."
-            )
-        if address_class in _ALWAYS_REFUSED:
-            raise EgressDenied(
-                f"refusing {host} ({ip_str}): {address_class} address {ip_str} is "
-                "never a legitimate fetch target"
-            )
-        if address_class in _OPERATOR_CLASSES and not allow_private:
-            raise EgressDenied(f"refusing {host} ({ip_str}): {address_class} address {ip_str}")
+    reason = _refusal(host, allow_private=allow_private)
+    if reason is not None:
+        raise EgressDenied(f"refusing {host}: {reason}")
 
 
 def is_ip_allowed(host: str) -> tuple[bool, str | None]:
     """Whether every address `host` resolves to is public.
 
     (True, None) when all resolved addresses are public. (False, reason)
-    otherwise. Fails closed by raising :class:`EgressDenied` when the host
-    cannot be resolved — an unresolvable host is not a private address, it is
-    an unknown one.
+    otherwise. Fails closed: a host that cannot be resolved is refused — an
+    unresolvable host is not a private address, it is an unknown one.
     """
-    for ip_str in resolve_addresses(host):
-        address_class = classify_address(ip_str)
-        if address_class is None:
-            continue
-        if address_class == "benchmark":
-            if _benchmark_range_allowed():
-                continue
-            return False, (
-                f"benchmark/fake-IP range {ip_str}. Set HYDRA_FETCH_ALLOW_FAKEIP=1 "
-                "or configure HTTP_PROXY/HTTPS_PROXY when a proxy answers public names."
-            )
-        if address_class == "loopback":
-            return False, f"loopback address {ip_str}"
-        if address_class == "link-local":
-            return False, f"link-local address {ip_str}"
-        if address_class == "private":
-            return False, f"private address {ip_str}"
-        if address_class == "multicast":
-            return False, f"multicast address {ip_str}"
-        if address_class == "unspecified":
-            return False, f"unspecified address {ip_str}"
-        if address_class == "reserved":
-            return False, f"reserved address {ip_str}"
-    return True, None
+    reason = _refusal(host, allow_private=False)
+    if reason is None:
+        return True, None
+    if reason.startswith("could not resolve"):
+        raise EgressDenied(reason)
+    return False, reason
 
 
 class PolicyRedirectHandler(urllib.request.HTTPRedirectHandler):
