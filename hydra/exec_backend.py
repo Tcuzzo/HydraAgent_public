@@ -25,6 +25,7 @@ agent-issued test/verify commands run confined BY DEFAULT.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -104,6 +105,40 @@ def _bwrap_available() -> bool:
         _BWRAP_CAPABLE = _probe_bwrap()
         _PROBE_DONE = True
     return _BWRAP_CAPABLE
+
+
+#: Kill switch for the interactive ``bash`` tool's default sandbox.  Default ON;
+#: any of these values turns it off (loudly, on every call).  Never a prompt.
+SHELL_SANDBOX_ENV = "HYDRA_SHELL_SANDBOX"
+_SHELL_SANDBOX_OFF = frozenset({"0", "off", "false", "no", "disabled"})
+
+
+def shell_sandbox_state() -> str:
+    """``"on"`` | ``"off(kill switch)"`` | ``"unavailable"`` for the interactive bash tool.
+
+    ``on``: Linux with a working bwrap -- the tool runs in the kernel sandbox.
+    ``unavailable``: no bwrap here (or not Linux) -- host execution plus the static scan.
+    """
+    if os.environ.get(SHELL_SANDBOX_ENV, "").strip().lower() in _SHELL_SANDBOX_OFF:
+        return "off(kill switch)"
+    if sys.platform.startswith("linux") and _bwrap_available():
+        return "on"
+    return "unavailable"
+
+
+def confine_shell_argv(argv: Sequence[str], workspace: Path) -> list[str]:
+    """Prefix ``argv`` with bwrap: ``workspace`` read-write, everything else read-only.
+
+    The whole filesystem stays readable (reads outside the root are not refused);
+    a write anywhere but ``workspace`` fails at the kernel with EROFS, whatever the
+    command text looks like.  Network is shared, like the host path.
+    """
+    root = str(workspace)
+    return [
+        "bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+        "--bind", root, root, "--die-with-parent", "--new-session",
+        "--chdir", root, *argv,
+    ]
 
 
 def _reset_capability_cache() -> None:
