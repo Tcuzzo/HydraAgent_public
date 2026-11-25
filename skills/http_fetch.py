@@ -72,6 +72,8 @@ def run(
             raw = resp.read(max_bytes + 1)
             status = resp.status
             content_type = resp.headers.get("Content-Type", "")
+    except EgressDenied as e:
+        raise SkillError(str(e)) from e
     except urllib.error.HTTPError as e:
         raise SkillError(f"HTTPError: {e}") from e
     except urllib.error.URLError as e:

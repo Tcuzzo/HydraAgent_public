@@ -4,7 +4,6 @@ from __future__ import annotations
 import datetime as _dt
 import difflib
 import json
-import os
 import shutil
 import socket  # noqa: F401 — the security bar patches environment.socket.getaddrinfo
 import subprocess
@@ -204,7 +203,11 @@ def fetch_session_url(
     from hydra.http_identity import attribution_headers
 
     request = urllib.request.Request(url, headers=attribution_headers())
-    with open_checked(request, validate=validate, timeout=timeout_seconds) as response:
+    try:
+        response_cm = open_checked(request, validate=validate, timeout=timeout_seconds)
+    except EgressDenied as exc:
+        raise EnvironmentError(str(exc)) from exc
+    with response_cm as response:
         raw = response.read(max_chars + 1)
         text = raw[:max_chars].decode("utf-8", errors="replace")
         packet = {
