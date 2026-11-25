@@ -20,6 +20,7 @@ auto-allowed. ``deny`` mode blocks whatever ask mode would ask about.
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -114,14 +115,28 @@ def is_destructive_bash_command(command: str) -> bool:
     return unsafe_reason(command) is not None
 
 
+_DEPTH: ContextVar[int] = ContextVar("hydra_autonomy_depth", default=0)
+_MAX_DEPTH = 4
+_TOO_DEEP = f"commands nested more than {_MAX_DEPTH} levels deep (ssh or a shell -c inside another)"
+
+
 def unsafe_reason(command: str) -> str | None:
     """None when every segment of ``command`` is a known safe shape, else the plain
-    reason the first unsafe part needs approval."""
+    reason the first unsafe part needs approval. Never raises: ssh and ``sh -c`` judge their
+    command again, and past ``_MAX_DEPTH`` levels (or the interpreter's own limit) it needs approval."""
+    depth = _DEPTH.get()
+    if depth >= _MAX_DEPTH:
+        return _TOO_DEEP
+    token = _DEPTH.set(depth + 1)
     try:
         for words in _split_segments(command):
             _judge_words(words)
     except _Unsafe as exc:
         return str(exc)
+    except RecursionError:
+        return _TOO_DEEP
+    finally:
+        _DEPTH.reset(token)
     return None
 
 
@@ -234,8 +249,10 @@ def _is_word(word: _Word, names: frozenset[str]) -> bool:
 
 
 def _judge_words(words: list[_Word]) -> None:
-    while words and _is_word(words[0], _KEYWORDS):
-        words = words[1:]
+    start = 0
+    while start < len(words) and _is_word(words[start], _KEYWORDS):
+        start += 1
+    words = words[start:]
     if not words or (len(words) == 1 and _is_word(words[0], _CLOSERS)):
         return
     if _is_word(words[0], _FOR):
@@ -270,15 +287,20 @@ class _Safe:
     args: bool = True  # non-flag arguments allowed
     maxargs: int = 99
     globs: bool = False  # a glob operand is allowed (never with an output operand or a maxargs limit)
+    code_first: bool = False  # the first operand is a script, program or pattern, not a file (unless a pattern flag gave it)
+    pattern_flags: frozenset[str] = frozenset()  # valued flags that supply the script or pattern
     dashsafe: bool = False  # no flag of the real tool writes or executes, so a glob that expands to a flag is harmless
     numeric: bool = False  # head/tail style -5
     checker: str = "generic"
     subs: dict[str, "_Safe"] = field(default_factory=dict)
 
 
-def _s(flags: str = "", valued: str = "", optval: str = "", **kwargs: Any) -> _Safe:
+def _s(flags: str = "", valued: str = "", optval: str = "", pattern_flags: str = "", **kwargs: Any) -> _Safe:
     optional = frozenset(optval.split())
-    return _Safe(frozenset(flags.split()) | optional, frozenset(valued.split()), optional, **kwargs)
+    return _Safe(
+        frozenset(flags.split()) | optional, frozenset(valued.split()), optional,
+        pattern_flags=frozenset(pattern_flags.split()), **kwargs,
+    )
 
 
 _PYTEST = _s(
@@ -342,6 +364,8 @@ _SAFE_COMMANDS: dict[str, _Safe] = {
         optval="--color",
         globs=True,
         dashsafe=True,
+        code_first=True,
+        pattern_flags="-e",
     ),
     "rg": _s(
         "-n -i -l -c -v -w -F -S -s -u -N -o -q --hidden --no-heading --files --json --no-ignore "
@@ -349,8 +373,10 @@ _SAFE_COMMANDS: dict[str, _Safe] = {
         valued="-g -t -A -B -C -m -e --glob --type --max-count --max-depth",
         optval="--color",
         globs=True,
+        code_first=True,
+        pattern_flags="-e",
     ),
-    "ag": _s("-i -l -c -n -w -Q -s -S --nocolor --hidden", valued="-A -B -C -G -m", globs=True),
+    "ag": _s("-i -l -c -n -w -Q -s -S --nocolor --hidden", valued="-A -B -C -G -m", globs=True, code_first=True),
     "pytest": _PYTEST,
     "test": _s(_TEST_OPS),
     "[": _s(_TEST_OPS),
@@ -403,8 +429,11 @@ _SAFE_COMMANDS: dict[str, _Safe] = {
     ),
     "ssh": _s("-q -v -T -4 -6 -C -n", valued="-p -i -l", checker="ssh"),
     "nmap": _s("-sn -Pn -n -v -F -sT -sV --open", valued="-p -T --top-ports"),
-    "awk": _s(valued="-F", checker="awk", globs=True),
-    "sed": _s("-n -E -r -s -z -u --quiet --silent --regexp-extended", valued="-e --expression", checker="sed", globs=True),
+    "awk": _s(valued="-F", checker="awk", globs=True, code_first=True),
+    "sed": _s(
+        "-n -E -r -s -z -u --quiet --silent --regexp-extended", valued="-e --expression", checker="sed",
+        globs=True, code_first=True, pattern_flags="-e --expression",
+    ),
 }
 _HYDRA_SUBS = {
     "status": _NO_ARGS,
@@ -526,7 +555,22 @@ def _parse_args(name: str, spec: _Safe, args: list[_Word]) -> _Parsed:
             _check_positional(name, spec, word, len(parsed.positional), only_args)
             parsed.positional.append(word)
             index += 1
+    _check_code_position(name, spec, parsed)
     return parsed
+
+
+def _check_code_position(name: str, spec: _Safe, parsed: _Parsed) -> None:
+    """An unquoted glob is allowed only where a file operand stands. The word the program reads
+    as code or a pattern (sed script, awk program, grep/rg/ag pattern) is judged before the shell
+    expands it, so a file named like a script would become the script: never a glob there."""
+    if not spec.code_first or not parsed.positional or not parsed.positional[0].glob:
+        return
+    if any(flag in spec.pattern_flags for flag, _ in parsed.values):
+        return
+    raise _Unsafe(
+        f"glob '{parsed.positional[0].text}' in the script or pattern position of {name} "
+        "(the shell would expand it into code)"
+    )
 
 
 def _check_generic(name: str, spec: _Safe, args: list[_Word]) -> list[_Word]:
