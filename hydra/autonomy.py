@@ -63,10 +63,6 @@ DESTRUCTIVE_BASH_TOKENS = frozenset(
         "umount",
         "sudo",
         "su",
-        "mv",
-        "cp",
-        "chown",
-        "chmod",
         "kill",
         "pkill",
         "killall",
@@ -74,6 +70,13 @@ DESTRUCTIVE_BASH_TOKENS = frozenset(
         "shutdown",
     }
 )
+
+# These only count when they are the command being run (not an argument such as
+# `grep cp notes.txt`). See _command_words.
+DESTRUCTIVE_COMMAND_WORDS = frozenset({"mv", "cp", "chown", "chmod"})
+_SEPARATORS = frozenset({"&&", "||", ";", "|"})
+# Words that hand the next word over to be run as the command.
+_WRAPPERS = frozenset({"env", "command", "nohup", "xargs", "time", "exec", "nice", "-exec", "-execdir"})
 
 # Policy: plain ssh/scp/sftp/rsync/network commands are NOT destructive on
 # their own and must NOT be approval-gated. They were formerly
@@ -109,7 +112,7 @@ def _classify_core(tool_name: str, arguments: dict[str, Any], policy_mode: str) 
     # destructive/authority-class command shapes; let normal inspection,
     # tests, build commands, and non-destructive local work run.
     if tool_name == "bash":
-        command = " ".join(str(arguments.get("command", "")).split())
+        command = str(arguments.get("command", ""))
         if is_destructive_bash_command(command):
             if policy_mode == "deny":
                 return _decision("blocked", "deny policy blocks destructive command")
@@ -160,7 +163,7 @@ def is_destructive_bash_command(command: str) -> bool:
 
 
 def _shell_tokens(command: str) -> list[str]:
-    spaced = _strip_safe_redirections(command)
+    spaced = _strip_safe_redirections(command).replace("\n", " ; ")
     for marker in (">>|", ">|", ">>", ">", "&&", "||", ";", "|"):
         spaced = spaced.replace(marker, f" {marker} ")
     try:
@@ -236,16 +239,34 @@ def _has_destructive_rsync(tokens: list[str]) -> bool:
     return False
 
 
+def _command_words(tokens: list[str]):
+    """Yield the word each pipeline segment actually runs (first word after a
+    separator, skipping env assignments, wrapper words and their options)."""
+    expecting = True
+    for token in tokens:
+        if token in _SEPARATORS:
+            expecting = True
+        elif expecting and (token in _WRAPPERS or token.startswith("-") or "=" in token):
+            continue
+        elif expecting:
+            yield token.split("/")[-1]
+            expecting = False
+
+
+def _has_destructive_command_word(tokens: list[str]) -> bool:
+    return any(word in DESTRUCTIVE_COMMAND_WORDS for word in _command_words(tokens))
+
+
+_OUTPUT_FLAG = re.compile(r"^-[a-z]*o[a-z]*$|^--output(-document|-file)?(=.*)?$")
+
+
 def _has_download_to_file(tokens: list[str]) -> bool:
-    # `wget -O file` / `curl -o file` write a downloaded body to disk. Tokens are
+    # `wget -O file` / `curl -o file` write a downloaded body to disk, alone or
+    # in combined short flags (`wget -qO f`, `curl -sSLo f`). Tokens are
     # lowercased, so -O and -o collapse to the same flag; both write a file.
     if not any(token in {"curl", "wget"} for token in tokens):
         return False
-    return any(
-        token in {"-o", "--output", "--output-document", "--output-file"}
-        or token.startswith(("--output=", "--output-document=", "--output-file="))
-        for token in tokens
-    )
+    return any(_OUTPUT_FLAG.match(token) for token in tokens)
 
 
 def _has_package_mutation(tokens: list[str]) -> bool:
@@ -261,6 +282,7 @@ _DESTRUCTIVE_SHAPES = (
     _has_destructive_docker,
     _has_destructive_network_mutation,
     _has_destructive_rsync,
+    _has_destructive_command_word,
     _has_download_to_file,
     _has_package_mutation,
 )
