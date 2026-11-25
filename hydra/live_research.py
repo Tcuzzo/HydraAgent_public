@@ -15,6 +15,8 @@ from collections.abc import Callable
 from html.parser import HTMLParser
 from typing import Any
 
+from hydra.http_policy import EgressDenied, open_checked
+
 
 def _headers() -> dict[str, str]:
     from hydra.http_identity import attribution_headers
@@ -176,7 +178,7 @@ def _guard_public_host(url: str) -> None:
 
     try:
         allowed, reason = _is_ip_allowed(host)
-    except OSError as exc:
+    except (OSError, EgressDenied) as exc:
         raise LiveResearchError(str(exc)) from exc
     if not allowed:
         raise LiveResearchError(f"refused: {host} ({reason})")
@@ -186,7 +188,7 @@ def _fetch_page(url: str) -> str:
     """The page's readable text, not its markup: the model reasons over words."""
     _guard_public_host(url)
     req = urllib.request.Request(url, headers=_headers())
-    with urllib.request.urlopen(req, timeout=20) as resp:
+    with open_checked(req, validate=_guard_public_host, timeout=20) as resp:
         raw = resp.read(_MAX_PAGE_BYTES).decode("utf-8", errors="replace")
         content_type = str(getattr(resp, "headers", {}).get("Content-Type", "") or "").lower()
     looks_html = "html" in content_type or raw.lstrip()[:15].lower().startswith(("<!doctype", "<html"))
