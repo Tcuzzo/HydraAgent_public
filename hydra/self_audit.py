@@ -42,6 +42,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from hydra.providers import provider_options
+
 _LOG = logging.getLogger(__name__)
 
 # ── Injectable seams (monkeypatched in tests to break individual invariants) ──
@@ -51,9 +53,9 @@ def _classify(text: str, *, source: str = "operator"):
     return classify(text, source=source)
 
 
-def _resolve_work_model(kind: str):
+def _resolve_work_model(kind: str, **provider_options):
     from hydra.work_executor import resolve_work_model
-    return resolve_work_model(kind)
+    return resolve_work_model(kind, **provider_options)
 
 
 def _guard_work_turn(*, kind: str, final_text: str, tool_calls_made: int, rerun):
@@ -172,13 +174,13 @@ def _check_classify_work_imperatives() -> AuditCheck:
     )
 
 
-def _check_work_routes_to_executor() -> AuditCheck:
+def _check_work_routes_to_executor(**provider_options) -> AuditCheck:
     """(ii) Work turns (steering/collab) must resolve to their executor rung, not the chat route."""
     failures: list[str] = []
     routes: list[str] = []
     for kind in ("steering", "collab"):
         try:
-            pair = _resolve_work_model(kind)
+            pair = _resolve_work_model(kind, **provider_options)
         except Exception as exc:
             failures.append(f"{kind}: resolve raised {exc}")
             continue
@@ -398,7 +400,7 @@ def _check_work_executor_cloud_qwen() -> "AuditCheck":
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def run_self_audit() -> SelfAuditReport:
+def run_self_audit(*, env_dir=None) -> SelfAuditReport:
     """Run all four invariant checks and return a SelfAuditReport.
 
     This is the main entry point: ``hydra self-audit`` calls this.
@@ -410,7 +412,7 @@ def run_self_audit() -> SelfAuditReport:
     checks: list[AuditCheck] = []
 
     checks.append(_check_classify_work_imperatives())
-    checks.append(_check_work_routes_to_executor())
+    checks.append(_check_work_routes_to_executor(**provider_options(env_dir)))
     checks.append(_check_confabulation_blocked())
     checks.append(_check_convo_unaffected())
     checks.append(_check_model_based_decision())

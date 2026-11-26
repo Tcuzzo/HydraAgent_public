@@ -11,8 +11,8 @@ def test_explicit_provider_uses_its_configured_model(monkeypatch, tmp_path):
     assert result["model"] == "custom-family"
 
 
-def _backs_down(monkeypatch):
-    """BACKS has no answer: every rung lands on the local GPU rung."""
+def _local_only(monkeypatch):
+    """No cloud provider is configured: every rung lands on the local GPU rung."""
     from hydra import model_routing, rung_resolver
 
     model_routing.set_resolver(lambda rung, **_: (rung_resolver.LOCAL, f"rung-{rung}"))
@@ -27,10 +27,10 @@ def _nothing_reachable(monkeypatch):
     model_routing.set_resolver(dead)
 
 
-def test_auto_uses_local_setup_when_backs_is_down(monkeypatch, tmp_path):
+def test_auto_uses_local_setup_with_local_configuration(monkeypatch, tmp_path):
     from hydra.providers import is_local_provider
 
-    _backs_down(monkeypatch)
+    _local_only(monkeypatch)
     monkeypatch.delenv("HYDRA_PROVIDER", raising=False)
     (tmp_path / ".env.ollama").write_text("OLLAMA_MODEL=local-selected\n", encoding="utf-8")
     result = _resolve_chat_runtime(Namespace(profile="auto", provider=None, model=None, env_dir=tmp_path))
@@ -39,7 +39,7 @@ def test_auto_uses_local_setup_when_backs_is_down(monkeypatch, tmp_path):
 
 
 def test_auto_prefers_the_operators_custom_setup_over_the_local_rung(monkeypatch, tmp_path):
-    _backs_down(monkeypatch)
+    _local_only(monkeypatch)
     monkeypatch.delenv("HYDRA_PROVIDER", raising=False)
     (tmp_path / ".env.custom").write_text("CUSTOM_ENDPOINT=http://localhost:8080/v1\nCUSTOM_MODEL=custom-selected\n", encoding="utf-8")
     result = _resolve_chat_runtime(Namespace(profile="auto", provider=None, model=None, env_dir=tmp_path))
@@ -47,8 +47,9 @@ def test_auto_prefers_the_operators_custom_setup_over_the_local_rung(monkeypatch
     assert result["model"] == "custom-selected"
 
 
-def test_auto_uses_the_backs_rung_when_backs_answers(monkeypatch, tmp_path):
-    from hydra.rung_resolver import GATEWAY
+def test_auto_uses_configured_cloud_routing(monkeypatch, tmp_path):
+    GATEWAY = "mock-cloud"
+    (tmp_path / ".env.mock-cloud").write_text("MOCK_CLOUD_ENDPOINT=http://localhost:8080/v1\nMOCK_CLOUD_MODEL=configured-cloud\n", encoding="utf-8")
 
     monkeypatch.delenv("HYDRA_PROVIDER", raising=False)
     (tmp_path / ".env.ollama").write_text("OLLAMA_MODEL=local-selected\n", encoding="utf-8")
@@ -74,7 +75,7 @@ def test_nothing_reachable_and_nothing_set_up_triggers_setup(monkeypatch, tmp_pa
 def test_auto_accepts_explicit_process_local_configuration(monkeypatch, tmp_path):
     from hydra.providers import is_local_provider
 
-    _backs_down(monkeypatch)
+    _local_only(monkeypatch)
     monkeypatch.delenv("HYDRA_PROVIDER", raising=False)
     monkeypatch.setenv("OLLAMA_MODEL", "process-selected")
     result = _resolve_chat_runtime(Namespace(profile="auto", provider=None, model=None, env_dir=tmp_path))
@@ -83,7 +84,7 @@ def test_auto_accepts_explicit_process_local_configuration(monkeypatch, tmp_path
 
 
 def test_explicit_cloud_profile_does_not_switch_to_local(monkeypatch, tmp_path):
-    from hydra.rung_resolver import GATEWAY
+    GATEWAY = "mock-cloud"
 
     monkeypatch.delenv("HYDRA_PROVIDER", raising=False)
     (tmp_path / ".env.ollama").write_text("OLLAMA_MODEL=local-selected\n", encoding="utf-8")

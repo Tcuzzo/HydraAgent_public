@@ -5,15 +5,11 @@ repo (default `~/.hydraAgent/workspace/.env.*`), then hands back a
 configured `OllamaClient` (the generic OpenAI-compat client from
 §10.20/§10.23) pointed at the right endpoint.
 
-Chat routing does not pick providers here: hydra/model_routing.yaml names BACKS
-rungs, and hydra/rung_resolver.py resolves them through BACKS at call time (the
-`backs` gateway transport, or `local` for this host's GPU). The transports below
-carry no model name; a model always comes from a resolved rung or the operator's
-env file.
+Routing resolves operator-configured providers and local models. The transports
+below carry no model name; model choices come from the operator configuration.
 
 Built-in transports:
   - the keyless local endpoint (`local`), `http://localhost:11434`.
-  - `backs` — the BACKS rung gateway; location from HYDRA_BACKS_URL or `.env.backs`.
   - `needle` — optional local tool-selection SDK; Hydra executes tool calls.
   - the hosted and CLI transports listed in `_BUILTINS`.
   - any named OpenAI-compatible endpoint whose env file declares `<NAME>_ENDPOINT`
@@ -52,6 +48,11 @@ def default_env_dir() -> Path:
     return Path(os.path.expanduser("~/.hydraAgent/workspace"))
 
 
+def provider_options(env_dir: str | Path | None) -> dict[str, str | Path]:
+    """Forward a selected directory while preserving calls with no override."""
+    return {"env_dir": env_dir} if env_dir is not None else {}
+
+
 # Compatibility export; model families are selected by the user.
 FORBIDDEN_PROVIDER_NAMES: frozenset[str] = frozenset()
 
@@ -85,7 +86,7 @@ _BUILTINS: dict[str, _ProviderSpec] = {
         name="ollama-cloud",
         env_file=".env.ollama-cloud",
         endpoint_default="https://api.ollama.cloud",
-        model_default="",  # the model comes from a resolved BACKS rung
+        model_default="",  # the model comes from operator configuration
         requires_key=True,
     ),
     # Hosted OpenAI-compatible transport; key and model from the operator's env file.
@@ -108,22 +109,11 @@ _BUILTINS: dict[str, _ProviderSpec] = {
         model_default="",
         requires_key=False,
     ),
-    # The BACKS rung gateway: Kev/Needle on the BACKS host pick the model per
-    # request and hold the keys, so Hydra sends none.
-    "backs": _ProviderSpec(
-        name="backs",
-        env_file=".env.backs",
-        endpoint_default="",
-        model_default="",
-        requires_key=False,
-    ),
-    # Direct typed-decision transport. The model id is never stored here.
+    # Direct chat and typed decisions use the operator's key and model.
     "openrouter": _ProviderSpec(
-        name="openrouter",
-        env_file=".env.openrouter",
+        name="openrouter", env_file=".env.openrouter",
         endpoint_default="https://openrouter.ai/api/v1",
-        model_default="",
-        requires_key=True,
+        model_default="", requires_key=True,
     ),
 }
 
@@ -135,16 +125,17 @@ _PROVIDER_ALIASES: dict[str, str] = {
 _ENV_KEY_ALIASES: dict[str, tuple[str, ...]] = {
     "OLLAMA_ENDPOINT": ("OLLAMA_BASE_URL",),
     "OLLAMA_CLOUD_ENDPOINT": ("OLLAMA_CLOUD_BASE_URL",),
-    # The BACKS host: the rung resolver exports it as HYDRA_BACKS_URL, while the
-    # provider registry reads the operator's file under BACKS_ENDPOINT. One host,
-    # two names, so both readers must agree on the value.
-    "BACKS_ENDPOINT": ("BACKS_URL", "HYDRA_BACKS_URL"),
-    "BACKS_URL": ("BACKS_ENDPOINT", "HYDRA_BACKS_URL"),
 }
 
 
 class ProviderError(Exception):
     """A provider could not be resolved or constructed."""
+
+
+def require_public_provider(name: object, error_type: type[Exception] = ProviderError) -> None:
+    """Reject the private transport before configuration or generic HTTP fallback."""
+    if str(name or "").casefold() == "backs":
+        raise error_type("private gateway providers are not supported by public Hydra")
 
 
 @dataclass(frozen=True)
@@ -269,7 +260,7 @@ def _lookup_env_value(env: dict[str, str], key: str) -> str | None:
     An exported variable is an explicit, one-off override (a sandbox, a CI run,
     a different host). A value left in the operator's file is the standing
     default. When both are present the process environment wins -- the same
-    order the rung resolver already uses for the BACKS host.
+    order the rung resolver already uses for provider configuration.
     """
     candidates = _env_key_candidates(key)
     for candidate in candidates:
@@ -297,19 +288,19 @@ def list_providers() -> list[str]:
     return sorted(_BUILTINS)
 
 
-#: Transports whose default model is a resolved BACKS rung (local GPU / gateway).
-_RUNG_TRANSPORTS = {"ollama": True, "backs": False}  # name -> is the local rung
+#: Transports that may discover a model from their configured local endpoint.
+_RUNG_TRANSPORTS = {"ollama": True}  # name -> is the local rung
 
 
-def _rung_default_model(transport: str) -> str:
+def _rung_default_model(transport: str, env_dir: str | Path | None = None) -> str:
     """The model a bare transport should use: whatever its rung resolves to now."""
-    from hydra.model_routing import load_routing
+    from hydra.model_routing import load_routing, resolve_rung
 
     local = _RUNG_TRANSPORTS[transport]
     try:
         for entry in load_routing().roster:
             if entry.local == local:
-                return entry.model
+                return resolve_rung(entry.rung, entry.local, entry.task, env_dir=env_dir)[1]
     except Exception:  # noqa: BLE001 - no rung => caller decides
         return ""
     return ""
@@ -322,6 +313,7 @@ def resolve(
     or unknown unconfigured names."""
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
         raise ProviderError(f"provider name must use letters, digits, underscores, or hyphens, got {name!r}")
+    require_public_provider(name)
     name = _canonical_provider_name(name)
     env_root = Path(env_dir) if env_dir else default_env_dir()
 
@@ -354,7 +346,7 @@ def resolve(
     # rung_model=False: the rung resolver only wants the endpoint (asking the rung
     # for its model from inside rung resolution would recurse).
     if not model and rung_model and spec.name in _RUNG_TRANSPORTS:
-        model = _rung_default_model(spec.name)
+        model = _rung_default_model(spec.name, env_dir=env_dir)
     api_key = _lookup_env_value(env, f"{upper}_API_KEY") or None
 
     if spec.requires_key and not api_key:
@@ -403,11 +395,6 @@ def _make_transport_client(
         # label to ask/chat so a fresh sign-in setup is runnable without a
         # model override; CodexClient deliberately omits -m for that label.
         return client, replace(cfg, model=client.model)
-    if cfg.name == "backs":
-        from hydra.rung_resolver import RungGatewayClient, backs_url
-
-        endpoint = cfg.endpoint or backs_url(env_dir)
-        return RungGatewayClient(endpoint=endpoint), replace(cfg, endpoint=endpoint)
     num_ctx = None if cfg.api_key else local_num_ctx(cfg.name, env_dir=env_dir)
     client = OllamaClient(endpoint=cfg.endpoint, api_key=cfg.api_key, num_ctx=num_ctx)
     return client, cfg

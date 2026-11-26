@@ -88,24 +88,11 @@ def test_each_rung_is_resolved_once_per_process():
 def test_decision_timeout_defaults_to_a_cold_start_and_is_configurable(monkeypatch):
     from hydra import rung_resolver
 
-    seen: list[float] = []
-
-    def post(url, body, timeout):
-        seen.append(timeout)
-        return 200, {"chain": [{"rung": "rung-a", "usable": True, "model": "model-of-a"}]}
-
-    monkeypatch.setenv("HYDRA_BACKS_URL", "http://backs.test:8000")
     monkeypatch.delenv("HYDRA_DECISION_TIMEOUT", raising=False)
-    rung_resolver._DOWN.clear()
-    rung_resolver.resolve("plan", task="plan", post=post)
-    assert seen[-1] >= 30
-
+    assert rung_resolver.decision_timeout() == 30
     monkeypatch.setenv("HYDRA_DECISION_TIMEOUT", "45")
-    rung_resolver.resolve("plan", task="plan", post=post)
-    assert seen[-1] == 45
-
-    rung_resolver.resolve("plan", task="plan", post=post, timeout=7)
-    assert seen[-1] == 7
+    assert rung_resolver.decision_timeout() == 45
+    assert rung_resolver.decision_timeout(7) == 7
 
 
 def test_runtime_only_makes_no_network_calls(monkeypatch, tmp_path, capsys):

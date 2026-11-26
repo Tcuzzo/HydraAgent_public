@@ -81,28 +81,11 @@ has broken this.
   [intent-compiler](../intent-compiler/SKILL.md), then chart from what it
   actually says.
 
-## Known route — "land work in production" (already charted, do not improvise)
+## Landing work in production
 
-When the question is "how do I land this in prod?", that is NOT a fog ticket.
-It is a sharp ticket with one cleared answer. Charting a fresh route for it is
-the exact churn this skill exists to kill. The cleared route lives at
-`docs/BACKS_OPS_MANUAL.md` §6 and `memory/feedback_ide_to_prod_promotion_seam_20260927.md`;
-the building-with-backs skill teaches it as the standing pattern; the
-path skill carries it as a named route. Five steps:
+Read the current target repository's release instructions and the operator's authorization. Identify the reviewed commit, build artifact, deployment owner and rollback path. Use that project's documented promotion mechanism; do not infer a deployment directory, service command or private production reference from this skill.
 
-1. Commit on `/opt` (your branch). Topology guard stays on.
-2. `git push origin <branch>` — branch lands on the shared remote.
-3. `bash scripts/sync_github_main.sh --source-ref <branch>` — the operator's
-   promotion organ. Scrubs, publishes, advances `refs/backs/proven/production`.
-4. Rebuild + restart is operator-only: agents never run the service-restart
-   script or `systemctl`. Hand the operator the built artifact and the exact
-   restart step from their runbook, then wait for their go.
-5. Live-prove on the operator's own surface.
-
-Forbidden paths the harness guard refuses (do not pursue): `git update-ref HEAD`,
-`git checkout <sha>`, `git pull origin/<branch>` on `/mnt`. The reason is
-structural — raw ref rewrite on the deploy tree is the exact path that ships
-real topology to GitHub main. The only cleared path is `sync_github_main.sh`.
+Before reporting completion, compare the deployed revision and observed behavior with the reviewed artifact. A successful build or merge is separate from a working deployment. Preserve private topology and credentials in the authorized local evidence boundary.
 
 ## Works well with
 

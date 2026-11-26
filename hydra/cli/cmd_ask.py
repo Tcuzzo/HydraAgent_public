@@ -65,7 +65,7 @@ def _auth_rejection_message(provider: str, error: LlmError) -> str | None:
     status = getattr(error, "status_code", None)
     text = str(error)
     lowered = text.lower()
-    # A BACKS rung walk uses 401/402/403 as "try the next rung", not as a key refusal.
+    # A configured route walk uses 401/402/403 as "try the next rung", not as a key refusal.
     if "no rung answered" in lowered or re.search(r"rung[- ][\w-]+:\d{3}", lowered):
         return None
     key_words = ("api key", "api_key", "authorization", "unauthor", "invalid key")
@@ -234,8 +234,14 @@ def register_ask_command(
     p_ask.add_argument(
         "--auto-route",
         action="store_true",
-        help="classify the prompt via §10.89 router_classifier and pick the model from §10.34 role router (planner/doer/auditor). When set, the resolved role's model overrides --model.",
+        help="classify the prompt via §10.89 router_classifier and pick the model from §10.34 role router (planner/doer/auditor). When set, an explicitly assigned role model overrides --model; discovered defaults do not.",
     )
+
+
+def _auto_route_model(root: Path, role_name: str, current_model: str) -> str:
+    """Apply a role assignment without moving discovered defaults across providers."""
+    chosen_role = getattr(resolve_roles(workspace=root), role_name)
+    return chosen_role.model if chosen_role.model_explicit else current_model
 
 
 def cmd_ask(args: argparse.Namespace) -> int:
@@ -263,6 +269,20 @@ def cmd_ask(args: argparse.Namespace) -> int:
         return 2
     bind_client_workspace(client, cfg.name, root=root, approval_policy=args.approval_policy)
     model = args.model or cfg.model
+    auto_route_report = _auto_route_role(args)
+    if auto_route_report is not None:
+        # Resolve §10.34 role router and pick the model for the classified role.
+        try:
+            model = _auto_route_model(root, auto_route_report["role"], model)
+        except RoleError as e:
+            print(f"auto-route error: {e}", file=sys.stderr)
+            return 2
+        print(
+            f"  auto-route: role={auto_route_report['role']} "
+            f"model={model} matched={auto_route_report['matched']}",
+            file=sys.stderr,
+        )
+
     if not model:
         print(
             f"no model resolved for provider {args.provider!r}; "
@@ -270,23 +290,6 @@ def cmd_ask(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-
-    auto_route_report = _auto_route_role(args)
-    if auto_route_report is not None:
-        # Resolve §10.34 role router and pick the model for the classified role.
-        try:
-            roles = resolve_roles(workspace=root)
-        except RoleError as e:
-            print(f"auto-route error: {e}", file=sys.stderr)
-            return 2
-        chosen_role = getattr(roles, auto_route_report["role"])
-        if chosen_role.model:
-            model = chosen_role.model
-        print(
-            f"  auto-route: role={auto_route_report['role']} "
-            f"model={model} matched={auto_route_report['matched']}",
-            file=sys.stderr,
-        )
 
     system_prompt = build_agent_system_prompt(DEFAULT_SYSTEM_PROMPT)
     context_proof_lines: list[str] = []

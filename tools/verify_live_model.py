@@ -33,7 +33,7 @@ PROMPT = (
     "Use fs_write to write proof.txt in the current workspace with the single line "
     "hydra-live-model-ok followed by one newline. Then use fs_read to read proof.txt "
     "and verify its contents. Do not run shell commands. When both tools succeed, "
-    "say LIVE_PROOF_OK. /no_think"
+    "respond with exactly LIVE_PROOF_OK and no additional text. /no_think"
 )
 
 

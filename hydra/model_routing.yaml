@@ -1,19 +1,13 @@
 schema: hydra.model_routing.v2
 # SINGLE SOURCE OF TRUTH for Hydra's routing policy. Read by hydra/model_routing.py.
 #
-# This file names rungs only. No model, provider, or key name lives here.
-# At call time hydra/rung_resolver.py asks the decision service (Kev/Needle)
-# what each rung means. That service holds the keys and picks the live model.
-# To change what a role runs on, change the service ladder, not this file.
-#
-# Rungs: plan / work / build / auto are BACKS capability rungs (auto = Kev/Needle
-# decide). `task` names the BACKS router task (backs.router.v1) the entry asks for:
-# BACKS returns the live rung chain for it, walks it on failure, and learns from each
-# outcome. An entry with `local: true` names the BACKS ladder rung for this host's
-# local GPU; it is the last resort when BACKS itself is out.
-#
-# Decision seam. Not a chat roster entry, so it does not join role fall-through.
-# The decision service resolves the rung named here.
+# This file names public routing roles. Provider endpoints and model choices come
+# from operator setup files or environment variables, never a separate controller.
+# HYDRA_PROVIDER selects the preferred configured provider. A role can override it
+# with HYDRA_<RUNG>_PROVIDER (for example HYDRA_PLAN_PROVIDER).
+# Local roles use only this machine's configured model endpoint.
+# Typed decision tiers below are served by configured local SDKs/models or an
+# explicitly configured direct cloud decision endpoint.
 reflex:
   rung: reflex
 
@@ -42,7 +36,7 @@ roster:
     rung: build
     task: code
     role_tags: [cloud, code, build, agentic, verify]
-  # Kev/Needle pick the rung per task; also the emergency tier between cloud
+  # Operator-configured default; also the fallback tier between cloud
   # failures and the local GPU.
   - id: cloud-auto
     rung: auto

@@ -62,7 +62,7 @@ hydra ask "summarize this folder" --provider openrouter --approval-policy deny
 
 Gemini uses the same pattern with `GEMINI_ENDPOINT`, `GEMINI_MODEL`, and `GEMINI_API_KEY`. The endpoint is `https://generativelanguage.googleapis.com/v1beta/openai`. A missing or rejected key stops with a message that names the variable. Hydra does not continue on an empty model.
 
-Direct chat and the Jev decision rung are different. Chat reads `<NAME>_ENDPOINT`, `<NAME>_MODEL`, and `<NAME>_API_KEY`. The decision service at `HYDRA_BACKS_URL` does not receive that chat key. Direct Jev, when you want typed decisions without that service, reads `OPENROUTER_API_KEY` and `HYDRA_JEV_MODEL`. See [Jev typed decisions](#jev-typed-decisions-optional).
+Direct chat and the Jev decision rung are different. Chat reads `<NAME>_ENDPOINT`, `<NAME>_MODEL`, and `<NAME>_API_KEY`. Direct Jev typed decisions read `OPENROUTER_API_KEY` and `HYDRA_JEV_MODEL`. See [Jev typed decisions](#jev-typed-decisions-optional).
 
 On a network where public names resolve to the benchmark range `198.18.0.0/15`, set `HYDRA_FETCH_ALLOW_FAKEIP=1` or set `HTTPS_PROXY`. Otherwise fetches refuse that range and say so.
 
@@ -96,7 +96,7 @@ Risky tools ask first; in scripts or CI they are blocked unless you opt in with 
 
 ## Optional capabilities and how to enable them
 
-None of these are required for `hydra ask`. Names such as `<your-model>` and `<needle-url>` are placeholders. Replace them with values from your own machine, and keep the quotes in the shell examples so the angle brackets are not read as redirection. Do not commit those files.
+None of these are required for `hydra ask`. Names such as `<your-model>` and `<base-url>` are placeholders. Replace them with values from your own machine, and keep the quotes in the shell examples so the angle brackets are not read as redirection. Do not commit those files.
 
 ### Local models (Ollama)
 
@@ -117,7 +117,7 @@ hydra models --provider ollama
 hydra ask "Explain this project's entry point" --provider ollama --model '<your-model>' --approval-policy deny
 ```
 
-### Needle / Kev decision service and a fleet ladder
+### Local tool selection and role routing
 
 Two separate pieces.
 
@@ -130,72 +130,29 @@ hydra ask "Read README.md" --provider needle --model '<your-needle-model>' --app
 
 A pipx install uses `pipx install --force "hydraagent[needle] @ git+https://github.com/Tcuzzo/HydraAgent_public.git"`. If the extra is missing, the client raises `Needle is optional; install hydraagent[needle] to use provider 'needle'`. Needle does not write a conversational final answer. The selector tool reads `HYDRA_NEEDLE_MODEL` (`hydra/decision_tools.py`). Typed decisions are a different extra, `hydraagent[laya]`, configured with `HYDRA_LAYA_MODEL` and `HYDRA_LAYA_DEVICE` (`hydra/decision_models.py`). See [Models](docs/MODELS.md).
 
-**The decision service** resolves the rung names in `hydra/model_routing.yaml` at call time. `hydra/rung_resolver.py` reads the base URL and does not store a model list. `hydra setup` has no `backs` mode. `hydra/cli/cmd_setup.py` accepts `--mode` `interactive`, `local`, `cloud`, or `codex` only, and `hydra/setup.py` does not write this URL. Any other mode is rejected by that choice list.
+**Standalone role routing.** Public Hydra connects directly to configured providers. It does not discover or call a private routing service. `hydra/model_routing.yaml` names roles and fallback order; provider names, models and credentials come from your own configuration.
 
-Set the origin in the process environment. This wins over the file:
+Set `HYDRA_PROVIDER` to choose a configured default provider, or use `--provider` for one command. `HYDRA_<RUNG>_PROVIDER` selects a provider for a named routing entry; for example `HYDRA_PLAN_PROVIDER` selects the `plan` entry. Each provider still needs its own endpoint, model and credentials. A missing local model can be discovered from that local endpoint's loaded or installed model list.
 
-```bash
-export HYDRA_BACKS_URL='http://<backs-host>:<port>'
-```
-
-If `HYDRA_BACKS_URL` is empty, `backs_url()` reads `BACKS_ENDPOINT` from `~/.hydraAgent/workspace/.env.backs`. The routing loader calls the resolver without a directory argument, so the ladder uses that file. A caller that passes `env_dir` reads `.env.backs` in that directory. `hydra/providers.py` also accepts `BACKS_ENDPOINT` from the process environment when it builds a `backs` client. `backs_url()` reads that key only from the file:
-
-```
-BACKS_ENDPOINT=http://<backs-host>:<port>
-```
-
-`http://<backs-host>:<port>` is a placeholder for the origin only, with no path. Keep the quotes in the shell so the angle brackets are not redirection. The resolver appends:
-
-- `GET /api/system/needle_engineer_rungs` for the fleet ladder. A local GPU rung uses the row whose `identity` matches the rung and reads that row's `model`.
-- `POST /api/router/resolve`, `POST /api/router/complete`, and `POST /api/router/outcome` for cloud rungs (`backs.router.v1`).
-- `GET /v1/models` when it needs a capability id for a rung.
-
-If neither value is set, `backs_url()` raises `RungResolutionError` with `BACKS rung resolver location is not set`. Check:
-
-```bash
-python -c "from hydra.rung_resolver import backs_url; print(backs_url())"
-```
-
-That prints the origin, or that error. A cloud turn prints a route line on stderr from `RungGatewayClient`, starting with `hydra: rung`. The endpoint contract is [docs/BACKS_ROUTER_CONTRACT.md](docs/BACKS_ROUTER_CONTRACT.md).
-
-`skills/backs-aios-skills-pub/fleet-ladder/ladder.example.yaml` shows one ladder shape. `needle_client.py`, `rung_resolver.py`, and `model_router.py` do not open that file. The live ladder is the JSON from the GET above. `ModelRouter` also reads `HYDRA_GPU_LOCK` when it checks whether the local GPU is busy. That value is a lock-file path.
-
-**Role file.** `hydra/model_router.py` loads `provider`, `model`, `family`, and optional `base_url`, `api_key_env`, and `fallbacks` from a YAML file. With no path argument it reads `$HYDRA_CONFIG` if set, otherwise `~/.hydra/hydra.yaml`. Copy [`.hydraAgent/hydra.example.yaml`](.hydraAgent/hydra.example.yaml) and replace every placeholder:
+**Role file.** Copy [`.hydraAgent/hydra.example.yaml`](.hydraAgent/hydra.example.yaml) and replace its placeholders. Role configuration is selected from an explicit path, `$HYDRA_CONFIG`, the requested workspace, then `~/.hydra/hydra.yaml`; otherwise Hydra uses its packaged role mapping. Configured roles can name `provider`, `model`, `family`, and optional fallbacks. An invalid selected file fails explicitly. No credentials or model IDs are supplied by the packaged role mapping.
 
 ```bash
 cp .hydraAgent/hydra.example.yaml .hydraAgent/hydra.yaml
+hydra roles
 ```
 
-The example file itself is not loaded. In a source checkout the constant `HYDRA_CONFIG` in `hydra/cli/cmd_runtime.py`, `hydra/cli/cmd_execution.py`, and `hydra/cli/cmd_chat.py` points at `.hydraAgent/hydra.yaml` next to the repository root. `hydra roles` and `hydra execute` pass that path to `resolve_roles`. `hydra ask` does too, only when `--auto-route` is set. `subagents.spawn_model` is read from `.hydraAgent/hydra.yaml` in the current working directory (`hydra/cli/tool_binding.py`).
-
-**When `hydra.yaml` is missing.** The readers do not share one fallback.
-
-- `ModelRouter`, when its path does not exist, or when `agentic.roles` is empty, loads the rung pairs shipped in `hydra/model_routing.yaml`. An empty or comment-only file logs a warning and uses those same pairs. That is the built-in default.
-- `resolve_roles` raises. A missing `hydra.yaml` makes `core.config.load` raise `ConfigError` (`config file not found`). `resolve_roles` then raises `RoleError`: `role config invalid: <path>: config file not found`. `hydra roles` and `hydra execute` print `role error: ...` and exit 2.
-- The subagent string, when `./.hydraAgent/hydra.yaml` is absent or `subagents.spawn_model` is unset, uses the planner pair from `hydra/model_routing.yaml`, formatted as `provider/model`.
-- `hydra/test_model_config_ssot.py` skips with `.hydraAgent/hydra.yaml not present` when the live file is absent. That skip is the test suite. The CLI reports the missing file as the role error above.
-
-**Gateway 401, 402, and 403.** Hydra does not send a key on these calls. A refusal is a `RungResolutionError` (a retryable `LlmError`). Routing then tries the next rung (`hydra/model_routing.py`). The text depends on which call failed:
-
-- `POST /api/router/resolve` with any status other than 200 or 404, including 401, 402, and 403: `BACKS router refused task '<task>': HTTP <status>` plus the first 200 characters of the body. A 404 is not this error. The resolver logs that the router is not deployed and tries `GET /v1/models`.
-- `POST /api/router/complete` with a non-200 status: `BACKS router answered nothing for task '<task>':` plus the JSON `message` or `error`, or `HTTP <status>` when neither is set. HTTP 503 also marks the service down for 60 seconds. 401, 402, and 403 do not.
-- A chat or catalog read through `RungGatewayClient._read_json`: `HTTP <code> from <url>:` plus the first 300 characters of the body.
-- `GET` for the ladder or `/v1/models`: `BACKS rung resolver at <url> failed:` plus the HTTP error. An HTTP status does not mark the host down. A connection failure does, for 60 seconds.
-- `POST /api/router/outcome` does not raise. A non-200 is a warning, `router outcome not recorded: HTTP <status>`, and the report returns false.
-
-`OllamaClient._read_json` (not the gateway override) classifies the status in `hydra/provider_health.http_failure`. 401 is kind `authentication`. 403 is kind `permission`. The message is `HTTP <status>: <body>`. A 402 is kind `budget` when the body matches a credit or budget phrase, kind `rate_limit` when the error metadata names an in-flight budget limit, and otherwise kind `request`. The gateway override does not call that classifier, so its `RungResolutionError` keeps kind `unknown`. `classify_provider_error` then treats a message that contains `401` or `403` as `auth`. A 402 stays `other` unless the message also says unauthorized, forbidden, or authentication. If the chat health wrapper sees budget or retirement phrases in that text, it promotes the kind to `budget` or `retired`.
+`ModelRouter` also reads `HYDRA_GPU_LOCK` to check whether the local GPU is busy. That setting is a lock-file path. Only configured providers participate in fallback; a provider refusal never causes a call to a private service.
 
 ### Jev typed decisions (optional)
 
 Typed decisions are separate from chat. `hydra/model_routing.yaml` names three rungs and stores no model id: `llm_decision`, `vision_decision`, and `text_decision`. `hydra/decision_ladder.py` resolves the rung you asked for at call time. Every call sends an `instructions` field. A blank model is not called.
 
-The ladder tries configured rungs in this order. A rung that returns HTTP 401, 402, or 403 steps to the next one. The receipt's `rung` field names the step that answered (`backs`, `kev`, `laya`, `vision`, `text`, or `jev`). `tier_rung` is the name from the routing file.
+The ladder tries configured rungs in this order. A rung that returns HTTP 401, 402, or 403 steps to the next one. The receipt's `rung` field names the step that answered (`kev`, `laya`, `vision`, `text`, or `jev`). `tier_rung` is the name from the routing file.
 
-1. **Decision service.** Used when `HYDRA_BACKS_URL` is set, or when `BACKS_ENDPOINT` is set in the process or in `~/.hydraAgent/workspace/.env.backs`. Hydra posts to `{origin}/api/router/complete`. The body includes `instructions`. Hydra does not send your OpenRouter key on this hop. `hydra setup` has no `backs` mode.
-2. **Local decision model.** Vision uses `HYDRA_VISION_MODEL` on the local Ollama endpoint (`OLLAMA_ENDPOINT`, or `http://localhost:11434`). The llm tier uses `HYDRA_KEV_MODEL` or `HYDRA_LLM_DECISION_MODEL` the same way, then `HYDRA_LAYA_MODEL` through `LayaDecisionClient`. The text tier uses `HYDRA_TEXT_DECISION_MODEL`, and `HYDRA_LAYA_MODEL` when that is set. This path does not use a model id compiled into the ladder. The older `python -m hydra.decision_models` command is a different entry point and still has its own checkpoint default, described in [Models](docs/MODELS.md).
-3. **Direct Jev.** Used when both `OPENROUTER_API_KEY` and `HYDRA_JEV_MODEL` are set. Hydra posts to `{HYDRA_JEV_BASE_URL or https://openrouter.ai/api/v1}/chat/completions` with `model`, `instructions`, and `messages`. The key is sent on this hop. This is separate from chat: chat also works with `OPENROUTER_ENDPOINT`, `OPENROUTER_MODEL`, and `OPENROUTER_API_KEY` and does not require `HYDRA_JEV_MODEL`. If the key is set and `HYDRA_JEV_MODEL` is empty, the Jev hop is skipped and chat is unchanged.
+1. **Local decision model.** Vision uses `HYDRA_VISION_MODEL` on the local Ollama endpoint (`OLLAMA_ENDPOINT`, or `http://localhost:11434`). The llm tier uses `HYDRA_KEV_MODEL` or `HYDRA_LLM_DECISION_MODEL` the same way, then `HYDRA_LAYA_MODEL` through `LayaDecisionClient`. The text tier uses `HYDRA_TEXT_DECISION_MODEL`, and `HYDRA_LAYA_MODEL` when that is set. This path does not use a model id compiled into the ladder. The older `python -m hydra.decision_models` command is a different entry point and still has its own checkpoint default, described in [Models](docs/MODELS.md).
+2. **Direct Jev.** Used when both `OPENROUTER_API_KEY` and `HYDRA_JEV_MODEL` are set. Hydra posts to `{HYDRA_JEV_BASE_URL or https://openrouter.ai/api/v1}/chat/completions` with `model`, `instructions`, and `messages`. The key is sent on this hop. This is separate from chat: chat also works with `OPENROUTER_ENDPOINT`, `OPENROUTER_MODEL`, and `OPENROUTER_API_KEY` and does not require `HYDRA_JEV_MODEL`. If the key is set and `HYDRA_JEV_MODEL` is empty, the Jev hop is skipped and chat is unchanged.
 
-If none of those is configured, or every hop refuses, the error names `HYDRA_BACKS_URL`, `BACKS_ENDPOINT`, `HYDRA_KEV_MODEL`, `HYDRA_LAYA_MODEL`, `OPENROUTER_API_KEY`, and `HYDRA_JEV_MODEL`. Vision and text errors also name `HYDRA_VISION_MODEL` and `HYDRA_TEXT_DECISION_MODEL`.
+If none of those is configured, or every hop refuses, the error names `HYDRA_KEV_MODEL`, `HYDRA_LAYA_MODEL`, `OPENROUTER_API_KEY`, and `HYDRA_JEV_MODEL`. Vision and text errors also name `HYDRA_VISION_MODEL` and `HYDRA_TEXT_DECISION_MODEL`.
 
 Create an OpenRouter key at [openrouter.ai/keys](https://openrouter.ai/keys) (sign-in required). The request shape is in the [OpenRouter quickstart](https://openrouter.ai/docs/quickstart). Put the key in the environment, not in the repo. `.gitignore` ignores `.env` and `.env.*` except `.env.example`, and ignores `.hydraAgent/workspace/`.
 
@@ -220,7 +177,7 @@ Check, with no paid call:
 hydra doctor --rungs
 ```
 
-That prints `set` or `unset` for each rung. It does not print the key or the model id. `python -m pytest -q hydra/test_decision_ladder.py hydra/test_backs_router_client.py` checks the ladder and the decision-service client offline.
+That prints `set` or `unset` for each rung. It does not print the key or the model id. `python -m pytest -q hydra/test_decision_ladder.py hydra/test_public_standalone_decisions.py` checks configured decision routes and the standalone boundary offline.
 
 ### Live research
 

@@ -66,7 +66,7 @@ def _print_rungs(decisions: dict, *, fmt: str) -> None:
         return
     print("Decision rungs (no paid call)")
     print(
-        f"  llm {decisions['tiers']['llm']}: backs={decisions['backs']} "
+        f"  llm {decisions['tiers']['llm']}: "
         f"kev={decisions['kev_model']} laya={decisions['laya_model']} "
         f"jev_key={decisions['jev_key']} jev_model={decisions['jev_model']}"
     )

@@ -1,8 +1,7 @@
 """hydra.roles — config-driven planner / doer / auditor resolution.
 
-Roles name BACKS routing roles (``hydra/model_routing.yaml``), never a model, tag or
-vendor family. A routed role resolves to its rung's transport and route at call time;
-Kev/Needle on BACKS pick the live model.
+Roles can name configured routing entries (``hydra/model_routing.yaml``) or
+explicit provider/model assignments. The operator selects each provider and model.
 """
 from __future__ import annotations
 
@@ -20,6 +19,7 @@ from hydra.providers import (
     cli_transport_status,
     is_cli_transport,
     is_local_provider,
+    require_public_provider,
     resolve,
 )
 
@@ -47,6 +47,7 @@ class RoleSpec:
     model: str
     family: str
     selector: str | None = None
+    model_explicit: bool = True
 
 
 @dataclass(frozen=True)
@@ -57,16 +58,9 @@ class RoleSet:
 
 
 def _role_from_route(role: str, route: str, selector: str | None = None) -> RoleSpec:
-    """Resolve a routing role to (transport, route) without asking BACKS.
-
-    Cloud entries carry a BACKS router task, so the route is known up front and the
-    gateway walks its live chain per request. The local rung leaves the model empty:
-    the local transport asks its rung at call time. Only a cloud entry without a task
-    needs BACKS now; if no rung answers, that is a RoleError.
-    """
+    """Read a role's configured provider and model without remote discovery."""
     from hydra import rung_resolver
     from hydra.model_routing import RoutingConfigError, load_routing
-    from hydra.rung_resolver import RungResolutionError
 
     try:
         routing = load_routing()
@@ -75,24 +69,17 @@ def _role_from_route(role: str, route: str, selector: str | None = None) -> Role
     if route not in routing.roles:
         raise RoleError(f"role {role!r}: unknown routing role {route!r}")
     entry = routing.role_entry(route)
-    if entry.local:
-        provider, model, tag = rung_resolver.LOCAL, "", "local"
-    elif entry.task:
-        provider, model, tag = rung_resolver.GATEWAY, rung_resolver.route_for(entry.task, entry.rung), entry.task
-    else:
-        try:
-            provider, model = routing.role_pair(route)
-        except RungResolutionError as e:
-            raise RoleError(f"role {role!r}: no rung reachable for {route!r}: {e}") from e
-        tag = entry.rung
+    provider, model = rung_resolver.configured_pair(entry.rung, local=entry.local)
+    tag = "local" if entry.local else entry.task or entry.rung
     return RoleSpec(role=role, provider=str(provider), model=str(model),
-                    family=ROUTE_FAMILY + tag, selector=selector)
+                    family=ROUTE_FAMILY + tag, selector=selector, model_explicit=False)
 
 
 def _role_from_config(role: str, data: dict) -> RoleSpec:
     selector = data.get("selector")
     route = data.get("route")
     provider = data.get("provider")
+    require_public_provider(provider, RoleError)
     model = data.get("model")
     family = data.get("family")
     if route:
@@ -156,8 +143,8 @@ def resolve_roles_from_dict(config: dict) -> RoleSet:
         routed = role.family.startswith(ROUTE_FAMILY) and auditor.family.startswith(ROUTE_FAMILY)
         if role.family.casefold() == auditor.family.casefold():
             if routed:
-                # Both ask BACKS for the same rung task; BACKS may still pick
-                # different models, but independence is not guaranteed. Never fail.
+                # Both use the same role label; the configured provider/model may
+                # also coincide, so independence is not guaranteed.
                 _LOG.warning("degraded auditor: %s and auditor share routing %s",
                              name, role.family)
                 continue

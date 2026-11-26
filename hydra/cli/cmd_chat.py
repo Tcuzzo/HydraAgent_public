@@ -74,8 +74,8 @@ def build_chat_profile_defaults() -> dict[str, tuple[str, str]]:
     """Build the chat-profile (provider, model) map from the single YAML source.
 
     Reads hydra/model_routing.yaml via the typed loader (hydra.model_routing).
-    The file names BACKS rungs only; each rung resolves to a live model through
-    Kev/Needle at call time, so nothing here names a model. The chat brain is a
+    The file names configured provider rungs only; each rung resolves to a live model through
+    operator configuration, so nothing here names a model. The chat brain is a
     cloud rung; the local GPU rung serves forced --local and bounded worker loops.
     A missing/invalid file raises RoutingConfigError (no in-code roster).
     """
@@ -89,15 +89,19 @@ def build_chat_profile_defaults() -> dict[str, tuple[str, str]]:
 
 class _ChatProfileDefaults(Mapping):
     """Same name + shape as the old module dict, but each profile resolves its rung
-    when read, so importing this module never waits on BACKS (or fails without it)."""
+    when read, so importing this module never waits on configured provider (or fails without it)."""
 
     _PROFILES = ("auto", "cloud", "local")
 
     def __getitem__(self, profile: str) -> tuple[str, str]:
+        return self.resolve(profile)
+
+    def resolve(self, profile: str, *, env_dir: str | Path | None = None) -> tuple[str, str]:
         if profile not in self._PROFILES:
             raise KeyError(profile)
         routing = load_routing()
-        return routing.worker_default() if profile == "local" else routing.chat_default(profile)
+        return (routing.worker_default(env_dir=env_dir) if profile == "local"
+                else routing.chat_default(profile, env_dir=env_dir))
 
     def __iter__(self):
         return iter(self._PROFILES)
@@ -458,14 +462,14 @@ def _runtime_only_snapshot(profile: str, args: argparse.Namespace) -> dict[str, 
     """Profile, transport, and rung route from the routing file. No network."""
     routing = load_routing()
     entry = routing.entry(routing.chat_profiles[profile])
-    provider, model = offline_pair(entry)
+    provider, model = offline_pair(entry, env_dir=getattr(args, "env_dir", None))
     override_provider = getattr(args, "provider", None)
     override_model = getattr(args, "model", None)
     if override_provider:
         provider = str(override_provider)
     if override_model:
         model = str(override_model)
-    route = offline_runtime_route()
+    route = offline_runtime_route(env_dir=getattr(args, "env_dir", None))
     route["conversation_provider"] = provider
     if profile == "local":
         route["planner_provider"] = provider
@@ -482,24 +486,38 @@ def _runtime_only_snapshot(profile: str, args: argparse.Namespace) -> dict[str, 
     }
 
 
+def _configured_profile(profile: str, env_dir: str | Path | None) -> tuple[str, str]:
+    """Support static profile maps and configuration-backed maps with explicit scope."""
+    resolver = getattr(CHAT_PROFILE_DEFAULTS, "resolve", None)
+    return resolver(profile, env_dir=env_dir) if callable(resolver) else CHAT_PROFILE_DEFAULTS[profile]
+
+
+def _profile_default(profile: str, explicit_provider: str | None,
+                     env_dir: str | Path | None = None) -> tuple[str, str]:
+    """Only resolve a profile when the caller did not already select a provider."""
+    if explicit_provider:
+        return "", ""
+    try:
+        return _configured_profile(profile, env_dir)
+    except RungResolutionError:
+        return "", ""  # No configured model: setup decides.
+
+
 def _resolve_chat_runtime(args: argparse.Namespace) -> dict[str, str]:
     profile = _explicit_profile(args)
     if getattr(args, "runtime_only", False):
         return _runtime_only_snapshot(profile, args)
-    try:
-        default_provider, default_model = CHAT_PROFILE_DEFAULTS[profile]
-    except RungResolutionError:
-        default_provider, default_model = "", ""  # no rung reachable: setup decides
     provider = getattr(args, "provider", None) or os.environ.get("HYDRA_PROVIDER")
     env_dir = getattr(args, "env_dir", None)
+    default_provider, default_model = _profile_default(profile, provider, env_dir)
     if not provider and profile == "auto":
-        # Setup writes provider env files. A rung BACKS answered for wins; when the
-        # rung fell back to the local GPU, the operator's own setup goes first.
+        # Setup writes provider env files. A configured cloud route wins; when
+        # routing selected local, the operator's own setup goes first.
         env_root = Path(env_dir) if env_dir else provider_env_dir()
         setup: list[str] = []
         if env_root.is_dir():
             setup += [p.name[5:] for p in sorted(env_root.glob(".env.*"))
-                      if p.is_file() and p.name not in {".env.hydra", ".env.needle"}]
+                      if p.is_file() and p.name.casefold() not in {".env.hydra", ".env.needle", ".env.backs"}]
         if any(os.environ.get(key) for key in ("OLLAMA_MODEL", "OLLAMA_ENDPOINT", "OLLAMA_BASE_URL")):
             setup.append(LOCAL_TRANSPORT)
         if default_provider and not is_local_provider(default_provider):
@@ -522,7 +540,7 @@ def _resolve_chat_runtime(args: argparse.Namespace) -> dict[str, str]:
             model = ""
         model = model or (default_model if provider == default_provider else "")
     model = model or ""
-    route = default_runtime_route()
+    route = default_runtime_route(env_dir=env_dir)
     route["conversation_provider"] = provider
     if profile == "local":
         route["planner_provider"] = provider
@@ -875,7 +893,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
             print("Built-in providers:")
             for provider in list_providers_fn():
                 print(f"  {provider}")
-            print("chat profiles (BACKS rungs; Kev/Needle pick the model per call):")
+            print("chat profiles (configured standalone providers):")
             _r = load_routing()
             for _profile, _rid in _r.chat_profiles.items():
                 print(f"  {_profile} -> rung {_r.entry(_rid).rung}")
@@ -1021,6 +1039,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
         recall_builder=chat_recall_builder,
         local_memory_chars=args.local_memory_chars,
         runtime=runtime,
+        env_dir=getattr(args, "env_dir", None),
         trace_out_path=trace_out_path,
         command_handler=_elite_command_handler,
         initial_request=getattr(args, "initial_request", None),

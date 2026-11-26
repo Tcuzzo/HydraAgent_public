@@ -335,7 +335,10 @@ class AgentLoop:
                         "role": "system",
                         "content": (
                             "SYNTHESIS REQUIRED: you are near the iteration limit. "
-                            "STOP collecting more information. Now deliver your final report: "
+                            "Stop new exploration and use the remaining turns only for required "
+                            "completion or verification. Follow the user's requested output format exactly. "
+                            "Do not add headings or commentary that violate that format. "
+                            "If no output format is specified, deliver a concise final report: "
                             "1) KEY FINDINGS — what did you discover? "
                             "2) ROOT CAUSES — what's broken/wrong and why? "
                             "3) ACTIONABLE RECOMMENDATIONS — specific steps to fix/improve. "

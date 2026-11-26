@@ -158,7 +158,7 @@ def is_work_kind(kind: str) -> bool:
 
 # ── Work-model routing ───────────────────────────────────────────────────────
 
-def resolve_work_model(kind: str) -> tuple[str, str] | None:
+def resolve_work_model(kind: str, *, env_dir: str | Path | None = None) -> tuple[str, str] | None:
     """Resolve the (provider, model) a WORK turn must run on.
 
     The roster id is read from the turn profile's ``executor`` field
@@ -179,7 +179,7 @@ def resolve_work_model(kind: str) -> tuple[str, str] | None:
 
         routing = load_routing()
         entry = routing.entry(roster_id)
-        return entry.as_pair()
+        return entry.as_pair(env_dir=env_dir)
     except Exception as exc:  # unknown id, bad YAML — never crash the turn
         if os.environ.get("HYDRA_DEBUG") == "1":
             _LOG.warning("work executor roster id %r unresolved (%s)", roster_id, exc)

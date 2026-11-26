@@ -6,12 +6,7 @@ license: "MIT"
 
 # OSHA Bot — observe and report
 
-This portable skill is a load-side bridge, not the watchdog implementation.
-Inside BACKS, load `skills/osha-bot/SKILL.md` from the current runtime and
-follow `backend/services/osha_bot.py::probe`. Read the current `H_Boot.md`, `CLAUDE.md`
-and constitution there; repository source owns the exact contract.
-Outside BACKS, report that the native runtime is unavailable rather than
-claiming that its probes ran.
+This portable skill supplies observation discipline, not a watchdog implementation. Public Hydra does not load private health or integrity probes. Read the active public host's documented health interface and project rules; invoke only probes that are actually available and authorized there. If no probe is bound, report that status rather than locating a private runtime or claiming that checks ran.
 
 ## Observation preserves capability
 
@@ -42,6 +37,6 @@ accepted baseline. Health and watchdog probes never invoke recovery implicitly.
 
 ## Proof
 
-Invoke the real native probe and retain its findings and errors. Record candidate
+Invoke the available public host probe, if configured, and retain its findings and errors. Record candidate
 tests separately from deployed evidence. Do not claim observation, invocation,
 recovery, or closure from a skill name, a receipt-shaped string, or stale memory.

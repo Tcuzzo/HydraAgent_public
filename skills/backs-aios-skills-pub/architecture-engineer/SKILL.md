@@ -29,10 +29,9 @@ that touches a module boundary, dependency direction, or shared seam.
    runtime wiring (the actual seam) as separate evidence. Report when they
    disagree — that's the drift.
 3. **Local rule check.** Run the project rule check first
-   (`backend/services/authority_surface_classifier.py` for BACKS; equivalent
-   for other repos). A change that registers as authority_surface +
-   requires_approval=true is a gate — surface the approval row to the
-   operator, never bypass it.
+   when the active repository provides one. Apply its actual authorization
+   contract; this skill does not import another runtime's classifier or
+   establish a new approval requirement.
 4. **Structural review.** Check the change for:
    - responsibility and dependency direction across boundaries
    - duplicated orchestration, import cycles, new abstractions with no caller
@@ -54,9 +53,9 @@ that touches a module boundary, dependency direction, or shared seam.
 - **Do not enforce stale numeric targets or conventions from another repo.**
   Cite the local rule or concrete failure mode behind every violation. Label
   unproven design concerns as risks, not defects.
-- **Do not bypass the authority surface classifier.** If it returns
-  requires_approval=true, the change belongs in a proposal row, not a direct
-  commit. The classifier's fail-closed default is the law (inv 2).
+- **Honor the active project's authorization boundary.** Do not invent an
+  approval result or bypass an applicable rule. A missing private classifier
+  is not a reason to contact a private runtime.
 - **Do not refactor adjacent code during a review.** Stay on the diff under
   review; surface adjacent issues but do not touch them.
 
@@ -64,7 +63,7 @@ that touches a module boundary, dependency direction, or shared seam.
 
 - The BACKS source of truth: `skills/architecture_engineer/SKILL.md` and
   `skills/architecture-engineer/SKILL.md` (hyphenated) in the BACKS repo.
-- The authority classifier: `backend/services/authority_surface_classifier.py`.
+- The active public repository's architecture and authorization rules.
 - The fix-shit companion: this skill + `skills/fix-shit` for understanding-
   first repair.
 - Companion skills: `wayfinder`, `intent-compiler`, `seam-engineering`,
