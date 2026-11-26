@@ -28,7 +28,15 @@ from hydra.autonomy import classify_tool_call
 from hydra.operator_auth import AUTH_DIR_ENV_VAR
 from hydra.policy import ApprovalDenied, ApprovalPolicy
 
-AWK_NAME = 'BEGIN{system("touch PWNED_awk")}'
+# Windows forbids { } and " in a file name, so there the bait file carries a
+# legal spelling of the same payload. The glob B* still matches it, so the
+# policy still has to refuse the command; what that payload would do once
+# expanded is a POSIX claim, proven by the POSIX runs.
+AWK_NAME = (
+    'BEGIN{system("touch PWNED_awk")}'
+    if not sys.platform.startswith("win")
+    else "BEGIN_system_touch_PWNED_awk"
+)
 SED_WRITE = "s,a,b,w xy"
 SED_EXEC = "1,3s,touch,touch,e"
 
