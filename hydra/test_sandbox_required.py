@@ -45,10 +45,13 @@ def test_interpreter_mounts_are_read_only_and_workspace_is_only_writable_bind(tm
 
 
 @pytest.fixture
-def real_sandbox():
+def real_sandbox(request):
     backend._reset_capability_cache()
     if not backend._bwrap_available():
         pytest.skip('positive isolation requires usable Linux bwrap; refusal is independently tested')
+    parameters = getattr(getattr(request.node, 'callspec', None), 'params', {})
+    if not parameters.get('network', False) and not backend._bwrap_network_available():
+        pytest.skip('positive network isolation requires network namespaces; refusal is independently tested')
 
 
 def test_real_sandbox_imports_current_python_dependencies(tmp_path, real_sandbox):

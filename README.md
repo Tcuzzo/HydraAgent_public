@@ -53,6 +53,10 @@ On first launch, connect a local model, a cloud API key, or the Codex CLI sign-i
 
 From a clone, use the steps in [Develop from source](QUICKSTART.md#develop-from-source).
 
+For a clean Linux VM, use [Install and verify on a VM](docs/VM-INSTALL.md).
+It includes a non-editable installation and an end-to-end check of setup, file
+changes, command verification, memory, undo, and safety boundaries.
+
 ## Use a cloud key
 
 Hydra does not ship keys. A direct chat provider is any OpenAI-compatible endpoint. The name you pick becomes the env prefix. Create the key on that provider's site, then:

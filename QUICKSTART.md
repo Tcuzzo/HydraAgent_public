@@ -2,6 +2,9 @@
 
 Install Hydra, connect a model, and run your first task.
 
+For Ubuntu 24.04, [the VM installation guide](docs/VM-INSTALL.md) includes a clean
+package install and a reproducible end-to-end check.
+
 ## What you need
 
 **Required.** Python 3.11 or newer, and the install command below:
@@ -28,7 +31,7 @@ python -m pip install -e ".[test]" -c constraints.txt
 
 - A reachable Ollama, plus sqlite-vec (`vec0`). Unlocks persistent vector memory. `pip install -e ".[memory]"` installs sqlite-vec; Linux x86-64 can also use the vendored extension. `hydra/test_unified_memory.py` skips the live embedding tests when Ollama is unreachable, and skips the vec0 tests when the extension cannot load.
 
-- Linux Bubblewrap (`bwrap`). Unlocks confined worker verification (`sudo apt-get install bubblewrap` on Ubuntu). `hydra/test_sandbox_required.py` skips the live isolation tests with `positive isolation requires usable Linux bwrap; refusal is independently tested` until `bwrap` works.
+- Linux Bubblewrap (`bwrap`). Unlocks confined worker verification (`sudo apt-get install bubblewrap` on Ubuntu). The host must also permit network namespaces for offline verification. `hydra/test_sandbox_required.py` reports which capability is unavailable and separately tests refusal; a skipped positive isolation test is not a pass.
 
 - The `mcp` package (`pip install -e ".[mcp]"`). Unlocks the MCP server and client. `hydra/test_mcp_runtime.py` skips with `could not import 'mcp'` until that package imports.
 

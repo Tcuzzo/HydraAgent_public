@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from core.config import ConfigError, load
+from hydra.config_paths import role_config_path
 from hydra.providers import (
     CLI_VENDOR_FAMILIES,
     ProviderError,
@@ -114,9 +115,28 @@ def _role_from_config(role: str, data: dict) -> RoleSpec:
     )
 
 
+def _optional_mapping(value: object, section: str) -> dict:
+    """Normalize an absent section while rejecting non-mapping configuration."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise RoleError(f"{section} must be a mapping")
+    return value
+
+
+def _role_config_sections(config: dict) -> tuple[dict, dict]:
+    """Validate the agentic section and its role entries before resolution."""
+    if not isinstance(config, dict):
+        raise RoleError("config root must be a mapping")
+    agentic = _optional_mapping(config.get("agentic"), "agentic")
+    roles = _optional_mapping(agentic.get("roles"), "agentic.roles")
+    for name, data in roles.items():
+        _optional_mapping(data, f"agentic.roles.{name}")
+    return agentic, roles
+
+
 def resolve_roles_from_dict(config: dict) -> RoleSet:
-    agentic = config.get("agentic") or {}
-    roles = agentic.get("roles") or {}
+    agentic, roles = _role_config_sections(config)
     if "auditor" not in roles and "verifier" in roles:
         roles = {**roles, "auditor": roles["verifier"]}
     defaults = {
@@ -159,32 +179,48 @@ def resolve_roles_from_dict(config: dict) -> RoleSet:
 
 def resolve_roles(
     *,
-    config_path: str | Path,
-    schema_path: str | Path,
+    config_path: str | Path | None = None,
+    schema_path: str | Path | None = None,
+    workspace: str | Path | None = None,
 ) -> RoleSet:
+    """Resolve selected operator roles, or the shipped routing defaults.
+
+    A schema remains supported for legacy callers. Normal CLI use validates the
+    modern role mapping directly; no private checkout schema is required.
+    """
+    path = role_config_path(config_path, workspace=workspace)
+    if path is None:
+        return resolve_roles_from_dict({})
     try:
-        config = load(config_path, schema_path)
+        config = _load_selected_role_config(path, schema_path)
+        return resolve_roles_from_dict(config)
+    except (RoleError, OSError, UnicodeError) as e:
+        raise RoleError(f"role config invalid: {path}: {e}") from e
+
+
+def _load_selected_role_config(path: Path, schema_path: str | Path | None) -> dict:
+    """Select modern role loading or the caller's legacy schema contract."""
+    if schema_path is None:
+        return _load_role_config(path)
+    try:
+        return load(path, schema_path)
     except ConfigError as e:
-        config_path_obj = Path(config_path)
-        if config_path_obj.name != "hydra.yaml":
-            raise RoleError(f"role config invalid: {e}") from e
-        config = _load_hydra_yaml_roles(config_path_obj, e)
-    return resolve_roles_from_dict(config)
+        if path.name != "hydra.yaml":
+            raise RoleError(str(e)) from e
+        # Preserve modern hydra.yaml compatibility with legacy schemas.
+        return _load_role_config(path)
 
 
-def _load_hydra_yaml_roles(config_path: Path, original_error: ConfigError) -> dict:
-    """Load the modern hydra.yaml role section when the legacy schema is stale."""
+def _load_role_config(config_path: Path) -> dict:
+    """Read modern role YAML without depending on a checkout-only schema."""
     if not config_path.is_file():
-        raise RoleError(f"role config invalid: {original_error}") from original_error
+        raise RoleError("config file not found")
     try:
         data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as e:
-        raise RoleError(f"role config invalid: {config_path}: invalid YAML: {e}") from e
+        raise RoleError(f"invalid YAML: {e}") from e
     if not isinstance(data, dict):
-        raise RoleError(f"role config invalid: {config_path}: config root must be a mapping")
-    roles = (data.get("agentic") or {}).get("roles") or {}
-    if not isinstance(roles, dict):
-        raise RoleError(f"role config invalid: {config_path}: agentic.roles must be a mapping")
+        raise RoleError("config root must be a mapping")
     return data
 
 

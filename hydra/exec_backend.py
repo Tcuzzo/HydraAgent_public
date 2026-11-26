@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
-from hydra.proc import _shell_argv
+from hydra.proc import _popen_args, _shell_argv
 
 log = logging.getLogger(__name__)
 
@@ -61,27 +61,31 @@ EXEC_TIMEOUT_EXIT_CODE = 124
 
 _PROBE_DONE: bool = False
 _BWRAP_CAPABLE: bool = False
+_BWRAP_NETWORK_CAPABLE: bool | None = None
 
 
-def _probe_bwrap() -> bool:
-    """Return True iff bwrap is on PATH and unprivileged userns is enabled."""
+def _user_namespaces_enabled() -> bool:
+    setting = Path("/proc/sys/kernel/unprivileged_userns_clone")
+    if not setting.exists():
+        return True
+    try:
+        return setting.read_text().strip() == "1"
+    except OSError:
+        return False
+
+
+def _probe_bwrap(*, network: bool = True) -> bool:
+    """Check the requested namespace mode with a harmless sandbox command."""
     if shutil.which("bwrap") is None:
         return False
-    # Check unprivileged userns (Linux kernel setting)
-    userns_file = Path("/proc/sys/kernel/unprivileged_userns_clone")
-    if userns_file.exists():
-        try:
-            val = userns_file.read_text().strip()
-            if val != "1":
-                return False
-        except OSError:
-            return False
+    if not _user_namespaces_enabled():
+        return False
     # Quick functional test — a no-op sandbox invocation
     # Use absolute /bin/true so the path is unambiguous inside the sandbox.
     true_cmd = "/bin/true" if Path("/bin/true").exists() else "/usr/bin/true"
     try:
         r = subprocess.run(
-            ["bwrap",
+            ["bwrap", *([] if network else ["--unshare-net"]),
              "--ro-bind", "/usr", "/usr",
              "--ro-bind", "/bin", "/bin",
              "--ro-bind-try", "/lib", "/lib",
@@ -105,6 +109,14 @@ def _bwrap_available() -> bool:
         _BWRAP_CAPABLE = _probe_bwrap()
         _PROBE_DONE = True
     return _BWRAP_CAPABLE
+
+
+def _bwrap_network_available() -> bool:
+    """Cache network isolation separately from filesystem confinement."""
+    global _BWRAP_NETWORK_CAPABLE
+    if _BWRAP_NETWORK_CAPABLE is None:
+        _BWRAP_NETWORK_CAPABLE = _probe_bwrap(network=False)
+    return _BWRAP_NETWORK_CAPABLE
 
 
 #: Kill switch for the interactive ``bash`` tool's default sandbox.  Default ON;
@@ -145,9 +157,24 @@ def confine_shell_argv(argv: Sequence[str], workspace: Path) -> list[str]:
 
 def _reset_capability_cache() -> None:
     """Reset the cached probe result (used in tests only)."""
-    global _PROBE_DONE, _BWRAP_CAPABLE
+    global _PROBE_DONE, _BWRAP_CAPABLE, _BWRAP_NETWORK_CAPABLE
     _PROBE_DONE = False
     _BWRAP_CAPABLE = False
+    _BWRAP_NETWORK_CAPABLE = None
+
+
+def _sandbox_unavailable_reason(network: bool) -> str | None:
+    if not _bwrap_available():
+        return (
+            "bwrap sandbox unavailable; command not executed. "
+            "Install bubblewrap and enable unprivileged user namespaces for sandboxed execution."
+        )
+    if not network and not _bwrap_network_available():
+        return (
+            "bwrap network isolation unavailable; command not executed. "
+            "This host must permit network namespaces for offline verification."
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -187,16 +214,12 @@ def run_sandboxed(
     """
     workspace = Path(workspace).expanduser().resolve()
 
-    if _bwrap_available():
-        result = _run_in_bwrap(cmd, workspace=workspace, network=network, timeout=timeout, env=env)
-        return ExecResult(returncode=result.returncode, stdout=result.stdout, sandboxed=True)
-    else:
-        message = (
-            "bwrap sandbox unavailable; command not executed. "
-            "Install bubblewrap and enable unprivileged user namespaces for sandboxed execution."
-        )
+    message = _sandbox_unavailable_reason(network)
+    if message:
         log.warning("hydra.exec_backend: %s", message)
         return ExecResult(returncode=126, stdout=message, sandboxed=False)
+    result = _run_in_bwrap(cmd, workspace=workspace, network=network, timeout=timeout, env=env)
+    return ExecResult(returncode=result.returncode, stdout=result.stdout, sandboxed=True)
 
 
 def _build_bwrap_cmd(
@@ -301,7 +324,7 @@ def _run_on_host(
 ) -> ExecResult:
     try:
         proc = subprocess.run(
-            list(cmd),
+            _popen_args(list(cmd)),
             cwd=str(workspace),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

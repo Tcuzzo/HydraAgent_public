@@ -230,7 +230,7 @@ turns try only the role's capability rung, and `hydra ask` falls back straight t
 | Your project folder | Your code. Hydra's file tools stay inside it (or inside `--root`). |
 | `.hydraAgent/hydra.yaml` | Optional role file: which provider and model each role uses. Not in git. |
 | `~/.hydraAgent/workspace/` | Your provider settings and keys (`.env.*` files), outside any project. |
-| `~/.hydra/hydra.yaml` or `$HYDRA_CONFIG` | Where the model router looks for the role file when no path is given. |
+| `$HYDRA_CONFIG`, workspace role files, or `~/.hydra/hydra.yaml` | Optional role configuration, checked in that order after an explicit path; otherwise Hydra uses its packaged routing defaults. |
 | `hydra/model_routing.yaml` | Shipped with Hydra. Names rungs and fallbacks only, no models or keys. |
 
 ## Words used on this page
