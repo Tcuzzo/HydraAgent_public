@@ -14,6 +14,7 @@ import time
 import xml.etree.ElementTree as ET
 
 from radon.complexity import cc_visit
+from coverage import CoverageData
 
 RELEASE_TREE = "b2531f1da6bb01aff2814a622e2a95d8d9cba643"
 BASE_TREE = "d18e377cba26d61107f2de1f2b548c89f241335a"
@@ -43,7 +44,8 @@ def pytest_configure(config):
             if explicit:
                 kwargs["env"] = {**kwargs["env"], "COVERAGE_PROCESS_CONFIG": serialized}
             super().__init__(args, *positional, **kwargs)
-            _records.append({"pid": self.pid, "explicit_env": explicit,
+            _records.append({"pid": self.pid, "argv": [str(a) for a in args] if isinstance(args, (list, tuple)) else [str(args)],
+                             "cwd": str(kwargs.get("cwd") or os.getcwd()), "explicit_env": explicit,
                              "configuration_injected": explicit})
     subprocess.Popen = CoveredProcess
 def pytest_unconfigure(config):
@@ -77,6 +79,8 @@ def junit(path):
         "failures": [c.attrib["name"] for c in cases if c.find("failure") is not None],
         "failure_types": {c.attrib["name"]: c.find("failure").attrib.get("type", "")
                           for c in cases if c.find("failure") is not None},
+        "failure_messages": {c.attrib["name"]: c.find("failure").attrib.get("message", "")[:1200]
+                             for c in cases if c.find("failure") is not None},
         "errors": [c.attrib["name"] for c in cases if c.find("error") is not None],
         "skips": [c.attrib["name"] for c in cases if c.find("skipped") is not None],
     }
@@ -119,16 +123,36 @@ def measure(label, root, output):
         shutil.copy2(path, raw / path.name)
     children = json.loads((target / "children.json").read_text())
     assert children and any(c["configuration_injected"] for c in children)
-    matching = [c["pid"] for c in children if any(
-        re.search(r"(?:^|\.)(?:pid)?" + str(c["pid"]) + r"(?:\.|$)", p.name) for p in data)]
-    assert matching, "no recorded child PID has a coverage data file"
-    receipt.update({"child_processes": children, "matched_child_pids": matching,
+    main_path = (root / SOURCE[0]).resolve()
+    main_node = functions(main_path.read_text())["main"]
+    body_lines = set(range(main_node.body[0].lineno, main_node.end_lineno + 1))
+    relevant = [c for c in children if any(c["argv"][i:i + 2] == ["-m", "hydra"]
+                                         for i in range(len(c["argv"]) - 1))]
+    assert relevant, "no actual Hydra CLI subprocess recorded"
+    child_provenance = []
+    for child in relevant:
+        matching = [p for p in raw.iterdir() if
+                    re.search(r"(?:^|\.)(?:pid)?" + str(child["pid"]) + r"(?:\.|$)", p.name)]
+        assert matching, "Hydra child has no raw coverage file: " + str(child["pid"])
+        executed = set()
+        for data_path in matching:
+            child_data = CoverageData(basename=str(data_path))
+            child_data.read()
+            for filename in child_data.measured_files():
+                if Path(filename).resolve() == main_path:
+                    executed.update(child_data.lines(filename) or [])
+        hits = sorted(executed & body_lines)
+        assert hits, "Hydra child did not execute main body: " + str(child["pid"])
+        child_provenance.append({**child, "raw_files": [p.name for p in matching],
+                                 "executed_main_body_lines": hits})
+    receipt.update({"child_processes": children, "hydra_child_provenance": child_provenance,
                     "raw_data_files": len(data)})
     subprocess.run([sys.executable, "-m", "coverage", "combine", str(target)],
                    cwd=root, env=env, check=True)
     subprocess.run([sys.executable, "-m", "coverage", "json", "-o", str(target / "coverage.json")],
                    cwd=root, env=env, check=True)
     save(target / "measurement.json", receipt)
+    print(json.dumps({"measurement": label, "receipt": receipt}), flush=True)
     return receipt
 
 def functions(text):
@@ -194,6 +218,9 @@ def compare_quality(baseline, candidate, output):
             result["gate"] = "PASS" if row["cc"] <= old["cc"] and row["crap"] <= old["crap"] + 1e-9 else "WORSENED"
         else:
             result["gate"] = "PASS" if row["cc"] <= 5 and row["crap"] < 30 else "AUTHORED_DEBT"
+        for metric in (result.get("before"), result["after"]):
+            if metric:
+                metric["ast_sha256"] = hashlib.sha256(metric.pop("ast").encode()).hexdigest()
         changed.append(result)
         if result["gate"] != "PASS":
             failures.append(key)
@@ -206,6 +233,7 @@ def compare_quality(baseline, candidate, output):
               "terminal_body_ast_identical": True, "changed_functions": changed,
               "failures": failures, "status": "PASS" if not failures else "HOLD"}
     save(output / "numeric-quality.json", result)
+    print(json.dumps({"numeric_quality": result}), flush=True)
     return result
 
 def mutant(number, candidate, output):
@@ -243,6 +271,7 @@ def mutant(number, candidate, output):
                              and not cases["errors"] and not cases["skips"]
                              and not any("TimeoutExpired" in kind for kind in cases["failure_types"].values())
                              and all(any(name.startswith(prefix) and "AssertionError" in cases["failure_types"][name]
+                                         and "assert" in cases["failure_messages"][name].lower()
                                          for name in cases["failures"])
                                      for prefix in prefixes[number]))
         killed["junit"] = cases
@@ -260,6 +289,7 @@ def mutant(number, candidate, output):
               "restored": restored, "restored_junit": restored_cases,
               "source_restored": source_hashes(target) == original_hashes, "seals": seals(target)}
     save(receipt_dir / "result.json", result)
+    print(json.dumps({"mutation_result": result}), flush=True)
     shutil.rmtree(target)
     return result
 
