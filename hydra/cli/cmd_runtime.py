@@ -19,6 +19,8 @@ from hydra.setup import prompt_setup
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# Compatibility exports for source-checkout integrations. Role loading discovers
+# the active workspace at call time and does not read these package-root paths.
 HYDRA_CONFIG = REPO_ROOT / ".hydraAgent" / "hydra.yaml"
 HYDRA_SCHEMA = REPO_ROOT / ".hydraAgent" / "schemas" / "hydra.schema.yaml"
 
@@ -111,10 +113,7 @@ def cmd_models(args: argparse.Namespace) -> int:
 
 def _resolved_roles_or_exit(args: argparse.Namespace):
     try:
-        return resolve_roles(
-            config_path=args.config or HYDRA_CONFIG,
-            schema_path=HYDRA_SCHEMA,
-        )
+        return resolve_roles(config_path=args.config)
     except RoleError as e:
         print(f"role error: {e}", file=sys.stderr)
         return None

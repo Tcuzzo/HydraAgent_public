@@ -19,7 +19,9 @@ THREE FIXES (all WORK-only; the convo/chat path is never touched):
 
 2. ``guard_work_turn(...)`` — the no-confabulation guard. On a WORK turn, if the
    model's final text CLAIMS it performed an action (``is_action_claim``) but made
-   ZERO tool calls, that's a confabulation. The guard re-prompts ONCE, forcing the
+   ZERO tool calls and has no native execution receipt, that's a confabulation.
+   A native process receipt prevents replay and labels its reported actions as
+   independently unverified. Otherwise the guard re-prompts ONCE, forcing the
    model to either actually CALL the tool or state honestly it has not done it. If
    it still claims-without-acting, the guard returns an HONEST "not done" message —
    never a fake "done". Convo turns are exempt.
@@ -43,6 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from hydra.llm import NativeExecutionReceipt
 from hydra.turn_profiles import load_turn_profile
 
 _LOG = logging.getLogger(__name__)
@@ -255,6 +258,8 @@ class WorkGuardOutcome:
     * ``confabulated`` — True when the FIRST response was a claim-without-action.
     * ``action_performed`` — True when a real tool call backed the claim (either
       on the first response, or on the forced re-prompt). False = honest not-done.
+      A native process receipt also leaves this False: its local tool effects
+      were not independently observed by Hydra.
     * ``reprompted`` — True when the guard forced the one re-prompt.
     """
 
@@ -305,10 +310,12 @@ def guard_work_turn(
     final_text: str,
     tool_calls_made: int,
     rerun: RerunFn,
+    native_execution_receipts: list[NativeExecutionReceipt] | tuple = (),
 ) -> WorkGuardOutcome:
-    """Block confabulated success on a WORK turn.
+    """Block confabulated success on a WORK turn without replaying native work.
 
-    Decision table (work turns only — convo is exempt and passes straight through):
+    Native process receipts pass through with an explicit verification limit.
+    For ordinary tool-dispatch replies, convo is exempt and the work table is:
 
       claim? | tools? | action
       -------|--------|----------------------------------------------------------
@@ -322,6 +329,18 @@ def guard_work_turn(
     if not is_work_kind(kind):
         return WorkGuardOutcome(
             text=final_text, confabulated=False, action_performed=True
+        )
+
+    if any(isinstance(receipt, NativeExecutionReceipt) and receipt.returncode == 0
+           for receipt in native_execution_receipts):
+        # Native tools do not appear in Hydra's local dispatch count. Replaying
+        # the original task here can duplicate effects. Preserve the native
+        # report with its evidence limit; process success is not edit proof.
+        note = "Native CLI completed. Hydra has not independently verified the reported actions."
+        return WorkGuardOutcome(
+            text=f"{final_text.rstrip()}\n\n{note}".strip(),
+            confabulated=False,
+            action_performed=False,
         )
 
     claim = is_action_claim(final_text)

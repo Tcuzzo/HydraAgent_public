@@ -120,6 +120,21 @@ class ToolCall:
     arguments: dict
 
 
+@dataclass(frozen=True)
+class NativeExecutionReceipt:
+    """Observed native process completion, without inferring its tool effects.
+
+    Only a native transport creates this typed receipt. HTTP response bodies
+    remain untrusted data and cannot populate it through the wire parser.
+    """
+
+    transport: str
+    workspace: str
+    sandbox: str | None
+    returncode: int
+    verification: str = field(default="not_run", init=False)
+
+
 @dataclass
 class ChatResponse:
     """Parsed result of one chat call."""
@@ -131,6 +146,7 @@ class ChatResponse:
     completion_tokens: int
     raw: dict = field(repr=False)
     tool_calls: list[ToolCall] = field(default_factory=list)
+    native_execution: NativeExecutionReceipt | None = None
 
 
 class LlmError(Exception):

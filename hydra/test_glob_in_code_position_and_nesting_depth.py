@@ -27,8 +27,11 @@ import pytest
 from hydra.autonomy import classify_tool_call
 from hydra.operator_auth import AUTH_DIR_ENV_VAR
 from hydra.policy import ApprovalDenied, ApprovalPolicy
+from hydra.proc import resolve_bash
 
-AWK_NAME = 'BEGIN{system("touch PWNED_awk")}'
+# Read the command from input so the malicious program filename contains no
+# double quotes (Windows cannot create filenames containing them).
+AWK_NAME = "BEGIN{getline;system($0)}"
 SED_WRITE = "s,a,b,w xy"
 SED_EXEC = "1,3s,touch,touch,e"
 
@@ -66,7 +69,7 @@ KEYWORD_FLOOD = "if " * 40000 + "ls"
 REAL_EXEC = (
     ("sed s*x*y* in", {SED_WRITE: "", "in": "a\n"}),
     ("sed 1*3*e in", {SED_EXEC: "", "in": "touch PWNED_sed\n"}),
-    ("awk B* in", {AWK_NAME: "", "in": "1\n"}),
+    ("awk B* in", {AWK_NAME: "", "in": "touch PWNED_awk\n"}),
 )
 
 SAFE = (
@@ -145,7 +148,7 @@ def test_no_file_is_created_or_changed(
         pass
     else:
         subprocess.run(
-            ["bash", "-c", command], cwd=work, stdin=subprocess.DEVNULL,
+            [resolve_bash(), "-c", command], cwd=work, stdin=subprocess.DEVNULL,
             capture_output=True, timeout=30, check=False,
         )
     assert _snapshot(work) == before, f"{command!r} changed the working directory"

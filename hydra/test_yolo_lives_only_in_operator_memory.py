@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -27,6 +28,7 @@ from hydra.operator_auth import (
     is_yolo_active,
 )
 from hydra.policy import ApprovalDenied, ApprovalPolicy
+from hydra.proc import _shell_argv
 from hydra.worker_sessions import run_worker_job_session
 
 
@@ -67,10 +69,20 @@ def test_the_graders_chain_grants_no_yolo(world) -> None:
     #    obfuscated path so no literal name appears in the command.
     state = json.dumps(_signed_yolo_state(secret))
     script = f"open('au'+'th/unlock'+'_state.json','w').write({state!r})"
-    tools["bash"].invoke(command=f"python3 -c {json.dumps(script)}")
+    payload = root / "plant state.py"
+    payload.write_text(script, encoding="utf-8")
+    argv = [sys.executable, str(payload)]
+    # The tool uses cmd.exe on Windows and a POSIX shell elsewhere. Keep the
+    # attack real while allowing interpreter and workspace paths with spaces.
+    shell = Path(_shell_argv("")[0]).name.lower()
+    command = subprocess.list2cmdline(argv) if shell == "cmd.exe" else shlex.join(argv)
+    result = tools["bash"].invoke(command=command)
+    assert result["ok"] is True, result
+    assert result["exit_code"] == 0, result
 
     # The file exists, but a file is never authority.
     assert (auth_dir / "unlock_state.json").exists()
+    assert (auth_dir / "unlock_state.json").read_text(encoding="utf-8") == state
     assert is_yolo_active(auth_dir=auth_dir) is False
     assert OperatorAuth(auth_dir=auth_dir).status().mode == "operator"
     policy = ApprovalPolicy("ask", stdin_is_tty=lambda: False, approval_path=root / "q.jsonl", run_path=root / "r.jsonl")

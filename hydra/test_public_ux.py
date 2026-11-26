@@ -108,9 +108,12 @@ def test_benchmark_range_is_refused_until_opt_in(tmp_path, monkeypatch):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.1", 0))]
 
     monkeypatch.setattr(environment.socket, "getaddrinfo", fake_dns)
-    monkeypatch.delenv("HYDRA_FETCH_ALLOW_FAKEIP", raising=False)
-    monkeypatch.delenv("HTTPS_PROXY", raising=False)
-    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    # This proves direct-mode refusal; a host proxy is an intentional opt-in.
+    for name in (
+        "HYDRA_FETCH_ALLOW_FAKEIP", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+        "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+    ):
+        monkeypatch.delenv(name, raising=False)
     with pytest.raises(Exception) as exc:
         environment.fetch_session_url(tmp_path, "sec", "http://example.com/", timeout_seconds=1)
     text = str(exc.value).lower()

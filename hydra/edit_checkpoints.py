@@ -4,12 +4,11 @@ Implements Slice 5 of the trusted-repo-work build.
 
 Design
 ------
-Every mutation routed through apply_patch (apply_patch() and create_file())
-records the target file's PRE-IMAGE bytes — or the ABSENT sentinel when the
-file did not yet exist — before the atomic os.replace commit.  The hook lives
-at the SINGLE sanctioned writer (apply_patch / create_file), so 100% of
-sanctioned mutations are captured automatically without scattering calls across
-callers.  Checkpointing is DEFAULT-ON: callers that do not pass an explicit
+File tools and apply_patch record the target file's PRE-IMAGE bytes — or the
+ABSENT sentinel when the file did not yet exist — before atomic publication.
+The public file tools use CheckpointStore.write_bytes so failed publication
+cannot leave an undo entry for a change that never happened.
+Checkpointing is DEFAULT-ON: callers that do not pass an explicit
 checkpoint_store get a store auto-constructed from the repo root.  An explicit
 opt-out (checkpoint=False) is available for ephemeral / sandbox writes.
 
@@ -51,6 +50,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass, field
@@ -58,6 +58,9 @@ from pathlib import Path
 from typing import Any
 
 from hydra.atomic_write import atomic_write_bytes
+from hydra.file_lock import locked_path
+
+log = logging.getLogger(__name__)
 
 # Sentinel: the file did not exist before the mutation (i.e., it was created).
 ABSENT = "__HYDRA_ABSENT__"
@@ -178,6 +181,11 @@ class CheckpointStore:
             The exact bytes of the file before mutation.  Pass None (or bytes())
             for a create (pre-image ABSENT — the undo will delete the file).
         """
+        with locked_path(self._index_path):
+            self._record(target_path=target_path, op=op, pre_image=pre_image)
+
+    def _record(self, *, target_path: Path, op: str, pre_image: bytes | None,
+                prune: bool = True) -> None:
         entries = self._read_index()
 
         # Derive next seq
@@ -205,26 +213,69 @@ class CheckpointStore:
         }
         entries.append(entry)
 
-        # GC oldest entries to stay within cap
-        entries = self._gc(entries)
+        if prune:
+            self._gc(entries)
+        else:
+            self._write_index(entries)
 
-        self._write_index(entries)
+    def write_bytes(self, target: Path, payload: bytes, *, overwrite: bool = True) -> None:
+        """Snapshot and publish a file under one workspace checkpoint lock."""
+        target = target.resolve()
+        if not target.is_relative_to(self.repo_root) or target == self.repo_root:
+            raise ValueError("checkpoint target must stay inside the workspace")
+        with locked_path(self._index_path):
+            pre_image = self._capture_pre_image(target)
+            self._record(target_path=target, op="create" if pre_image is None else "modify",
+                         pre_image=pre_image, prune=False)
+            try:
+                atomic_write_bytes(target, payload, overwrite=overwrite)
+            except OSError:
+                entry = self._pop()
+                if entry is not None:
+                    self._delete_content(entry["seq"])
+                raise
+            # Keep every prior recovery point until publication succeeds.
+            self._prune_after_publish()
 
-    def _gc(self, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Remove oldest entries until both caps are satisfied."""
+    def _capture_pre_image(self, target: Path) -> bytes | None:
+        if self.max_entries < 1 or self.max_bytes < 0:
+            raise OSError("invalid undo snapshot capacity; change not applied")
+        if not target.exists():
+            return None
+        with target.open("rb") as stream:
+            pre_image = stream.read(self.max_bytes + 1)
+        if len(pre_image) > self.max_bytes:
+            raise OSError("file exceeds undo snapshot capacity; change not applied")
+        return pre_image
+
+    def _prune_after_publish(self) -> None:
+        entries = self._read_index()
+        if (len(entries) <= self.max_entries
+                and sum(entry["pre_image_size"] for entry in entries) <= self.max_bytes):
+            return
+        try:
+            self._gc(entries)
+        except OSError as exc:
+            log.warning("File change committed; undo retention cleanup failed; "
+                        "stored snapshots remain available: %s", exc)
+
+    def _gc(self, entries: list[dict[str, Any]]) -> None:
+        """Commit bounded history before deleting any evicted snapshot bytes."""
+        evicted = []
         # Cap by entry count
         while len(entries) > self.max_entries:
-            oldest = entries.pop(0)
-            self._delete_content(oldest["seq"])
+            evicted.append(entries.pop(0))
 
         # Cap by total bytes
         total = sum(e["pre_image_size"] for e in entries)
         while total > self.max_bytes and entries:
             oldest = entries.pop(0)
             total -= oldest["pre_image_size"]
-            self._delete_content(oldest["seq"])
+            evicted.append(oldest)
 
-        return entries
+        self._write_index(entries)
+        for oldest in evicted:
+            self._delete_content(oldest["seq"])
 
     def _delete_content(self, seq: int) -> None:
         p = self._content_path(seq)
@@ -236,6 +287,10 @@ class CheckpointStore:
 
     def pop(self) -> dict[str, Any] | None:
         """Remove and return the most-recent entry.  Returns None on empty stack."""
+        with locked_path(self._index_path):
+            return self._pop()
+
+    def _pop(self) -> dict[str, Any] | None:
         entries = self._read_index()
         if not entries:
             return None
@@ -329,7 +384,11 @@ def undo(store: CheckpointStore, *, n: int = 1) -> str:
     """
     if n < 1:
         return "undo: nothing to do (n < 1)."
+    with locked_path(store._index_path):
+        return _undo_locked(store, n=n)
 
+
+def _undo_locked(store: CheckpointStore, *, n: int) -> str:
     messages: list[str] = []
     messages.append(
         "NOTE: undo reverts files only — external side effects (network, db, shell) "
@@ -338,7 +397,7 @@ def undo(store: CheckpointStore, *, n: int = 1) -> str:
 
     restored = 0
     for _ in range(n):
-        entry = store.pop()
+        entry = store._pop()
         if entry is None:
             if restored == 0:
                 return (
