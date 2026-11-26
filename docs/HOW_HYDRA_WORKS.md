@@ -131,7 +131,7 @@ Rules Hydra keeps:
 - **Configure the deployment you intend to use.** Setup, environment settings, role files and
   the optional BACKS service select providers, endpoints and models. Shipped role routing names
   **rungs** (see below); some optional selectors have default model names. A default does not
-  establish that the model is installed. Check your actual setup with `hydra models`.
+  establish that the model is installed.
 - **Provider settings default to `~/.hydraAgent/workspace/`.** `HYDRA_ENV_DIR` can override that location. Keep key-bearing files outside your repository.
 - The test `hydra/test_public_scrub_guard.py` and the CI check `.github/scripts/ip-topology-scan.sh`
   fail if a real private address, device address, personal home folder or private machine name
