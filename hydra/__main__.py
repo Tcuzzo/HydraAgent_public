@@ -45,7 +45,9 @@ Maturity: SCAFFOLDED. Promoted by §10.29.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+import codecs
+from contextlib import ExitStack, contextmanager
+from io import TextIOWrapper
 import os
 import sys
 from pathlib import Path
@@ -241,6 +243,58 @@ def _provider_directory_scope(env_dir):
             os.environ["HYDRA_ENV_DIR"] = previous
 
 
+_SURROGATEESCAPE_HANDLER = codecs.lookup_error("surrogateescape")
+_CLI_OUTPUT_POLICIES = {
+    "strict": "backslashreplace",
+    "surrogateescape": "_hydra_cli_surrogateescape",
+}
+
+
+def _surrogateescape_output_error(error: UnicodeError) -> tuple[str | bytes, int]:
+    """Preserve surrogateescaped bytes and escape other unencodable characters.
+
+    A codec error can span raw-byte surrogates and ordinary Unicode together.
+    Handle one code point at a time so a rejected Unicode character cannot turn
+    adjacent preserved bytes into escape text. The codec resumes at the returned
+    original-input position; it owns encoding and any incremental state.
+    """
+    if not isinstance(error, UnicodeEncodeError):
+        raise error
+    character = UnicodeEncodeError(
+        error.encoding, error.object, error.start, error.start + 1, error.reason
+    )
+    try:
+        return _SURROGATEESCAPE_HANDLER(character)
+    except UnicodeEncodeError:
+        return codecs.backslashreplace_errors(character)
+
+
+# One private registry entry, never a replacement for a standard error handler.
+codecs.register_error("_hydra_cli_surrogateescape", _surrogateescape_output_error)
+
+
+@contextmanager
+def _cli_output_scope():
+    """Keep the caller's output encoding and escape unrepresentable characters.
+
+    Redirected Windows streams may use a legacy code page. Both Rich output and
+    ordinary model responses must remain writable there without changing the
+    pipe's encoding. Supply an escape fallback for strict and surrogateescape
+    output, retaining the latter's byte round trips; preserve other policies.
+    The CLI owns these process streams for one invocation, as it owns the
+    provider environment; restore error policies even when parsing or dispatch
+    raises. In-memory captures accept Unicode and need no reconfiguration.
+    """
+    with ExitStack() as restore:
+        for stream in (sys.stdout, sys.stderr):
+            if isinstance(stream, TextIOWrapper) and stream.errors in _CLI_OUTPUT_POLICIES:
+                previous_errors = stream.errors
+                stream.reconfigure(errors=_CLI_OUTPUT_POLICIES[previous_errors])
+                restore.callback(stream.reconfigure, errors=previous_errors)
+        yield
+
+
+@_cli_output_scope()
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)

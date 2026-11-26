@@ -1462,6 +1462,19 @@ class EliteTUI:
             self.console.print(header)
 
     def _print_welcome(self) -> None:
+        if sys.stdout.isatty():
+            self._print_terminal_welcome()
+        else:
+            self._print_redirected_welcome()
+
+    def _print_redirected_welcome(self) -> None:
+        print("HYDRA AGENT")
+        print(f"{self.model_short}  •  {self.provider_name}  •  ready")
+        print(f"{len(self.tools)} tools | {self._skill_count} skills")
+        print("Type a task or question; /help for commands; /exit to leave.")
+        print()
+
+    def _print_terminal_welcome(self) -> None:
         tool_count = len(self.tools)
         status_text = "🟢 online"
 
