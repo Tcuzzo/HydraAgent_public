@@ -93,14 +93,15 @@ def public_contracts(root):
     return value
 
 def validate_public_text(text):
-    private = [ipaddress.ip_network(value) for value in
-               ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16")]
     for literal in re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", text):
         try:
-            address = ipaddress.ip_address(literal)
+            first, second, _third, _fourth = ipaddress.IPv4Address(literal).packed
         except ValueError:
             continue
-        assert not any(address in block for block in private), "private address text withheld"
+        private = (first == 10 or (first == 172 and 16 <= second <= 31)
+                   or (first == 192 and second == 168)
+                   or (first == 169 and second == 254))
+        assert not private, "private address text withheld"
 
 def emit(kind, value):
     print("HYDRA_READBACK " + json.dumps({"record": kind, "value": value},
