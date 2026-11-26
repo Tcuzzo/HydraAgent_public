@@ -25,6 +25,8 @@ MERGE = "439a4479d36e6e656f9cfc3a1bfaecfc6dd3617b"
 BASE = "77c81df117ed59af47361ba4c5e770eb21112fef"
 TREE = "b2531f1da6bb01aff2814a622e2a95d8d9cba643"
 ARTIFACT_NAME = "live-model-vm-proof-45766837815"
+ARTIFACT_ID = 15092338235
+ARTIFACT_DIGEST = "sha256:c9b36146ac3d3bc15c4e354950f367d55c5b34dbbcfb283151398e3115a766f9"
 COMMANDS = ("installed-origin", "download", "extract", "pull", "setup",
             "models", "ask", "undo-list-before", "undo", "undo-list-after")
 ALLOWED = {"live-install-verification.json",
@@ -115,6 +117,41 @@ def emit_bytes(name, content):
              "sha256": digest(content), "encoding": "base64", "index": index,
              "count": len(chunks), "data": chunk})
 
+def assess_source(root, report):
+    source_map = []
+    mapped = []
+    contracts = ()
+    try:
+        assert report.get("source_commit") == MERGE, "producer source commit mismatch"
+        assert report.get("passed") is False, "producer false verdict missing"
+        inventories = [report[key] for key in
+                       ("wheel_package_hashes", "package_hashes_before", "package_hashes_after")]
+        assert len(inventories[0]) == 606
+        assert inventories[0] == inventories[1] == inventories[2]
+        contracts = public_contracts(root)
+        for path, expected in sorted(inventories[0].items()):
+            assert re.fullmatch(r"[0-9a-f]{64}", expected)
+            assert PurePosixPath(path).parts[0] in {"hydra", "gateways", "skills", "core"}
+            relative = path
+            prefix = "hydra/runtime_data/catalog/"
+            if path.startswith(prefix):
+                suffix = path[len(prefix):]
+                assert suffix in contracts
+                relative = ".hydraAgent/" + suffix
+                mapped.append(suffix)
+            source_bytes = git_bytes(root, relative)
+            actual = digest(source_bytes)
+            assert actual == expected, "source hash mismatch: " + path
+            git_blob = hashlib.sha1(b"blob " + str(len(source_bytes)).encode() + b"\0" + source_bytes).hexdigest()
+            source_map.append({"wheel_path": path, "source_path": relative,
+                               "git_blob": git_blob, "sha256": actual})
+        assert set(mapped) == set(contracts) and len(mapped) == 15
+    except Exception as exc:
+        return {"verified": False, "error": type(exc).__name__ + ": " + str(exc),
+                "files": source_map, "catalog_mapped": mapped, "catalog_contracts": list(contracts)}
+    return {"verified": True, "error": None, "files": source_map,
+            "catalog_mapped": mapped, "catalog_contracts": list(contracts)}
+
 def main():
     root = Path(sys.argv[1]).resolve()
     actual_tree = subprocess.check_output(
@@ -126,15 +163,16 @@ def main():
     assert run["id"] == RUN and run["head_sha"] == RELEASE
     assert run["event"] == "pull_request" and run["run_attempt"] == 1
     assert run["path"] == ".github/workflows/live-model.yml"
-    assert run["status"] == "completed" and run["conclusion"] == "success"
+    assert run["status"] == "completed" and run["conclusion"] == "failure"
     job = api("/actions/jobs/" + str(JOB))
     assert job["id"] == JOB and job["run_id"] == RUN and job["head_sha"] == RELEASE
-    assert job["status"] == "completed" and job["conclusion"] == "success"
+    assert job["status"] == "completed" and job["conclusion"] == "failure"
     required_steps = ("Build and install a fresh wheel",
-                      "Verify installed CLI and required sandbox",
-                      "Prove a real model write, read, and separate CLI undo")
+                      "Verify installed CLI and required sandbox")
     assert all(any(step["name"] == name and step["conclusion"] == "success"
                    for step in job["steps"]) for name in required_steps)
+    assert any(step["name"] == "Prove a real model write, read, and separate CLI undo"
+               and step["conclusion"] == "failure" for step in job["steps"])
     merge = api("/git/commits/" + MERGE)
     assert merge["tree"]["sha"] == TREE
     assert [parent["sha"] for parent in merge["parents"]] == [BASE, RELEASE]
@@ -142,15 +180,19 @@ def main():
     selected = [a for a in artifacts["artifacts"] if a["name"] == ARTIFACT_NAME]
     assert len(selected) == 1
     artifact = selected[0]
+    assert artifact["id"] == ARTIFACT_ID and artifact["digest"] == ARTIFACT_DIGEST
     assert not artifact["expired"] and artifact["size_in_bytes"] <= MAX_BYTES
     blob = download("/actions/artifacts/" + str(artifact["id"]) + "/zip")
     assert len(blob) == artifact["size_in_bytes"]
     assert "sha256:" + digest(blob) == artifact["digest"]
     archive = zipfile.ZipFile(io.BytesIO(blob))
     entries = archive.infolist()
-    assert len(entries) == len(ALLOWED) == 24
-    assert len({entry.filename for entry in entries}) == 24
-    assert {entry.filename for entry in entries} == ALLOWED
+    actual_names = {entry.filename for entry in entries}
+    assert 2 <= len(entries) <= len(ALLOWED) == 24
+    assert len(actual_names) == len(entries)
+    assert actual_names <= ALLOWED
+    assert {"live-install-verification.json", "live-model-proof/report.json"} <= actual_names
+    missing_names = sorted(ALLOWED - actual_names)
     assert sum(entry.file_size for entry in entries) <= MAX_BYTES
     for entry in entries:
         path = PurePosixPath(entry.filename)
@@ -163,32 +205,6 @@ def main():
     decoded = {name: content.decode("utf-8") for name, content in data.items()}
     for text in decoded.values():
         validate_public_text(text)
-    report = json.loads(decoded["live-model-proof/report.json"])
-    assert report["source_commit"] == MERGE and report["passed"] is True
-    inventories = [report[key] for key in
-                   ("wheel_package_hashes", "package_hashes_before", "package_hashes_after")]
-    assert len(inventories[0]) == 606
-    assert inventories[0] == inventories[1] == inventories[2]
-    contracts = public_contracts(root)
-    source_map = []
-    mapped = []
-    for path, expected in sorted(inventories[0].items()):
-        assert re.fullmatch(r"[0-9a-f]{64}", expected)
-        assert PurePosixPath(path).parts[0] in {"hydra", "gateways", "skills", "core"}
-        relative = path
-        prefix = "hydra/runtime_data/catalog/"
-        if path.startswith(prefix):
-            suffix = path[len(prefix):]
-            assert suffix in contracts
-            relative = ".hydraAgent/" + suffix
-            mapped.append(suffix)
-        source_bytes = git_bytes(root, relative)
-        actual = digest(source_bytes)
-        assert actual == expected, "source hash mismatch: " + path
-        git_blob = hashlib.sha1(b"blob " + str(len(source_bytes)).encode() + b"\0" + source_bytes).hexdigest()
-        source_map.append({"wheel_path": path, "source_path": relative,
-                           "git_blob": git_blob, "sha256": actual})
-    assert set(mapped) == set(contracts) and len(mapped) == 15
     raw_job_log = download("/actions/jobs/" + str(JOB) + "/logs")
     validate_public_text(raw_job_log.decode("utf-8"))
     proof_sources = {path: git_bytes(root, path) for path in
@@ -223,14 +239,28 @@ def main():
         emit_bytes("original-model-job.log", raw_job_log)
         for name, content in sorted(proof_sources.items()):
             emit_bytes("source/" + name, content)
-        emit("source_mapping_header", {"count": len(source_map), "catalog_count": len(mapped),
-                                      "catalog_contracts": list(contracts)})
-        for index, row in enumerate(source_map):
+        emit("missing_entries", missing_names)
+        try:
+            report = json.loads(decoded["live-model-proof/report.json"])
+            assert isinstance(report, dict)
+        except Exception as exc:
+            report = {}
+            emit("producer_report_parse_error", {"type": type(exc).__name__, "message": str(exc)})
+        assessment = assess_source(root, report)
+        emit("source_mapping_header", {"count": len(assessment["files"]),
+             "catalog_count": len(assessment["catalog_mapped"]),
+             "catalog_contracts": assessment["catalog_contracts"],
+             "verified": assessment["verified"], "error": assessment["error"]})
+        for index, row in enumerate(assessment["files"]):
             emit("source_mapping_row", {"index": index, **row})
-        emit("readback_complete", {"zip_digest_verified": True, "source_mapping_verified": True,
-             "three_inventories_equal": True, "all_raw_entries_emitted": True,
-             "inference_performed_by_this_job": False,
-             "independent_acceptance": "Pending reviewer inspection of raw receipts; run success alone is insufficient."})
+        emit("producer_failure", {"passed": report.get("passed"), "error": report.get("error"),
+             "task_passed": report.get("task_passed"), "undo_passed": report.get("undo_passed"),
+             "inference_attempts": report.get("inference_attempts")})
+        emit("readback_complete", {"zip_digest_verified": True,
+             "source_mapping_verified": assessment["verified"], "all_present_raw_entries_emitted": True,
+             "missing_entries": missing_names, "model_acceptance": "FAIL",
+             "inference_performed_by_this_job": False, "retry_performed": False,
+             "independent_cause_review": "Pending reviewer inspection of the original failed proof; no acceptance promotion."})
     finally:
         print("::" + marker + "::", flush=True)
 

@@ -1,4 +1,4 @@
-name: final public VM artifact readback
+name: failed final public VM artifact readback
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   artifact-readback:
-    name: read-only exact final VM artifact and source mapping
+    name: collect failed VM evidence without acceptance promotion
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
