@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from hydra.llm import NativeExecutionReceipt
+from hydra.llm import NativeExecutionReceipt, has_native_completion
 from hydra.turn_profiles import load_turn_profile
 
 _LOG = logging.getLogger(__name__)
@@ -304,6 +304,12 @@ def _record_confabulation(*, kind: str, claimed_text: str) -> None:
         _LOG.warning("self-audit log write failed: %s", exc)
 
 
+def _honest_retry_text(text: str) -> str:
+    if is_action_claim(text):
+        return _HONEST_NOT_DONE
+    return (text or "").strip() or _HONEST_NOT_DONE
+
+
 def guard_work_turn(
     *,
     kind: str,
@@ -331,8 +337,7 @@ def guard_work_turn(
             text=final_text, confabulated=False, action_performed=True
         )
 
-    if any(isinstance(receipt, NativeExecutionReceipt) and receipt.returncode == 0
-           for receipt in native_execution_receipts):
+    if has_native_completion(native_execution_receipts):
         # Native tools do not appear in Hydra's local dispatch count. Replaying
         # the original task here can duplicate effects. Preserve the native
         # report with its evidence limit; process success is not edit proof.
@@ -378,12 +383,8 @@ def guard_work_turn(
     # Still claiming without acting (or now honestly admitting it). Either way we
     # must NOT present a fake success. If the model now states honestly that it has
     # not done the action, keep its honest words; otherwise replace the lie.
-    if is_action_claim(new_text):
-        honest = _HONEST_NOT_DONE
-    else:
-        honest = (new_text or "").strip() or _HONEST_NOT_DONE
     return WorkGuardOutcome(
-        text=honest,
+        text=_honest_retry_text(new_text),
         confabulated=True,
         action_performed=False,
         reprompted=True,

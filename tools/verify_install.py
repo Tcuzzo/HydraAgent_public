@@ -93,6 +93,9 @@ class ModelFixture(BaseHTTPRequestHandler):
             message = {"role": "assistant", "content": "", "tool_calls": [
                 {"function": {"name": name, "arguments": arguments}},
             ]}
+        self.reply_chat(message, step)
+
+    def reply_chat(self, message: dict, step: int) -> None:
         if self.path == "/api/chat":
             self.reply({"model": MODEL, "message": message, "done": True, "done_reason": "stop"})
         else:

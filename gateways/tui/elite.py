@@ -93,8 +93,8 @@ except ImportError:
     InMemoryHistory = None  # type: ignore[misc,assignment]
 
 # ── HydraAgent core ─────────────────────────────────────────────────────────
-from dataclasses import asdict, dataclass  # noqa: E402
-from hydra.llm import NativeExecutionReceipt  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+from hydra.llm import native_execution_trace  # noqa: E402
 from hydra.inter_agent import redact_value  # noqa: E402
 from hydra.loop import AgentLoop, LoopStep, LoopResult, Tool  # noqa: E402
 from hydra.cli.tool_binding import bind_tools  # noqa: E402
@@ -1271,10 +1271,7 @@ class EliteTUI:
                 "trace_id": result.trace_id,
                 "iterations": result.iterations,
                 "tool_calls_made": result.tool_calls_made,
-                "native_execution_receipts": [
-                    asdict(receipt) for receipt in getattr(result, "native_execution_receipts", ())
-                    if isinstance(receipt, NativeExecutionReceipt)
-                ],
+                "native_execution_receipts": native_execution_trace(getattr(result, "native_execution_receipts", ())),
                 "halted_reason": result.halted_reason,
                 "final_response": result.final_response,
                 "tool_steps": tool_steps,

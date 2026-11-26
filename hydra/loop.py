@@ -38,7 +38,7 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from hydra.llm import LlmError, NativeExecutionReceipt, OllamaClient, ToolCall  # noqa: E402
+from hydra.llm import LlmError, NativeExecutionReceipt, OllamaClient, ToolCall, successful_native_receipt  # noqa: E402
 from hydra.inter_agent import current_trace_id, new_trace_id, use_trace_id  # noqa: E402
 from hydra.reflex_gauntlet import guard_invoke  # noqa: E402
 from hydra.reflex_seam import maybe_handle  # noqa: E402
@@ -176,6 +176,26 @@ def _serialize_tool_result(result: Any) -> str:
     if isinstance(result, (dict, list, int, float, bool)) or result is None:
         return json.dumps(result)
     return json.dumps({"result": repr(result)})
+
+
+def _record_native_execution(response: Any, receipts: list[NativeExecutionReceipt]) -> None:
+    receipt = successful_native_receipt(getattr(response, "native_execution", None))
+    if receipt is not None:
+        receipts.append(receipt)
+
+
+def _tool_calls_for_dispatch(response: Any, bridge_call_id: str | None) -> list[ToolCall]:
+    """Select local calls without replaying an already completed native turn."""
+    if successful_native_receipt(getattr(response, "native_execution", None)) is not None:
+        return []
+    calls = list(response.tool_calls)
+    if calls or bridge_call_id is None:
+        return calls
+    bridged = extract_bridged_tool_call(response.content)
+    if bridged is None:
+        return []
+    return [ToolCall(id=bridge_call_id, name=bridged.name,
+                     arguments_raw=bridged.arguments_raw, arguments=bridged.arguments)]
 
 
 class AgentLoop:
@@ -441,27 +461,9 @@ class AgentLoop:
                         native_execution_receipts=native_execution_receipts,
                     )
 
-            native_receipt = getattr(resp, "native_execution", None)
-            native_completed = (
-                isinstance(native_receipt, NativeExecutionReceipt)
-                and native_receipt.returncode == 0
-            )
-            if native_completed:
-                native_execution_receipts.append(native_receipt)
-            # A native final describes an execution that already happened;
-            # neither structured promotions nor the text bridge may replay it.
-            tool_calls = [] if native_completed else list(resp.tool_calls)
-            if not tool_calls and tools and not phantom_tool_recovery and not native_completed:
-                bridged = extract_bridged_tool_call(resp.content)
-                if bridged is not None:
-                    tool_calls = [
-                        ToolCall(
-                            id=f"bridged-{iteration}-1",
-                            name=bridged.name,
-                            arguments_raw=bridged.arguments_raw,
-                            arguments=bridged.arguments,
-                        )
-                    ]
+            _record_native_execution(resp, native_execution_receipts)
+            bridge_call_id = f"bridged-{iteration}-1" if tools and not phantom_tool_recovery else None
+            tool_calls = _tool_calls_for_dispatch(resp, bridge_call_id)
 
             # Record the assistant turn.
             assistant_msg: dict = {"role": "assistant", "content": resp.content}
@@ -638,9 +640,7 @@ class AgentLoop:
                         tools=None,
                     )
                     final_response = (synthesis_resp.content or "").strip()
-                    receipt = getattr(synthesis_resp, "native_execution", None)
-                    if isinstance(receipt, NativeExecutionReceipt) and receipt.returncode == 0:
-                        native_execution_receipts.append(receipt)
+                    _record_native_execution(synthesis_resp, native_execution_receipts)
                 except LlmError:
                     final_response = ""
 

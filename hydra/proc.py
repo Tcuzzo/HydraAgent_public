@@ -194,6 +194,21 @@ def _shell_argv(command: str, *, prefer_bash: bool = False) -> list[str]:
 # ── Process-group spawn ───────────────────────────────────────────────────────
 
 
+def _popen_args(args: list[str]) -> list[str] | str:
+    """Keep cmd's command text out of Windows CRT argument serialization.
+
+    Popen normally serializes an argv sequence using CRT quoting. cmd.exe uses
+    its own grammar, so the shell command must reach it verbatim, enclosed by
+    quotes that /s removes. Ordinary executable and bash argv stay unchanged.
+    """
+    if not _IS_WINDOWS or len(args) != 3:
+        return args
+    if ntpath.basename(args[0]).lower() != "cmd.exe" or args[1].lower() != "/c":
+        return args
+    executable = subprocess.list2cmdline(args[:1])
+    return f'{executable} /s /c "{args[2]}"'
+
+
 def _popen_kwargs_isolation() -> dict[str, Any]:
     """Extra kwargs for subprocess.Popen to isolate the child's process group."""
     if _IS_POSIX:
@@ -224,7 +239,7 @@ def popen_portable(
     # but default to isolation.
     merged = {**isolation, **kwargs}
     return subprocess.Popen(
-        args,
+        _popen_args(args),
         cwd=str(cwd) if cwd is not None else None,
         env=env,
         text=text,
@@ -405,7 +420,7 @@ def run_shell(
     start = time.monotonic()
     timed_out = False
     proc = subprocess.Popen(
-        argv,
+        _popen_args(argv),
         cwd=cwd_str,
         env=env,
         stdout=subprocess.PIPE,

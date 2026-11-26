@@ -104,7 +104,8 @@ def codex_command(
     return argv
 
 
-def _default_runner(argv, *, input=None, capture_output=True, text=True, timeout=None):
+def _default_runner(argv, *, input=None, capture_output=True, text=True,
+                    encoding="utf-8", timeout=None):
     """Production runner: the real `subprocess.run` with the verified shape.
 
     Injected so unit tests can pass a fake and never touch the CLI/account.
@@ -116,6 +117,7 @@ def _default_runner(argv, *, input=None, capture_output=True, text=True, timeout
         input=input,
         capture_output=capture_output,
         text=text,
+        encoding=encoding,
         timeout=timeout,
     )
 
@@ -202,6 +204,7 @@ class CodexClient:
                 input=prompt,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=timeout,
             )
         except Exception as exc:  # TimeoutExpired, OSError, ValueError, etc.

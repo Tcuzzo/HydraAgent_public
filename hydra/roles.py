@@ -115,22 +115,28 @@ def _role_from_config(role: str, data: dict) -> RoleSpec:
     )
 
 
-def resolve_roles_from_dict(config: dict) -> RoleSet:
+def _optional_mapping(value: object, section: str) -> dict:
+    """Normalize an absent section while rejecting non-mapping configuration."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise RoleError(f"{section} must be a mapping")
+    return value
+
+
+def _role_config_sections(config: dict) -> tuple[dict, dict]:
+    """Validate the agentic section and its role entries before resolution."""
     if not isinstance(config, dict):
         raise RoleError("config root must be a mapping")
-    agentic = config.get("agentic")
-    if agentic is None:
-        agentic = {}
-    if not isinstance(agentic, dict):
-        raise RoleError("agentic must be a mapping")
-    roles = agentic.get("roles")
-    if roles is None:
-        roles = {}
-    if not isinstance(roles, dict):
-        raise RoleError("agentic.roles must be a mapping")
+    agentic = _optional_mapping(config.get("agentic"), "agentic")
+    roles = _optional_mapping(agentic.get("roles"), "agentic.roles")
     for name, data in roles.items():
-        if data is not None and not isinstance(data, dict):
-            raise RoleError(f"agentic.roles.{name} must be a mapping")
+        _optional_mapping(data, f"agentic.roles.{name}")
+    return agentic, roles
+
+
+def resolve_roles_from_dict(config: dict) -> RoleSet:
+    agentic, roles = _role_config_sections(config)
     if "auditor" not in roles and "verifier" in roles:
         roles = {**roles, "auditor": roles["verifier"]}
     defaults = {
@@ -186,19 +192,23 @@ def resolve_roles(
     if path is None:
         return resolve_roles_from_dict({})
     try:
-        if schema_path is None:
-            config = _load_role_config(path)
-        else:
-            try:
-                config = load(path, schema_path)
-            except ConfigError as e:
-                if path.name != "hydra.yaml":
-                    raise RoleError(str(e)) from e
-                # Preserve modern hydra.yaml compatibility with legacy schemas.
-                config = _load_role_config(path)
+        config = _load_selected_role_config(path, schema_path)
         return resolve_roles_from_dict(config)
     except (RoleError, OSError, UnicodeError) as e:
         raise RoleError(f"role config invalid: {path}: {e}") from e
+
+
+def _load_selected_role_config(path: Path, schema_path: str | Path | None) -> dict:
+    """Select modern role loading or the caller's legacy schema contract."""
+    if schema_path is None:
+        return _load_role_config(path)
+    try:
+        return load(path, schema_path)
+    except ConfigError as e:
+        if path.name != "hydra.yaml":
+            raise RoleError(str(e)) from e
+        # Preserve modern hydra.yaml compatibility with legacy schemas.
+        return _load_role_config(path)
 
 
 def _load_role_config(config_path: Path) -> dict:
