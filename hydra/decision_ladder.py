@@ -2,9 +2,8 @@
 
 Order, first configured rung that answers:
 
-1. BACKS decision service when ``HYDRA_BACKS_URL`` or ``BACKS_ENDPOINT`` is set.
-2. A local Kev or Laya decision model when its env var is set.
-3. Direct Jev when the OpenRouter key and ``HYDRA_JEV_MODEL`` are both set.
+1. A configured local Kev, Laya, text, or vision decision model.
+2. Direct Jev when the OpenRouter key and ``HYDRA_JEV_MODEL`` are both set.
 
 A 401, 402, or 403 steps to the next rung. A missing or blank model is not called.
 Every outbound body includes ``instructions``. Receipts name the rung that answered.
@@ -53,16 +52,6 @@ def jev_key_name() -> str:
     return "OPENROUTER_" + "API_KEY"
 
 
-def backs_origin() -> str:
-    """Decision-service origin from the env file, or empty when unset."""
-    try:
-        from hydra.rung_resolver import backs_url
-
-        return backs_url().rstrip("/")
-    except (OSError, LlmError):
-        return ""
-
-
 def tier_rung(tier: str, path: str | Path | None = None) -> str:
     """Rung name for one decision tier. The routing file stores no model."""
     source = Path(path) if path else Path(__file__).with_name("model_routing.yaml")
@@ -86,8 +75,6 @@ def configured_steps(tier: str) -> list[str]:
     if tier not in _TIERS:
         return []
     steps: list[str] = []
-    if _backs_url():
-        steps.append("backs")
     if tier == "vision":
         if _model("HYDRA_VISION_MODEL"):
             steps.append("vision")
@@ -226,8 +213,6 @@ def _call(
     laya: LayaFn | None,
     local_chat: LocalFn,
 ) -> Any:
-    if step == "backs":
-        return _call_backs(question, route, instructions, state, image, claim, post)
     if step == "laya":
         return _call_laya(question, state, laya)
     if step == "jev":
@@ -265,27 +250,6 @@ def _call(
         if status in _STEP_STATUS:
             raise _Step(step, f"HTTP {status}") from exc
         raise
-
-
-def _call_backs(question, route, instructions, state, image, claim, post: PostFn) -> Any:
-    url = _backs_url().rstrip("/") + "/api/router/complete"
-    body = {
-        "task_type": route,
-        "task": instructions,
-        "instructions": instructions,
-        "tools": [],
-        "question": question,
-        "state": state,
-        "claim": claim,
-        "image": image or "",
-    }
-    status, data = post(url, body, {"Content-Type": "application/json"})
-    if status in _STEP_STATUS or status != 200 or not (data or {}).get("ok"):
-        raise _Step("backs", f"HTTP {status}")
-    answer = (data or {}).get("answer")
-    if answer in ("", None):
-        raise _Step("backs", "empty answer")
-    return answer
 
 
 def _call_laya(question: dict, state: Any, laya: LayaFn | None) -> Any:
@@ -362,8 +326,7 @@ def _coerce_answer(content: Any) -> Any:
 def _failure(tier: str, attempts: list[_Step]) -> str:
     parts = [
         "No decision rung answered.",
-        "Set HYDRA_BACKS_URL or BACKS_ENDPOINT for the decision service,",
-        "or HYDRA_KEV_MODEL or HYDRA_LAYA_MODEL for a local decision model,",
+        "Set HYDRA_KEV_MODEL or HYDRA_LAYA_MODEL for a local decision model,",
         f"or {jev_key_name()} and HYDRA_JEV_MODEL for direct Jev.",
     ]
     if tier == "vision":
@@ -375,14 +338,6 @@ def _failure(tier: str, attempts: list[_Step]) -> str:
     if attempts:
         parts.append("Tried: " + "; ".join(f"{item.rung} {item.detail}" for item in attempts) + ".")
     return " ".join(parts)
-
-
-def _backs_url() -> str:
-    for key in ("HYDRA_BACKS_URL", "BACKS_ENDPOINT"):
-        value = os.environ.get(key, "").strip()
-        if value:
-            return value.rstrip("/")
-    return (backs_origin() or "").strip().rstrip("/")
 
 
 def _model(name: str) -> str:

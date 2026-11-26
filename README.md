@@ -25,15 +25,11 @@ flowchart LR
     H --> R{"Model source"}
     R -->|"Your computer"| L["Local model (Ollama)"]
     R -->|"Your key"| C["Cloud model"]
-    R -->|"Optional"| B["BACKS decision service:<br/>rung chain, best first"]
-    B -->|"A rung fails (401/403/429/5xx)"| N["Next rung, then role fallbacks,<br/>then local GPU if configured"]
     L --> A(["Answer"])
     C --> A
-    B --> A
-    N --> A
 ```
 
-New to this? [How Hydra works, in plain English](docs/HOW_HYDRA_WORKS.md) explains what Hydra needs, what each placeholder such as `<backs-host>` means and where to set it, and what happens when a model fails, with flow charts.
+New to this? [How Hydra works, in plain English](docs/HOW_HYDRA_WORKS.md) explains what Hydra needs, how to configure your own model provider, and what happens when a model fails.
 
 ## Install
 
@@ -115,8 +111,8 @@ Hydra runs without any of these. Each one is a separate install or setting. What
 | Capability | What it adds |
 |---|---|
 | Local models (Ollama) | Chat and coding on a server you run |
-| Needle / Kev and a fleet ladder | Tool selection, and a decision service at `http://<backs-host>:<port>` (`HYDRA_BACKS_URL`; there is no `hydra setup --mode backs`) |
-| Jev typed decisions | Paid typed routing. A decision service uses `HYDRA_BACKS_URL`. Without that service, set `OPENROUTER_API_KEY` and `HYDRA_JEV_MODEL` |
+| Needle / Kev | Optional local tool selection and typed decisions using configured local models |
+| Jev typed decisions | Direct typed decisions using `OPENROUTER_API_KEY` and `HYDRA_JEV_MODEL` |
 | Sandbox (Bubblewrap) | Confined worker verification on Linux |
 | MCP | Hydra tools over stdio, or servers you list in a config file |
 | Memory embeddings | Vector recall next to keyword search |

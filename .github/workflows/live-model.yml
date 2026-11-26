@@ -1,0 +1,65 @@
+name: live model VM proof
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/live-model.yml
+      - tools/verify_live_model.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-model-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  live-model:
+    name: installed wheel + real Qwen3 4B (Ubuntu VM)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.12"
+      - name: Install and verify Linux sandbox
+        timeout-minutes: 3
+        run: |
+          bash .github/scripts/setup-bwrap.sh
+          sudo apt-get install -y curl zstd
+      - name: Build and install a fresh wheel
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/live-wheels" .
+          python -m venv "$RUNNER_TEMP/hydra-live-installed"
+          "$RUNNER_TEMP/hydra-live-installed/bin/python" -m pip install -c constraints.txt "$RUNNER_TEMP"/live-wheels/*.whl
+          "$RUNNER_TEMP/hydra-live-installed/bin/python" -m pip check
+      - name: Verify installed CLI and required sandbox
+        timeout-minutes: 2
+        run: |
+          "$RUNNER_TEMP/hydra-live-installed/bin/python" tools/verify_install.py \
+            --require-sandbox --output "$RUNNER_TEMP/live-install-verification.json"
+      - name: Prove a real model write, read, and separate CLI undo
+        timeout-minutes: 21
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/hydra-live-installed/bin/python" tools/verify_live_model.py \
+            --source-commit "$(git rev-parse HEAD)" \
+            --wheel "$RUNNER_TEMP"/live-wheels/*.whl \
+            --output-dir "$RUNNER_TEMP/live-model-proof"
+      - name: Preserve proof receipts and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: live-model-vm-proof-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/live-install-verification.json
+            ${{ runner.temp }}/live-model-proof/*.json
+            ${{ runner.temp }}/live-model-proof/*.log
+          if-no-files-found: warn
+          retention-days: 14

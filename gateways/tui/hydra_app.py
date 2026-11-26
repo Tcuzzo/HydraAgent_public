@@ -51,6 +51,7 @@ from textual.widgets import Input, RichLog, Static, TextArea
 from hydra.intake import CONVO, STEERING, classify
 from hydra.loop import AgentLoop, LoopStep, LoopResult, Tool
 from hydra.operator_auth import OperatorAuth, OperatorAuthError, render_qr_ascii
+from hydra.providers import provider_options  # noqa: E402
 from hydra.work_executor import (
     detect_runaway,
     guard_work_turn,
@@ -475,8 +476,10 @@ class HydraApp(App[int]):
         initial_request: str | None = None,
         initial_messages: list[dict] | None = None,
         notify_telegram: bool = False,
+        env_dir: str | Path | None = None,
     ) -> None:
         super().__init__()
+        self._provider_options = provider_options(env_dir)
         self.client = client
         self.model = model
         self.cfg = cfg
@@ -562,7 +565,7 @@ class HydraApp(App[int]):
         # Work executor pair resolved ONCE at init so the header can always
         # display BOTH the chat model and the work model (even at rest, before
         # any work turn runs). Fail-soft: None if routing is offline/misconfigured.
-        _work_pair = resolve_work_model("steering")
+        _work_pair = resolve_work_model("steering", **self._provider_options)
         if _work_pair is not None:
             self._work_provider: str | None = _work_pair[0]
             self._work_model: str | None = _work_pair[1]
@@ -765,7 +768,7 @@ class HydraApp(App[int]):
         """
         if not is_work_kind(kind):
             return self._agent_loop, self.model
-        pair = resolve_work_model(kind)
+        pair = resolve_work_model(kind, **self._provider_options)
         if pair is None:
             return self._agent_loop, self.model
         provider, model = pair
@@ -778,7 +781,7 @@ class HydraApp(App[int]):
         try:
             from hydra.providers import make_client
 
-            client, _cfg = make_client(provider)
+            client, _cfg = make_client(provider, **self._provider_options)
             work_loop = AgentLoop(client, model=model, system_prompt=self.system_prompt)
         except Exception:
             # Executor unavailable — keep the chat loop; the guard still applies.
@@ -805,7 +808,7 @@ class HydraApp(App[int]):
         # Also track _active_provider so the banner/stat-bar can show the right
         # provider during a work turn.  Re-resolve is cheap (pure dict lookup).
         if active_model != self.model:
-            _pair = resolve_work_model(intake_kind)
+            _pair = resolve_work_model(intake_kind, **self._provider_options)
             self._active_provider = _pair[0] if _pair else self._provider_name
         else:
             self._active_provider = self._provider_name

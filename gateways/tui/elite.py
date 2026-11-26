@@ -37,7 +37,7 @@ _LOG = logging.getLogger(__name__)
 _PASTE_DRAIN_WARNED = False
 
 
-def _startup_self_audit() -> None:
+def _startup_self_audit(**provider_options) -> None:
     """Run hydra self-audit at TUI startup and log results.
 
     Log-only: never raises, never blocks. PASS → info, FAIL → warning with
@@ -46,7 +46,7 @@ def _startup_self_audit() -> None:
     """
     try:
         from hydra.self_audit import run_self_audit
-        report = run_self_audit()
+        report = run_self_audit(**provider_options)
         if report.passed:
             _LOG.info(
                 "hydra startup self-audit PASSED — %d checks green", len(report.checks)
@@ -103,6 +103,7 @@ from hydra.skill_spine import build_agent_system_prompt, list_skill_records  # n
 from hydra.intake import classify  # noqa: E402
 from hydra.intent_router import classify_intent, route_turn  # noqa: E402
 from hydra.turn_profiles import load_turn_profile  # noqa: E402
+from hydra.providers import provider_options  # noqa: E402
 from hydra.work_executor import (  # noqa: E402
     detect_runaway,
     guard_work_turn,
@@ -231,12 +232,13 @@ def _short_model(model: str) -> str:
     return name[:20] + "…" if len(name) > 20 else name
 
 
-def _configured_route_rows(chat_route: str, chat_transport: str) -> list[tuple[str, str, str]]:
+def _configured_route_rows(chat_route: str, chat_transport: str, *,
+                           env_dir: str | Path | None = None) -> list[tuple[str, str, str]]:
     """Chat shows the live session route. Other roles show the rung from config."""
     rows = [("Chat (primary)", chat_route, chat_transport)]
     try:
         from hydra.model_routing import load_routing
-        from hydra.rung_resolver import GATEWAY, LOCAL
+        from hydra.runtime_route import offline_pair
 
         routing = load_routing()
     except Exception:
@@ -249,7 +251,7 @@ def _configured_route_rows(chat_route: str, chat_transport: str) -> list[tuple[s
             entry = routing.entry(roster_id)
         except KeyError:
             continue
-        rows.append((role, entry.rung, LOCAL if entry.local else GATEWAY))
+        rows.append((role, entry.rung, offline_pair(entry, env_dir=env_dir)[0]))
     return rows
 
 
@@ -437,7 +439,9 @@ class EliteTUI:
         command_handler: Callable[["EliteTUI", str], bool] | None = None,
         initial_request: str | None = None,
         notify_telegram: bool = False,
+        env_dir: str | Path | None = None,
     ):
+        self._provider_options = provider_options(env_dir)
         self.client = client
         self.model = model
         self.cfg = cfg
@@ -564,7 +568,7 @@ class EliteTUI:
                 pass
 
         # Self-audit at startup — log-only, non-blocking, never raises.
-        _startup_self_audit()
+        _startup_self_audit(**self._provider_options)
 
     # ── Public entry ──────────────────────────────────────────────────────────
 
@@ -603,6 +607,7 @@ class EliteTUI:
             initial_request=self._initial_request,
             initial_messages=self._chat_messages,
             notify_telegram=self._notify_telegram,
+            **self._provider_options,
         )
         app._rebind_tools = getattr(self, "_rebind_for_app", None)
         app._switch_profile = getattr(self, "_switch_profile_for_app", None)
@@ -821,7 +826,7 @@ class EliteTUI:
         """
         if not is_work_kind(kind):
             return self._loop, self.model
-        pair = resolve_work_model(kind)
+        pair = resolve_work_model(kind, **self._provider_options)
         if pair is None:
             return self._loop, self.model
         provider, model = pair
@@ -834,7 +839,7 @@ class EliteTUI:
         try:
             from hydra.providers import make_client
 
-            client, _cfg = make_client(provider)
+            client, _cfg = make_client(provider, **self._provider_options)
             work_loop = AgentLoop(client, model=model, system_prompt=self.system_prompt)
         except Exception:
             # Executor unavailable — keep the chat loop; the guard still applies.
@@ -859,7 +864,8 @@ class EliteTUI:
             from hydra.providers import make_client
             routing = load_routing()
             entry = routing.role_entry("intent")
-            client, _ = make_client(entry.provider)
+            provider, _model = entry.as_pair(**self._provider_options)
+            client, _ = make_client(provider, **self._provider_options)
             self._intent_client_cache = client
             return client
         except Exception:
@@ -1205,11 +1211,12 @@ class EliteTUI:
             self.console,
             ask=_ask,
             secret_ask=lambda prompt="": getpass.getpass(prompt),
+            **self._provider_options,
         )
         if not provider:
             return
         try:
-            client, cfg = make_client(provider)
+            client, cfg = make_client(provider, **self._provider_options)
         except ProviderError as exc:
             self.console.print(
                 f"[yellow]Saved your choice, but couldn't connect right now: {exc}\n"
@@ -1455,6 +1462,19 @@ class EliteTUI:
             self.console.print(header)
 
     def _print_welcome(self) -> None:
+        if sys.stdout.isatty():
+            self._print_terminal_welcome()
+        else:
+            self._print_redirected_welcome()
+
+    def _print_redirected_welcome(self) -> None:
+        print("HYDRA AGENT")
+        print(f"{self.model_short}  •  {self.provider_name}  •  ready")
+        print(f"{len(self.tools)} tools | {self._skill_count} skills")
+        print("Type a task or question; /help for commands; /exit to leave.")
+        print()
+
+    def _print_terminal_welcome(self) -> None:
         tool_count = len(self.tools)
         status_text = "🟢 online"
 
@@ -1535,7 +1555,7 @@ class EliteTUI:
                 print(f"  {r.name:28s}  {(r.description or '')[:60]}")
 
     def _cmd_models(self) -> None:
-        rows = _configured_route_rows(self.model_short, self.provider_name)
+        rows = _configured_route_rows(self.model_short, self.provider_name, **self._provider_options)
         if RICH_AVAILABLE:
             tbl = Table(
                 box=box.SIMPLE_HEAD,

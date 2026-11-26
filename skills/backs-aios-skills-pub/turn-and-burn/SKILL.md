@@ -20,25 +20,9 @@ isn't repeated.
 
 ## The burn ritual (six steps)
 
-1. **Essence lane first.** Load `core.steering_loader.load_model_essence`
-   for every model that will touch the mission. The essence files are the
-   know-thyself of each model — failure modes, mitigations, the good
-   source/context/goal shape. Do not skip this; an agent that does not
-   know its own failure modes is the failure mode.
-2. **Lessons-learned scan.** Read `docs/BACKS_LESSONS_LEARNED.md` and the
-   operator memory graph (`memory/MEMORY.md`) before planning. Every paid-
-   for mistake is filed there — the same loop never burns twice when the
-   agent reads the lessons first. Local prompts must be capability-aware:
-   consult `backend/prompts/essence/models/*.essence.md` for know-thyself
-   + `docs/BACKS_LESSONS_LEARNED.md` + `memory/MEMORY.md` for cross-session
-   memory. This is the operator's "stop redundant failures across the
-   board" floor.
-3. **Play dispatch.** Map the mission to the right playbook
-   (`config/playbooks/*.yaml`): dev-mode-elite-build for builds/fixes,
-   leap-bughunt for bughunts, grading-verification for tribunal lanes,
-   parallel-work for fan-out, security-delivery for transport, design-taste
-   for UI. The play's `injected_block` IS the baseline — zero baseline pre-
-   prompting, ever.
+1. **Capability evidence first.** Read the active public host's available model and tool capability evidence. Distinguish measured strengths and limits from model identity. If a host offers no such metadata, record that uncertainty rather than searching a private runtime.
+2. **Lessons-learned scan.** Read the project's authorized local lessons and memory, if available. Use current evidence to avoid repeated failures. Do not assume another repository's backend paths, personal memory files or private operations manual exist.
+3. **Play dispatch.** Map the mission to available public playbooks for building, review, security, design and parallel work. Read their actual bodies. Missing host hooks or private playbook files are not a reason to contact another runtime.
 4. **Quick tribunal on plan + design.** Before any builder runs, blind-tribunal
    the plan and the design with at least 2 independent jurors in fresh,
    author-disjoint sessions. Builder ≠ grader. A plan that passes blind review is the only plan that gets built.
@@ -46,8 +30,8 @@ isn't repeated.
    (b) what is the cheapest sufficient route? (c) what is the operator's
    surface — does this prove on it? These three questions cut the
    high-cost-mistake rate to near zero when asked BEFORE the build.
-6. **Absorb pass + skill update.** Search verified-skill.com (and the BACKS
-   memory lanes) for any skill the mission revealed as missing. Absorb it
+6. **Absorb pass + skill update.** Search verified-skill.com (and authorized project
+   notes) for any skill the mission revealed as missing. Absorb it
    through the standard absorb flow; update existing skills with anything
    the mission surfaced that the skill did not already encode. Land the
    skill update alongside the mission's main artifact (whole-seam closure).

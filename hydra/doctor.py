@@ -154,19 +154,15 @@ def decision_configuration(env: dict | None = None) -> dict:
     """Which decision rungs are configured. Reads env only; places no paid call."""
     import os
 
-    from hydra.decision_ladder import backs_origin, jev_key_name, tier_rung
+    from hydra.decision_ladder import jev_key_name, tier_rung
 
     source = env if env is not None else os.environ
 
     def flag(name: str) -> str:
         return "set" if str(source.get(name, "")).strip() else "unset"
 
-    backs = "set" if flag("HYDRA_BACKS_URL") == "set" or flag("BACKS_ENDPOINT") == "set" else "unset"
-    if backs == "unset" and env is None and backs_origin():
-        backs = "set"
     return {
         "paid_calls": False,
-        "backs": backs,
         "kev_model": flag("HYDRA_KEV_MODEL"),
         "laya_model": flag("HYDRA_LAYA_MODEL"),
         "llm_decision_model": flag("HYDRA_LLM_DECISION_MODEL"),

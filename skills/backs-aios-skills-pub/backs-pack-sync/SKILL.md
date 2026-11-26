@@ -6,27 +6,12 @@ license: "MIT"
 
 # Privacy-safe pack sync
 
-The BACKS runtime contains private-only skills. Their names, descriptions,
-paths, and bodies are not public pack material. The sync command reports only
-the count of runtime skills absent from this pack.
+Public Hydra does not read a private runtime or install a private-to-public export command. This skill preserves the review principles for a separately authorized maintainer workflow.
 
-```bash
-BACKS_SOURCE=/path/to/private/runtime bash bin/backs-pack-sync
-```
+1. Author each portable public skill as a complete public file. Do not bulk-copy private skill names, descriptions, paths or bodies.
+2. Independently review the public file's license, intellectual property, personal information, network topology and references.
+3. Use the target public repository's documented packaging and release checks. Do not assume another runtime's scripts or source directories exist.
+4. Preserve upstream credit and licenses. Keep behavior that requires private runtime files in that private distribution.
+5. Publish only the reviewed public artifact through the repository's authorized release process.
 
-`--bridge-all-missing` is disabled. Never run an automatic bulk export from
-the private runtime into this public repository.
-
-To publish one portable skill, author a complete public file at
-`public-bridges/<public-name>/SKILL.md`. Review its license, IP, PII, network
-topology, and references independently. Then run:
-
-```bash
-bash bin/backs-pack-sync --bridge <public-name>
-```
-
-The command copies only that public-authored file. It never reads a BACKS skill
-body or description. It checks the file for common private literals and runs
-the pack scrubber; a full public hygiene test and independent review still
-precede release. Any skill whose useful behavior depends on private runtime
-files stays in the private BACKS runtime.
+A missing export tool is a stated limitation, not permission to locate or read a private checkout. No private runtime discovery or callback is part of the public Hydra workflow.

@@ -1,14 +1,7 @@
-"""Shared test setup for hydra/test_*.
+"""Hermetic tests use offline placeholder routes and isolated provider files.
 
-Unit tests never reach BACKS: each rung resolves offline to a placeholder route named
-after the rung itself, so tests check routing by rung and no test names a real model.
-The live proof (hydra ask against BACKS) exercises the real resolver.
-
-Tests are also **hermetic**: the operator's own environment (endpoints, keys, the
-real ``~/.hydraAgent/workspace`` env files) must not decide what a test resolves to.
-Before this, a stale ``.env.backs`` on the machine outranked the value a test
-exported, so a "local" test silently talked to a real host -- a test that passed
-for the wrong reason, and the reason the suite was not reproducible.
+Public boundary regressions explicitly restore the real resolver and use local
+HTTP protocol recorders. No fixture grants access to a private service.
 """
 from __future__ import annotations
 
@@ -20,7 +13,7 @@ from hydra import model_routing, rung_resolver
 def offline_resolver(rung: str, *, local: bool = False, **_: object) -> tuple[str, str]:
     if local:
         return rung_resolver.LOCAL, f"rung-{rung}"
-    return rung_resolver.GATEWAY, f"rung-{rung}"
+    return "mock-cloud", f"rung-{rung}"
 
 
 #: Endpoint variables that would point a test at a real host. The value is never
@@ -76,7 +69,7 @@ def _hermetic_environment(monkeypatch, tmp_path_factory):
 
     * ``HYDRA_ENV_DIR`` points at an empty directory outside the test's own
       ``tmp_path``, so the real ``~/.hydraAgent/workspace/.env.*`` files (which
-      hold a real BACKS endpoint) are never read -- and so the directory never
+      may hold real provider endpoints) are never read -- and so the directory never
       shows up in a test that asserts its working directory is empty.
     * Endpoint, credential and routing variables are cleared, so a test starts
       from the same state everywhere.

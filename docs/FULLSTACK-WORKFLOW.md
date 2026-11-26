@@ -1,8 +1,8 @@
-# Full-stack work with Hydra and BACKS
+# Full-stack work with Hydra
 
 Use your configured programming model to build the application, and local skills to guide design, browser checks, security review, and follow-up searches. These are instructions and reference material. They do not install a model, grant tool permissions, or guarantee the resulting application's quality.
 
-Keep the existing BACKS harness in charge of planning, ownership, budgets, approvals, and verification. The skills below supply guidance for individual stages; they do not replace that workflow or require a particular model family.
+Keep your active host workflow in charge of planning, ownership, budgets, approvals, and verification. The skills below supply guidance for individual stages; they do not replace that workflow or require a particular model family.
 
 | Stage | Optional skill | Evidence to retain |
 | --- | --- | --- |
@@ -11,7 +11,7 @@ Keep the existing BACKS harness in charge of planning, ownership, budgets, appro
 | Review a change for security defects | `differential-review` | Baseline commit, changed trust boundaries, callers, concrete findings and untested paths |
 | Find related defects after confirming a bug | `variant-analysis` | Root cause, exact-match search, broader searches, triaged matches and regression coverage |
 
-Programming still includes the application's backend, API contracts, data migrations, authentication, validation, error handling, and deployment configuration. Select checks appropriate to the actual stack and run them through the host's approved tools. Use the existing BACKS build and repair workflow for those steps.
+Programming still includes the application's backend, API contracts, data migrations, authentication, validation, error handling, and deployment configuration. Select checks appropriate to the actual stack and run them through the host's approved tools. Use the project's existing build and repair workflow for those steps.
 
 ## Load the skills in Hydra
 
@@ -47,9 +47,9 @@ An explicit skills root **replaces** Hydra's default skill search roots. It does
 
 Hydra routes the explicit name of any installed skill. It also recognizes phrases such as `responsive UI`, `browser proof`, `security review`, and `bug variants` for this set. Routing is deterministic keyword selection, not a claim that the model follows every instruction correctly. `skills show` prints a summary; the runtime `skill_show` tool reads actual instructions in bounded pages. Follow its `next_offset` until complete. Use its `relative_path` argument to read a linked reference within that skill directory. It cannot read outside the registered directory or execute a helper script.
 
-## Use the same pack with BACKS
+## Use the same pack with another host
 
-In a Codex host, the four installed directories can live under `~/.codex/skills/`; start a new session if the host has not refreshed its skill catalog. On another BACKS host, configure that host's local skill discovery to point at the reviewed directories. Copying a pack does not configure a remote host, its model endpoint, browser tooling, or credentials.
+In a Codex host, the four installed directories can live under `~/.codex/skills/`; start a new session if the host has not refreshed its skill catalog. On another compatible host, configure that host's local skill discovery to point at the reviewed directories. Copying a pack does not configure a remote host, its model endpoint, browser tooling, or credentials.
 
 Ask the existing harness to apply these stages as relevant:
 

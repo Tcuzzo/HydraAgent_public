@@ -16,7 +16,7 @@ class TestFreeFallbackLoader:
     """model_routing.py parses + exposes free_fallback_models correctly."""
 
     def _make_minimal_cfg(self, free_tagged=("cloud-auto",)):
-        """Minimal valid v2 config: roster entries name BACKS rungs only."""
+        """Minimal valid v2 config: roster entries name configured roles only."""
         def tags(eid, base):
             return base + (["free"] if eid in free_tagged else [])
         cfg = {
@@ -55,9 +55,9 @@ class TestFreeFallbackLoader:
         assert list(routing.free_fallback_models) == ["rung-work", "rung-auto"]
 
     def test_free_tier_skips_an_unresolvable_rung(self, tmp_path, monkeypatch):
-        """A free rung BACKS can't resolve is skipped, never fatal."""
+        """A free rung configuration cannot resolve is skipped, never fatal."""
         from hydra import model_routing as mr
-        from hydra.rung_resolver import GATEWAY
+        GATEWAY = "mock-cloud"
 
         def resolver(rung, **_):
             if rung == "work":

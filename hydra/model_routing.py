@@ -1,9 +1,10 @@
 """hydra.model_routing — typed loader for the single model-routing source of truth.
 
 The roster + routing policy live in ``hydra/model_routing.yaml`` (schema
-``hydra.model_routing.v2``). Roster entries name BACKS rungs only; each rung is
-resolved to a live route at call time by ``hydra.rung_resolver`` (the BACKS
-Kev/Needle rung resolver). No model, provider or key name is stored in Hydra. This module parses that file into frozen dataclasses
+``hydra.model_routing.v2``). Roster entries name configured roles only; each rung is
+resolved at call time by ``hydra.rung_resolver`` from operator configuration
+and local discovery. The routing file stores no model, provider or key name.
+This module parses that file into frozen dataclasses
 and exposes a small set of helpers that the three historical hardcode sites read
 from:
 
@@ -45,24 +46,41 @@ DEFAULT_ROUTING_PATH = Path(__file__).resolve().parent / "model_routing.yaml"
 
 
 # Rung -> (transport, route) resolved this process; never written anywhere.
-_RESOLVED: dict[tuple[str, bool, str], tuple[str, str]] = {}
+_RESOLVED: dict[tuple[str, bool, str, str], tuple[str, str]] = {}
 # Rung -> (when, why) it last failed to resolve. A dead rung is skipped for a short
 # while instead of being re-asked on every hop of one turn; it is retried after.
-_FAILED: dict[tuple[str, bool, str], tuple[float, str]] = {}
+_FAILED: dict[tuple[str, bool, str, str], tuple[float, str]] = {}
 FAILED_RETRY_SECONDS = 60.0
 _RESOLVER: Callable[..., tuple[str, str]] | None = None
 
 
 def set_resolver(fn: Callable[..., tuple[str, str]] | None) -> None:
-    """Swap the rung resolver (tests use an offline one); None restores BACKS."""
+    """Swap the rung resolver (tests use an offline one); None restores standalone provider resolution."""
     global _RESOLVER
     _RESOLVER = fn
     _RESOLVED.clear()
     _FAILED.clear()
 
 
-def resolve_rung(rung: str, local: bool = False, task: str = "") -> tuple[str, str]:
-    key = (rung, local, task)
+def _environment_key(env_dir: str | Path | None) -> str:
+    from hydra.providers import default_env_dir
+
+    return str(Path(env_dir or default_env_dir()).expanduser().resolve())
+
+
+def _resolve_configured_rung(fn: Callable, rung: str, local: bool, task: str,
+                             env_dir: str | Path | None) -> tuple[str, str]:
+    options: dict[str, Any] = {"local": local}
+    if task:
+        options["task"] = task
+    if env_dir is not None:
+        options["env_dir"] = env_dir
+    return fn(rung, **options)
+
+
+def resolve_rung(rung: str, local: bool = False, task: str = "", *,
+                 env_dir: str | Path | None = None) -> tuple[str, str]:
+    key = (rung, local, task, _environment_key(env_dir))
     if key in _RESOLVED:
         return _RESOLVED[key]
     failed = _FAILED.get(key)
@@ -70,7 +88,7 @@ def resolve_rung(rung: str, local: bool = False, task: str = "") -> tuple[str, s
         raise RungResolutionError(f"{failed[1]} (skipped; retrying in under {FAILED_RETRY_SECONDS:.0f}s)")
     fn = _RESOLVER or rung_resolver.resolve
     try:
-        _RESOLVED[key] = fn(rung, local=local, task=task or None) if task else fn(rung, local=local)
+        _RESOLVED[key] = _resolve_configured_rung(fn, rung, local, task, env_dir)
     except RungResolutionError as exc:
         _FAILED[key] = (time.monotonic(), str(exc))
         raise
@@ -80,17 +98,17 @@ def resolve_rung(rung: str, local: bool = False, task: str = "") -> tuple[str, s
 
 @dataclass(frozen=True)
 class RosterEntry:
-    """One BACKS rung the pack can route to. The model is resolved, never stored."""
+    """One configured role the pack can route to. The model is resolved, never stored."""
 
     id: str
     rung: str
     local: bool = False
     role_tags: tuple[str, ...] = ()
-    #: BACKS router task (backs.router.v1 ``task_type``) this cloud rung asks for.
+    #: Semantic task label retained for role selection and receipts.
     task: str = ""
 
-    def as_pair(self) -> tuple[str, str]:
-        return resolve_rung(self.rung, self.local, self.task)
+    def as_pair(self, *, env_dir: str | Path | None = None) -> tuple[str, str]:
+        return resolve_rung(self.rung, self.local, self.task, env_dir=env_dir)
 
     @property
     def provider(self) -> str:
@@ -117,9 +135,8 @@ class ModelRouting:
     roles: dict[str, str]
     verifier: str
     fallbacks: dict[str, tuple[str, ...]]
-    # Hydra transports, not model providers: every cloud rung goes through the BACKS
-    # gateway; the local GPU rung is served on this host.
-    cloud_fallback_ladder: tuple[str, ...] = (rung_resolver.GATEWAY,)
+    # Optional explicit transports; public routing resolves configured providers directly.
+    cloud_fallback_ladder: tuple[str, ...] = ()
     local_fallback_provider: str = rung_resolver.LOCAL
     source_path: str = ""
 
@@ -129,7 +146,7 @@ class ModelRouting:
     def free_fallback_pairs(self) -> tuple[tuple[str, str], ...]:
         """Emergency tier: (transport, model) of the free-tagged rungs, resolved now.
 
-        A rung BACKS can't resolve is skipped (logged), never fatal."""
+        A role that configuration cannot resolve is skipped (logged), never fatal."""
         out: list[tuple[str, str]] = []
         for e in self.roster:
             if "free" in e.role_tags and not e.local:
@@ -169,19 +186,20 @@ class ModelRouting:
         cloud = [p for p in out if p[0] != rung_resolver.LOCAL]
         return tuple((cloud[: max(0, limit - len(local[:1]))] + local[:1])[:limit])
 
-    def _pair(self, roster_id: str, role: str | None = None) -> tuple[str, str]:
+    def _pair(self, roster_id: str, role: str | None = None, *,
+              env_dir: str | Path | None = None) -> tuple[str, str]:
         """Resolve one roster entry; if its rung is out, fall through the chain.
 
         Chain: the entry -> the role's own fallbacks -> the other cloud rungs in
-        roster order -> the local GPU rung. Mechanical fall-through only; BACKS
-        Kev/Needle own the choice of model. Raises only when no rung is reachable.
+        roster order -> the local GPU rung. Mechanical fall-through only; operator settings
+        own the choice of provider and model. Raises only when no rung is reachable.
         """
         chain = self._chain(roster_id, role)
         for attempt in (1, 2):
             errors: list[str] = []
             for rid in chain:
                 try:
-                    pair = self.entry(rid).as_pair()
+                    pair = self.entry(rid).as_pair(env_dir=env_dir)
                 except RungResolutionError as exc:
                     errors.append(f"{rid}: {exc}")
                     continue
@@ -203,7 +221,7 @@ class ModelRouting:
             raise KeyError(f"roster id {roster_id!r} not found in model_routing") from exc
 
     # ── policy helpers (the public surface the hardcode sites read) ──────────
-    def chat_default(self, profile: str) -> tuple[str, str]:
+    def chat_default(self, profile: str, *, env_dir: str | Path | None = None) -> tuple[str, str]:
         """(provider, model) for a chat profile named in the routing file.
 
         An unknown profile is an error. There is no silent fallback.
@@ -212,11 +230,11 @@ class ModelRouting:
         if roster_id is None:
             known = ", ".join(sorted(self.chat_profiles))
             raise ValueError(f"unknown profile {profile!r}; choose one of: {known}")
-        return self._pair(roster_id, "chat")
+        return self._pair(roster_id, "chat", env_dir=env_dir)
 
-    def worker_default(self) -> tuple[str, str]:
+    def worker_default(self, *, env_dir: str | Path | None = None) -> tuple[str, str]:
         """(provider, model) for the local worker / forced --local profile."""
-        return self._pair(self.chat_profiles["local"])
+        return self._pair(self.chat_profiles["local"], env_dir=env_dir)
 
     def role_pair(self, role: str) -> tuple[str, str]:
         """(provider, model) for a named router role (router/worker/doer/...)."""
@@ -254,10 +272,10 @@ def _build(data: dict[str, Any], source_path: str) -> ModelRouting:
         stored = sorted(k for k in ("model", "provider", "base_url") if k in item)
         if stored:
             raise ValueError(
-                f"roster entry {item.get('id')!r} stores {stored}; entries name a BACKS rung only"
+                f"roster entry {item.get('id')!r} stores {stored}; entries name a configured role only"
             )
         if not item.get("rung"):
-            raise ValueError(f"roster entry {item.get('id')!r} names no BACKS rung")
+            raise ValueError(f"roster entry {item.get('id')!r} names no configured role")
         roster.append(
             RosterEntry(
                 id=str(item["id"]),

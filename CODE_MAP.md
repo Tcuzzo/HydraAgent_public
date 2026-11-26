@@ -20,9 +20,9 @@ Refresh the map only when this differs from the live tree (files added, moved, o
 | Path | Purpose |
 |---|---|
 | `hydra/providers.py` | Provider registry: env-file parsing, key aliases, client construction. `default_env_dir()` reads the env dir at call time. |
-| `hydra/rung_resolver.py` | Resolves the BACKS host for the rung chain (`backs_url()`). |
+| `hydra/rung_resolver.py` | Resolves configured public providers; discovers models only from the selected local endpoint. |
 | `hydra/model_routing.py` | Chooses the rung; `set_resolver()` is the test seam. |
-| `hydra/decision_ladder.py` | The decision ladder (backs/kev/laya/jev tiers) and `backs_origin()`. |
+| `hydra/decision_ladder.py` | The configured local Kev/Laya/text/vision and direct Jev decision ladder. |
 | `hydra/loop.py` | The agent loop (`AgentLoop`, `LoopError`). |
 | `hydra/go_bridge.py` | Provider client bridge (`_apply_provider_aliases`). |
 | `hydra/worker_aci.py` | ACI commands for worker jobs. |
@@ -38,8 +38,8 @@ Refresh the map only when this differs from the live tree (files added, moved, o
 ## Tests
 
 - `hydra/test_*.py` — 133 files, colocated with the package.
-- `conftest.py` (repo root) — autouse fixtures: `offline_resolver` (no live BACKS) and the hermetic environment fixture (isolated `HYDRA_ENV_DIR`, cleared endpoint/credential/routing vars).
-- `skills/` — vendored mirror of `backs-aios-skills`; `skills/backs-aios-skills-pub/VENDORED.md` says do not hand-edit, fix upstream and re-sync.
+- `conftest.py` (repo root) — autouse fixtures: `offline_resolver` (no live model inference) and the hermetic environment fixture (isolated `HYDRA_ENV_DIR`, cleared endpoint/credential/routing vars).
+- `skills/` — vendored mirror of `backs-aios-skills`; `skills/backs-aios-skills-pub/VENDORED.md` records the upstream revision and public-only adaptations that must survive refreshes.
 
 ## Commands
 
@@ -50,6 +50,6 @@ Refresh the map only when this differs from the live tree (files added, moved, o
 
 ## Guard seams worth knowing
 
-- `hydra/test_no_model_provider_secret_literals.py` — provider-agnosticism guard; enforces the structural (model-shaped literal) scan when BACKS is unreachable.
+- `hydra/test_no_model_provider_secret_literals.py` — provider-agnosticism guard; enforces the structural (model-shaped literal) scan without contacting a model service.
 - `hydra/test_provider_agnosticism_guard.py` — the structural detector itself (no host, no network, no committed vocabulary).
 - `hydra/test_public_scrub_guard.py` — fails if operator paths/hostnames/MACs return to tracked files.
