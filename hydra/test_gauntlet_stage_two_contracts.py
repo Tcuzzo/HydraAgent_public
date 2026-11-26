@@ -88,3 +88,14 @@ def test_discovery_ignores_broken_and_cyclic_links_but_keeps_valid_skill(tmp_pat
     assert list(iter_skill_paths(root, boundary=root)) == [valid.resolve()]
     assert broken.is_symlink()
     assert cycle.is_symlink()
+
+
+def test_posix_owner_comparison_keeps_case_distinct_paths_out():
+    from pathlib import PurePosixPath
+
+    from hydra.source_boundary import relative_source
+
+    owner = PurePosixPath("/synthetic/Selected")
+    outside = PurePosixPath("/synthetic/selected/evidence.txt")
+    with pytest.raises(ValueError):
+        relative_source(outside, owner)
