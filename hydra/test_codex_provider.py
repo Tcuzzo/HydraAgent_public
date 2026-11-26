@@ -122,7 +122,8 @@ def _runner_writing(answer: str, *, returncode=0, stdout="", stderr=""):
     """Build a fake runner that writes `answer` to the `-o` output file, mimicking
     how the real `codex exec -o <file>` produces a clean final message."""
 
-    def _runner(argv, *, input=None, capture_output=True, text=True, timeout=None):
+    def _runner(argv, *, input=None, capture_output=True, text=True, encoding=None, timeout=None):
+        assert encoding == "utf-8"
         # The output file is the token right after "-o" in argv.
         out_path = argv[argv.index("-o") + 1]
         with open(out_path, "w", encoding="utf-8") as fh:

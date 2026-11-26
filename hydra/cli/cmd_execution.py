@@ -22,6 +22,7 @@ from hydra.roles import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# Compatibility exports; live role discovery is independent of the package root.
 HYDRA_CONFIG = REPO_ROOT / ".hydraAgent" / "hydra.yaml"
 HYDRA_SCHEMA = REPO_ROOT / ".hydraAgent" / "schemas" / "hydra.schema.yaml"
 PLANNER_SYSTEM_PROMPT = (
@@ -98,8 +99,8 @@ def register_execution_commands(sub: argparse._SubParsersAction, *, policy_choic
 def _resolved_roles_or_exit(args: argparse.Namespace):
     try:
         return resolve_roles(
-            config_path=args.config or HYDRA_CONFIG,
-            schema_path=HYDRA_SCHEMA,
+            config_path=args.config,
+            workspace=getattr(args, "root", None),
         )
     except RoleError as e:
         print(f"role error: {e}", file=sys.stderr)

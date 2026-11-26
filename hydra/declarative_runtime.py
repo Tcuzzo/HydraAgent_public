@@ -777,6 +777,7 @@ def _invoke_tool(contract: dict[str, Any], arguments: dict[str, Any], *, root: P
     merged = _default_arguments(contract)
     merged.update(arguments)
     tool_id = str(contract.get("tool_id") or "")
+    merged = _file_tool_arguments(tool_id, merged, root=root)
     if _executor_requires_root(contract):
         merged.setdefault("root", root)
     if tool_id == "git_diff" and merged.get("worktree") in {None, "", "."}:
@@ -785,6 +786,26 @@ def _invoke_tool(contract: dict[str, Any], arguments: dict[str, Any], *, root: P
         merged.pop("cwd", None)
         merged.setdefault("root", root)
     return fn(**merged)
+
+
+def _file_tool_arguments(tool_id: str, arguments: dict[str, Any], *, root: Path) -> dict[str, Any]:
+    """Bind file mutations to the execution workspace, outside planner control."""
+    if tool_id not in {"fs_write", "fs_edit"}:
+        return arguments
+    bound = {**arguments, "root": root}
+    if tool_id == "fs_edit":
+        _translate_edit_arguments(bound)
+    return bound
+
+
+def _translate_edit_arguments(arguments: dict[str, Any]) -> None:
+    """Translate public edit names on an adapter-owned copy; reject ambiguity."""
+    for public, native in (("old", "old_string"), ("new", "new_string")):
+        if public not in arguments:
+            continue
+        if native in arguments:
+            raise DeclarativeRuntimeError(f"fs_edit arguments contain both {public!r} and {native!r}")
+        arguments[native] = arguments.pop(public)
 
 
 def _executor_requires_root(contract: dict[str, Any]) -> bool:

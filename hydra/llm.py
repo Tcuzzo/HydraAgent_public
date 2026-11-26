@@ -26,7 +26,7 @@ import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Iterable, Protocol
 
 _LOG = logging.getLogger(__name__)
@@ -120,6 +120,58 @@ class ToolCall:
     arguments: dict
 
 
+@dataclass(frozen=True)
+class NativeExecutionReceipt:
+    """Observed native process completion, without inferring its tool effects.
+
+    Only a native transport creates this typed receipt. HTTP response bodies
+    remain untrusted data and cannot populate it through the wire parser.
+    """
+
+    transport: str
+    workspace: str
+    sandbox: str | None
+    returncode: int
+    verification: str = field(default="not_run", init=False)
+
+
+def successful_native_receipt(value: object) -> NativeExecutionReceipt | None:
+    """Recognize internal process evidence; wire dictionaries cannot grant it."""
+    if isinstance(value, NativeExecutionReceipt) and value.returncode == 0:
+        return value
+    return None
+
+
+def has_native_completion(receipts: Iterable[object]) -> bool:
+    return any(successful_native_receipt(receipt) is not None for receipt in receipts)
+
+
+def native_execution_trace(receipts: Iterable[object]) -> list[dict]:
+    """Project only typed receipts, without including native process output."""
+    return [asdict(receipt) for receipt in receipts if isinstance(receipt, NativeExecutionReceipt)]
+
+
+def _native_tool_arguments(arguments: object) -> dict:
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments) if arguments else {}
+        except json.JSONDecodeError:
+            arguments = {}
+    return arguments if isinstance(arguments, dict) else {}
+
+
+def _remember_native_call_name(tool_names: dict[str, str], call_id: object, name: object) -> None:
+    if isinstance(call_id, str) and call_id and isinstance(name, str) and name:
+        tool_names[call_id] = name
+
+
+def _name_native_tool_result(message: dict, tool_names: dict[str, str]) -> None:
+    # Calls omit IDs on the native wire. Explicit native names take priority.
+    call_id = message.pop("tool_call_id", None)
+    if "tool_name" not in message and isinstance(call_id, str) and call_id in tool_names:
+        message["tool_name"] = tool_names[call_id]
+
+
 @dataclass
 class ChatResponse:
     """Parsed result of one chat call."""
@@ -131,6 +183,7 @@ class ChatResponse:
     completion_tokens: int
     raw: dict = field(repr=False)
     tool_calls: list[ToolCall] = field(default_factory=list)
+    native_execution: NativeExecutionReceipt | None = None
 
 
 class LlmError(Exception):
@@ -355,21 +408,26 @@ class OllamaClient:
         """Native /api/chat call carrying options.num_ctx. The reply is mapped
         back onto the chat-completions payload shape so chat() parses one shape."""
         native_msgs: list[dict] = []
+        tool_names: dict[str, str] = {}
         for m in msgs:
             m = dict(m)
+            if m.get("role") == "assistant":
+                # Hydra synthesizes call_0, call_1, ... per native response.
+                # Resolve names in order, within this assistant's call batch.
+                tool_names = {}
             if m.get("tool_calls"):
                 calls = []
                 for c in m["tool_calls"]:
                     fn = dict((c or {}).get("function") or {})
-                    args = fn.get("arguments")
-                    if isinstance(args, str):
-                        try:
-                            args = json.loads(args) if args else {}
-                        except json.JSONDecodeError:
-                            args = {}
-                    fn["arguments"] = args if isinstance(args, dict) else {}
+                    call_id = (c or {}).get("id")
+                    name = fn.get("name")
+                    if m.get("role") == "assistant":
+                        _remember_native_call_name(tool_names, call_id, name)
+                    fn["arguments"] = _native_tool_arguments(fn.get("arguments"))
                     calls.append({"function": fn})
                 m["tool_calls"] = calls
+            if m.get("role") == "tool":
+                _name_native_tool_result(m, tool_names)
             native_msgs.append(m)
         body: dict = {
             "model": model,

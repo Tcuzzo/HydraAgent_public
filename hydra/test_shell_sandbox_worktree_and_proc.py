@@ -44,8 +44,10 @@ _IDENT = {
 
 
 def _git(cwd, *args):
+    # Keep fixture repos quiescent: detached maintenance creates transient files
+    # inside .git, which must not race the sandbox's byte-for-byte assertions.
     return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
+        ["git", "-c", "maintenance.auto=false", *args], cwd=cwd, check=True, capture_output=True, text=True,
         env={**os.environ, **_IDENT},
     ).stdout.strip()
 
@@ -118,10 +120,14 @@ def test_b_sibling_main_tree_and_hooks_writes_still_fail(linked):
 
 
 def test_c_a_proc_path_is_refused_cleanly_not_raised(tmp_path):
-    result = bash.run("touch /proc/1/root/x", tmp_path)
+    target = "/proc/1/root/x"
+    result = bash.run(f"touch {target}", tmp_path)
     assert result["ok"] is False, result
     assert result["reason"] == "write-outside-workspace-root"
-    assert "/proc/1/root/x" in result["blocked_path"]
+    assert result["exit_code"] == -1, result
+    # Same-user containers can resolve /proc/1/root to /. Other hosts keep the
+    # original path with a refusal explanation when the link is unreadable.
+    assert target in result["blocked_path"] or result["blocked_path"] == os.path.realpath(target), result
 
 
 # --- D: one regression case per grader probe -------------------------------------
