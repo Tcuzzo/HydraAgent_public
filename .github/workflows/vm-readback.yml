@@ -1,0 +1,36 @@
+name: final public VM artifact readback
+
+on:
+  push:
+    branches:
+      - ci/console-proof-readback-20261126
+
+permissions:
+  contents: read
+
+jobs:
+  artifact-readback:
+    name: read-only exact final VM artifact and source mapping
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: cdd1f71ac94703c936d88e582a24aaa14f6e3a4b
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.12"
+      - name: Read the single final model artifact without executing candidate code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python harness/.github/recovery/vm_readback.py candidate
