@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from hydra.autonomy import DESTRUCTIVE_BASH_TOKENS
+from hydra.autonomy import SAFE_BASH_COMMANDS
 from hydra.declarative_runtime import TRUST_TIERS_SCHEMA, doctor_runtime_catalog, load_runtime_catalog
 from hydra.policy import CONTRACT_RUNTIME_NAME, RISKY_TOOLS, TIER_ORDER, TOOL_RISK, runtime_tool_name
 from hydra.skill_library_audit import audit_skill_library
@@ -168,12 +168,13 @@ def render_danger_gates_yaml() -> str:
         "gate_id": "destructive_action",
         "description": (
             "Destructive or authority-class actions require operator approval. "
-            "This file renders hydra.policy.TOOL_RISK and the enforced token list; it is not a separate gate."
+            "This file renders hydra.policy.TOOL_RISK and the enforced safe-command "
+            "table; it is not a separate gate."
         ),
         "requires_approval": True,
         "examples": list(_DANGER_EXAMPLES),
         "gated_tools": sorted(RISKY_TOOLS),
-        "destructive_bash_tokens": sorted(DESTRUCTIVE_BASH_TOKENS),
+        "safe_bash_commands": sorted(SAFE_BASH_COMMANDS),
         "enforced_by": list(_AUTHORITIES),
     }
     data = {"schema": "hydra.policies.danger_gates.v1", "gates": [gate]}

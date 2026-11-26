@@ -3,8 +3,8 @@ schema: hydra.policies.danger_gates.v1
 gates:
 - gate_id: destructive_action
   description: Destructive or authority-class actions require operator approval. This
-    file renders hydra.policy.TOOL_RISK and the enforced token list; it is not a separate
-    gate.
+    file renders hydra.policy.TOOL_RISK and the enforced safe-command table; it is
+    not a separate gate.
   requires_approval: true
   examples:
   - rm
@@ -20,27 +20,23 @@ gates:
   - mcp_call
   - memory_remember
   - worker_job
-  destructive_bash_tokens:
-  - '>'
-  - '>>'
-  - '>|'
-  - dd
-  - fdisk
-  - kill
-  - killall
-  - mkfs
-  - mount
-  - parted
-  - pkill
-  - reboot
-  - rm
-  - rmdir
-  - shutdown
-  - su
-  - sudo
-  - tee
-  - truncate
-  - umount
+  safe_bash_commands:
+  - find . -maxdepth 2 -type f
+  - git branch -a
+  - git diff --check
+  - git log --oneline -5
+  - git status --short
+  - git status --short --branch
+  - ls -la
+  - pwd
+  - python3 -m hydra ledger list
+  - python3 -m hydra models
+  - python3 -m hydra providers
+  - python3 -m hydra roles
+  - python3 -m hydra skills doctrine
+  - python3 -m hydra skills list
+  - python3 -m hydra status
+  - python3 -m hydra task-eval agent-parity --format text
   enforced_by:
   - hydra.policy.ApprovalPolicy
   - hydra.autonomy
