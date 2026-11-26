@@ -371,12 +371,22 @@ class OllamaClient:
         """Native /api/chat call carrying options.num_ctx. The reply is mapped
         back onto the chat-completions payload shape so chat() parses one shape."""
         native_msgs: list[dict] = []
+        tool_names: dict[str, str] = {}
         for m in msgs:
             m = dict(m)
+            if m.get("role") == "assistant":
+                # Hydra synthesizes call_0, call_1, ... per native response.
+                # Resolve names in order, within this assistant's call batch.
+                tool_names = {}
             if m.get("tool_calls"):
                 calls = []
                 for c in m["tool_calls"]:
                     fn = dict((c or {}).get("function") or {})
+                    call_id = (c or {}).get("id")
+                    name = fn.get("name")
+                    if (m.get("role") == "assistant" and isinstance(call_id, str)
+                            and call_id and isinstance(name, str) and name):
+                        tool_names[call_id] = name
                     args = fn.get("arguments")
                     if isinstance(args, str):
                         try:
@@ -386,6 +396,12 @@ class OllamaClient:
                     fn["arguments"] = args if isinstance(args, dict) else {}
                     calls.append({"function": fn})
                 m["tool_calls"] = calls
+            if m.get("role") == "tool":
+                # Calls above omit IDs, so return the native name rather than
+                # an unmatched result ID. Explicit native names take priority.
+                call_id = m.pop("tool_call_id", None)
+                if "tool_name" not in m and isinstance(call_id, str) and call_id in tool_names:
+                    m["tool_name"] = tool_names[call_id]
             native_msgs.append(m)
         body: dict = {
             "model": model,
