@@ -653,7 +653,7 @@ def _seed_full_corpus(tmp_path, monkeypatch):
     monkeypatch.setattr(semantic_recall, "DEFAULT_WORKSPACE_ROOT", repo_root)
 
     # The .claude project memory corpus the live recall walks for this repo.
-    slug = str(repo_root.resolve()).replace("/", "-")
+    slug = str(repo_root.resolve()).replace("\\", "-").replace(":", "-").replace("/", "-")
     claude_mem = home / ".claude" / "projects" / slug / "memory"
     claude_mem.mkdir(parents=True)
     (claude_mem / "MEMORY.md").write_text(

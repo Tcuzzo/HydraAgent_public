@@ -7,7 +7,7 @@ does not read credential lanes; local files are the source of truth.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import os
 import re
 from typing import Any
@@ -76,7 +76,10 @@ def _resolve_workspace_root(workspace_root: str | Path | None) -> Path | None:
 
 
 def _claude_project_slug(workspace_root: Path) -> str:
-    return str(workspace_root).replace("/", "-")
+    slug = str(workspace_root).replace("/", "-")
+    if isinstance(workspace_root, PureWindowsPath):
+        slug = slug.replace("\\", "-").replace(":", "-")
+    return slug
 
 
 def _claude_project_memory_candidates(workspace_root: Path | None) -> list[Path]:

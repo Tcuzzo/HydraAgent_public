@@ -42,7 +42,7 @@ def test_claude_memory_requires_explicit_opt_in(tmp_path, monkeypatch, consumer,
     monkeypatch.setattr(local.Path, 'home', lambda: home)
     monkeypatch.setattr(local, 'DEFAULT_MEMORY_ROOT', memory)
     monkeypatch.delenv('HYDRA_IMPORT_CLAUDE_MEMORY', raising=False)
-    slug = str(workspace.resolve()).replace('/', '-')
+    slug = str(workspace.resolve()).replace('\\', '-').replace(':', '-').replace('/', '-')
     target = home / '.claude' / 'projects' / slug / 'memory' / 'MEMORY.md'
     target.parent.mkdir(parents=True)
     target.write_text('# Memory\n' + CANARY)

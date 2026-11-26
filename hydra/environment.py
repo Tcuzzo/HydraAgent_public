@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 import urllib.request
 
 from hydra.http_policy import EgressDenied, is_ip_allowed, open_checked
+from hydra.source_boundary import relative_source
 
 
 SESSION_SCHEMA = "hydra.environment.session.v1"
@@ -91,9 +92,11 @@ def _relocate_session_links(source: Path, workspace: Path) -> None:
                 resolved = source_target.resolve(strict=True)
             except (OSError, RuntimeError) as exc:
                 raise EnvironmentError(f"source repo has an unresolvable symlink: {relative}") from exc
-            if not resolved.is_relative_to(source):
-                raise EnvironmentError(f"source repo symlink escapes its root: {relative}")
-            destination = workspace / resolved.relative_to(source)
+            try:
+                relative_target = relative_source(resolved, source)
+            except ValueError:
+                raise EnvironmentError(f"source repo symlink escapes its root: {relative}") from None
+            destination = workspace / relative_target
             replacement = os.path.relpath(destination, link.parent)
             directory_link = resolved.is_dir()
             link.unlink()
