@@ -1,40 +1,59 @@
-schema: hydra.policies.trust_tiers.v1
+# GENERATED from hydra.policy.TOOL_RISK by `hydra capabilities risk --write`. Do not edit by hand.
+schema: hydra.policies.trust_tiers.v2
 tiers:
   read_only:
     description: Observes workspace or runtime state without modifying it.
     default_requires_approval: false
   guarded_write:
-    description: May modify local workspace state; only destructive command shapes use the single ApprovalPolicy gate.
+    description: May modify local workspace state. Approval is decided per tool (see
+      tool_approval), not by the tier.
     default_requires_approval: false
   remote_write:
-    description: May modify remote systems, repositories, services, or APIs; approval is decided by the single destructive-action policy path.
+    description: May modify remote systems, repositories, services, or APIs. Approval
+      is decided per tool (see tool_approval).
     default_requires_approval: false
   destructive:
     description: May delete data, discard history, or irreversibly change state.
     default_requires_approval: true
+runtime_tool_names:
+  shell: bash
 tool_risks:
+  fs_edit: guarded_write
   fs_read: read_only
-  skill_list: read_only
+  fs_write: guarded_write
+  git_diff: read_only
+  glob: read_only
+  grep: read_only
+  http_fetch: read_only
+  list_directory: read_only
+  shell: destructive
   skill_library.search: read_only
+  skill_list: read_only
+  skill_route: read_only
   skill_search: read_only
   skill_show: read_only
-  skill_route: read_only
-  hydra.skill_list: read_only
-  hydra.skill_search: read_only
-  hydra.skill_show: read_only
-  hydra.skill_route: read_only
-  list_directory: read_only
-  grep: read_only
-  glob: read_only
-  git_diff: read_only
   spawn_subagent: guarded_write
   spawn_subagents: guarded_write
-  hydra.spawn_subagent: guarded_write
-  hydra.spawn_subagents: guarded_write
-  shell: guarded_write
-  fs_write: guarded_write
-  fs_edit: guarded_write
-  todo: guarded_write
-  http_fetch: read_only
-  web_extract: read_only
   system_stats: read_only
+  todo: guarded_write
+  web_extract: read_only
+tool_approval:
+  fs_edit: required
+  fs_read: none
+  fs_write: required
+  git_diff: none
+  glob: none
+  grep: none
+  http_fetch: none
+  list_directory: none
+  shell: required
+  skill_library.search: none
+  skill_list: none
+  skill_route: none
+  skill_search: none
+  skill_show: none
+  spawn_subagent: none
+  spawn_subagents: none
+  system_stats: none
+  todo: none
+  web_extract: none

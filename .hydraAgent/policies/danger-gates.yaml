@@ -1,12 +1,47 @@
+# GENERATED from hydra.policy.TOOL_RISK by `hydra capabilities risk --write`. Do not edit by hand.
 schema: hydra.policies.danger_gates.v1
 gates:
-  - gate_id: destructive_action
-    description: Destructive or authority-class actions are the only approval gate; all non-destructive inspection and execution runs without Telegram approval.
-    requires_approval: true
-    examples:
-      - rm
-      - sudo
-      - git reset --hard
-      - git push --force
-      - curl -X POST
-      - systemctl restart
+- gate_id: destructive_action
+  description: Destructive or authority-class actions require operator approval. This
+    file renders hydra.policy.TOOL_RISK and the enforced token list; it is not a separate
+    gate.
+  requires_approval: true
+  examples:
+  - rm
+  - sudo
+  - git reset --hard
+  - git push --force
+  - curl -X POST
+  - systemctl restart
+  gated_tools:
+  - bash
+  - fs_edit
+  - fs_write
+  - mcp_call
+  - memory_remember
+  - worker_job
+  destructive_bash_tokens:
+  - '>'
+  - '>>'
+  - '>|'
+  - dd
+  - fdisk
+  - kill
+  - killall
+  - mkfs
+  - mount
+  - parted
+  - pkill
+  - reboot
+  - rm
+  - rmdir
+  - shutdown
+  - su
+  - sudo
+  - tee
+  - truncate
+  - umount
+  enforced_by:
+  - hydra.policy.ApprovalPolicy
+  - hydra.autonomy
+  - hydra.channel_trust
