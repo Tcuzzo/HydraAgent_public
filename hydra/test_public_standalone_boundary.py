@@ -82,10 +82,12 @@ def isolated_environment(tmp_path, endpoint, backs_source="environment"):
     home, workspace, env_dir = (tmp_path / name for name in ("home", "workspace", "providers"))
     for directory in (home, workspace, env_dir):
         directory.mkdir()
+    app_data = home / "AppData" / "Roaming"
+    app_data.mkdir(parents=True)
     (workspace / "evidence.txt").write_text("actual standalone tool evidence\n")
     env = {key: value for key, value in os.environ.items()
            if key in {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "LANG", "SYSTEMDRIVE"}}
-    env.update({"HOME": str(home), "USERPROFILE": str(home),
+    env.update({"HOME": str(home), "USERPROFILE": str(home), "APPDATA": str(app_data),
                 "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(ROOT),
                 "HYDRA_ENV_DIR": str(env_dir), "HYDRA_HOME": str(home / "state"),
                 "HYDRA_REFLEX": "0", "HYDRA_DECISION_TIMEOUT": "1",
