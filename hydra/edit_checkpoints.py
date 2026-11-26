@@ -274,8 +274,11 @@ class CheckpointStore:
             evicted.append(oldest)
 
         self._write_index(entries)
-        for oldest in evicted:
-            self._delete_content(oldest["seq"])
+        self._delete_contents(evicted)
+
+    def _delete_contents(self, entries: list[dict[str, Any]]) -> None:
+        for entry in entries:
+            self._delete_content(entry["seq"])
 
     def _delete_content(self, seq: int) -> None:
         p = self._content_path(seq)

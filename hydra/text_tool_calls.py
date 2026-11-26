@@ -21,7 +21,7 @@ import json
 import re
 from typing import Any, Callable, Iterable
 
-from hydra.llm import NativeExecutionReceipt, ToolCall
+from hydra.llm import ToolCall, successful_native_receipt
 
 _TAGGED = re.compile(r"<tool_call>\s*(.*?)\s*(?:</tool_call>|$)", re.S | re.I)
 _FENCE = re.compile(r"^```[a-zA-Z_]*\s*\n?(.*?)\n?```$", re.S)
@@ -88,15 +88,16 @@ def parse_text_tool_calls(text: str, allowed: set[str]) -> list[ToolCall]:
     return calls
 
 
+def _can_promote_tool_text(response: Any) -> bool:
+    # A native final reports work already performed; promotion would replay it.
+    return (response is not None and not getattr(response, "tool_calls", None)
+            and successful_native_receipt(getattr(response, "native_execution", None)) is None)
+
+
 def promote_text_tool_calls(resp: Any, tools: Iterable[Any] | None,
                             log: Callable[[str], None] | None = None, rung: str = "") -> Any:
     """Return ``resp`` with tool calls printed as text moved into real ``tool_calls`` (unchanged otherwise)."""
-    if resp is None or getattr(resp, "tool_calls", None):
-        return resp
-    receipt = getattr(resp, "native_execution", None)
-    if isinstance(receipt, NativeExecutionReceipt) and receipt.returncode == 0:
-        # This is a report from a process that already ran its own tools.
-        # Promoting its final text would replay actions and discard the report.
+    if not _can_promote_tool_text(resp):
         return resp
     calls = parse_text_tool_calls(str(getattr(resp, "content", "") or ""), bound_tool_names(tools))
     if not calls:

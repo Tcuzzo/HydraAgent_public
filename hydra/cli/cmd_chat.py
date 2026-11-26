@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import asdict
 
 import argparse
 import json
@@ -12,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from hydra.inter_agent import redact_text
-from hydra.llm import LlmError, NativeExecutionReceipt
+from hydra.llm import LlmError, native_execution_trace
 from hydra.policy import POLICY_CHOICES
 from hydra.providers import (
     bind_client_workspace,
@@ -245,10 +244,7 @@ def _build_ask_trace(
         "context_proof": list(context_proof),
         "iterations": getattr(result, "iterations", 0),
         "tool_calls_made": getattr(result, "tool_calls_made", 0),
-        "native_execution_receipts": [
-            asdict(receipt) for receipt in getattr(result, "native_execution_receipts", ())
-            if isinstance(receipt, NativeExecutionReceipt)
-        ],
+        "native_execution_receipts": native_execution_trace(getattr(result, "native_execution_receipts", ())),
         "halted_reason": getattr(result, "halted_reason", ""),
         "final_response": getattr(result, "final_response", ""),
         "messages": [

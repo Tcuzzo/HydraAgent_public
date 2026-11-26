@@ -75,6 +75,24 @@ def is_read_only(server: dict, tool: str) -> bool:
     return tool in server.get('read_only_tools', [])
 
 
+def _http_client_options(server: dict) -> dict:
+    headers = {}
+    if server.get('bearer_token_env'):
+        headers['Authorization'] = 'Bearer ' + os.environ[server['bearer_token_env']]
+    # Match only accepted loopback names; remote hosts keep their environment.
+    loopback = urlsplit(server['url']).hostname in {'localhost', '127.0.0.1', '::1'}
+    verify: bool | ssl.SSLContext = True
+    if loopback:
+        # Proxy bypass also disables httpx2's CA environment. Preserve its
+        # file-before-directory precedence without adding certificate roots.
+        if cafile := os.environ.get('SSL_CERT_FILE'):
+            verify = ssl.create_default_context(cafile=cafile)
+        elif capath := os.environ.get('SSL_CERT_DIR'):
+            verify = ssl.create_default_context(capath=capath)
+    return {'headers': headers, 'timeout': server['timeout'],
+            'follow_redirects': False, 'trust_env': not loopback, 'verify': verify}
+
+
 @asynccontextmanager
 async def connect(server: dict):
     try:
@@ -84,26 +102,7 @@ async def connect(server: dict):
     if 'url' in server:
         import httpx2
         from mcp.client.streamable_http import streamable_http_client
-        headers = {}
-        if server.get('bearer_token_env'):
-            headers['Authorization'] = 'Bearer ' + os.environ[server['bearer_token_env']]
-        # A local MCP server must remain reachable when the shell configures a
-        # remote proxy, including SOCKS proxies whose adapter is not installed.
-        # Match only the loopback names accepted by load_servers; remote hosts
-        # keep the operator's proxy and certificate environment settings.
-        loopback = urlsplit(server['url']).hostname in {'localhost', '127.0.0.1', '::1'}
-        verify: bool | ssl.SSLContext = True
-        if loopback:
-            # Disabling proxy discovery also disables httpx2's CA environment.
-            # Preserve its file-before-directory precedence without adding roots
-            # to an explicitly configured trust store or changing platform defaults.
-            if cafile := os.environ.get('SSL_CERT_FILE'):
-                verify = ssl.create_default_context(cafile=cafile)
-            elif capath := os.environ.get('SSL_CERT_DIR'):
-                verify = ssl.create_default_context(capath=capath)
-        async with httpx2.AsyncClient(headers=headers, timeout=server['timeout'],
-                                     follow_redirects=False, trust_env=not loopback,
-                                     verify=verify) as http:
+        async with httpx2.AsyncClient(**_http_client_options(server)) as http:
             transport = streamable_http_client(server['url'], http_client=http)
             async with Client(transport, read_timeout_seconds=server['timeout']) as client:
                 yield client
