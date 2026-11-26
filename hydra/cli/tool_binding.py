@@ -414,7 +414,7 @@ def _default_subagent_model() -> str:
 
 def bind_tools(
     root: Path,
-    approval_policy: str = "allow",
+    approval_policy: str = "ask",
     *,
     memory_root: str | Path | None = None,
     memory_workspace_root: str | Path | None = None,

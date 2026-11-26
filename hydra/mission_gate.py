@@ -16,6 +16,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from hydra.policy import mission_class_order
+
 
 # Mission-class vocabulary (S0 decision #4: namespaced, distinct from tool T0..T3).
 DANGEROUS = "dangerous"
@@ -23,8 +25,9 @@ DESTRUCTIVE_OR_OFF_LAN = "destructive_or_off_lan"
 HUGE_COLLAB_BUILD = "huge_batch"
 NORMAL = "normal"
 
-# Severity order — first match wins.
-_ORDER = (DANGEROUS, DESTRUCTIVE_OR_OFF_LAN, HUGE_COLLAB_BUILD, NORMAL)
+# Severity order — first match wins. Derived from the one risk ladder in
+# hydra.policy (MISSION_CLASS_TIER), never a second hand-kept list.
+_ORDER = mission_class_order()
 
 _DANGEROUS_KEYWORDS = (
     "rm -rf", "wipe", "exfiltrat", "ddos", "exploit", "malware",

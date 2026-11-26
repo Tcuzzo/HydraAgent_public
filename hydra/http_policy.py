@@ -50,12 +50,20 @@ _OPERATOR_CLASSES = frozenset({"loopback", "private"})
 _SPECIAL = tuple(
     (ipaddress.ip_network(net), kind)
     for net, kind in (
+        ("::ffff:0:0/96", "reserved"),  # IPv4-mapped; the stdlib's classification of this range moved between Python releases, so the guard owns it
+        ("2002::/16", "private"),  # 6to4; the stdlib's classification of this range moved between Python releases too, so the guard owns it
         ("100.64.0.0/10", "private"),  # RFC 6598 carrier-grade NAT (Tailscale; a cloud metadata address)
         ("192.0.0.0/24", "private"),  # RFC 6890 IETF protocol assignments
         ("198.18.0.0/15", "benchmark"),  # RFC 2544; a proxy answers public names from it
         ("2001::/32", "reserved"),  # Teredo
         ("2001:2::/48", "reserved"),  # benchmarking
         ("2001:10::/28", "reserved"),  # ORCHID
+        ("2001:1::1/128", "private"),  # PCP anycast; the stdlib's classification of this range moved between Python releases, so the guard owns it
+        ("2001:1::2/128", "private"),  # TURN anycast; same reason
+        ("2001:3::/32", "private"),  # AMT; same reason
+        ("2001:4:112::/48", "private"),  # AS112-v6; same reason
+        ("2001:20::/28", "private"),  # ORCHIDv2; same reason
+        ("2001:30::/28", "private"),  # ORCHIDv2 (deprecated); same reason
         ("2001:db8::/32", "reserved"),  # documentation
         ("3fff::/20", "reserved"),  # documentation
         ("5f00::/16", "reserved"),  # SRv6 segment identifiers

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hydra.atomic_write import atomic_write_bytes
+from hydra.edit_checkpoints import get_default_store
 from skills.fs_read import SkillError
 
 DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024
@@ -122,7 +122,7 @@ def run(
         )
 
     try:
-        atomic_write_bytes(target_resolved, payload)
+        get_default_store(root_resolved).write_bytes(target_resolved, payload)
     except OSError as e:
         raise SkillError(f"write failed for {target_resolved}: {e}") from e
 

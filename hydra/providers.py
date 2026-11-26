@@ -210,6 +210,22 @@ def is_cli_transport(name: str) -> bool:
     return _canonical_provider_name(str(name or "")) == CLI_TRANSPORT
 
 
+def bind_client_workspace(
+    client, provider: str, *, root: str | Path, approval_policy: str
+) -> None:
+    """Bind native CLI tools to the same scope and permission floor as Hydra.
+
+    Native tools execute inside their own CLI and cannot use Hydra's individual
+    approval prompts. Only an explicit blanket allow grants workspace writes;
+    ask/deny retain read-only access. HTTP clients use Hydra's bound tools.
+    """
+    if is_cli_transport(provider):
+        client.cd = str(Path(root).expanduser().resolve())
+        client.sandbox = (
+            "workspace-write" if approval_policy in {"allow", "yolo"} else "read-only"
+        )
+
+
 def cli_transport_status() -> tuple[bool, str]:
     """Whether the CLI transport's binary resolves here (PATH or its env override)."""
     try:
@@ -383,7 +399,10 @@ def _make_transport_client(
         # CodexClient.__init__ resolves the binary (HYDRA_CODEX_BIN or
         # shutil.which), raising the clear install/login error if absent.
         client = CodexClient(**kwargs)
-        return client, cfg
+        # The CLI owns its default model choice. Expose the client's generic
+        # label to ask/chat so a fresh sign-in setup is runnable without a
+        # model override; CodexClient deliberately omits -m for that label.
+        return client, replace(cfg, model=client.model)
     if cfg.name == "backs":
         from hydra.rung_resolver import RungGatewayClient, backs_url
 

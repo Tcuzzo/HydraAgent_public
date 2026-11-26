@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from hydra.autonomy import classify_tool_call
+from hydra.operator_auth import tool_touches_auth_dir
 from hydra.workbench_approvals import DEFAULT_APPROVAL_QUEUE_PATH
 from hydra.workbench_approvals import append_record as append_approval_record
 from hydra.workbench_approvals import create_request
@@ -24,15 +25,96 @@ from hydra.workbench_runs import append_record as append_run_record
 from hydra.workbench_runs import create_run
 
 
-RISKY_TOOLS = frozenset({"bash", "fs_write", "fs_edit", "memory_remember", "worker_job", "mcp_call"})
+@dataclass(frozen=True)
+class ToolRisk:
+    """One tool's risk, as the runtime enforces it.
 
-# Tools that mutate state — blocked in plan mode.  This is a broader list than
-# RISKY_TOOLS: plan mode enforces read-only discipline so even low-risk mutating
-# tools (apply_patch, etc.) are denied.
-MUTATING_TOOLS = frozenset({
-    "bash", "fs_write", "fs_edit", "apply_patch",
-    "memory_remember", "worker_job", "mcp_call",
-})
+    ``tier`` is the trust tier (read_only / guarded_write / remote_write /
+    destructive). ``gated`` means ApprovalPolicy.require() consults the operator
+    policy for this tool. ``mutating`` means plan mode blocks it. ``note`` names a
+    gap the runtime has today so a report can say it out loud instead of hiding it.
+    """
+
+    tier: str
+    gated: bool = False
+    mutating: bool = False
+    note: str = ""
+
+
+# THE one risk table. Keyed by RUNTIME tool name (``bash``, not the contract id
+# ``shell``). RISKY_TOOLS, MUTATING_TOOLS, hydra.guardrails, hydra.mission_gate and
+# the generated trust-tiers / danger-gates YAMLs all read it - nothing keeps a
+# second copy. To change what a tool may do, change it here and regenerate with
+# ``hydra capabilities risk --write``.
+TOOL_RISK: dict[str, ToolRisk] = {
+    "fs_read": ToolRisk("read_only"),
+    "list_directory": ToolRisk("read_only"),
+    "grep": ToolRisk("read_only"),
+    "glob": ToolRisk("read_only"),
+    "git_diff": ToolRisk("read_only"),
+    "http_fetch": ToolRisk("read_only"),
+    "web_extract": ToolRisk("read_only"),
+    "system_stats": ToolRisk("read_only"),
+    "skill_list": ToolRisk("read_only"),
+    "skill_search": ToolRisk("read_only"),
+    "skill_show": ToolRisk("read_only"),
+    "skill_route": ToolRisk("read_only"),
+    "skill_library.search": ToolRisk("read_only"),
+    "fs_write": ToolRisk("guarded_write", gated=True, mutating=True),
+    "fs_edit": ToolRisk("guarded_write", gated=True, mutating=True),
+    "apply_patch": ToolRisk(
+        "guarded_write", mutating=True,
+        note="mutates files but is not approval-gated; plan mode blocks it",
+    ),
+    "todo": ToolRisk(
+        "guarded_write",
+        note="guarded_write tier, but not approval-gated and not blocked by plan mode",
+    ),
+    "spawn_subagent": ToolRisk("guarded_write"),
+    "spawn_subagents": ToolRisk("guarded_write"),
+    "memory_remember": ToolRisk("guarded_write", gated=True, mutating=True),
+    "worker_job": ToolRisk("guarded_write", gated=True, mutating=True),
+    "mcp_call": ToolRisk("remote_write", gated=True, mutating=True),
+    "bash": ToolRisk("destructive", gated=True, mutating=True),
+}
+
+# Contract ids that differ from the runtime tool name the policy sees.
+CONTRACT_RUNTIME_NAME = {"shell": "bash"}
+
+# Trust tiers, least to most dangerous. Mission classes ride the same ladder.
+TIER_ORDER = ("read_only", "guarded_write", "remote_write", "destructive")
+MISSION_CLASS_TIER = {
+    "dangerous": "destructive",
+    "destructive_or_off_lan": "destructive",
+    "huge_batch": "remote_write",
+    "normal": "read_only",
+}
+
+# Gated tools: the operator approval policy is consulted for these.
+RISKY_TOOLS = frozenset(name for name, risk in TOOL_RISK.items() if risk.gated)
+
+# Tools that mutate state - blocked in plan mode. Broader than RISKY_TOOLS: plan
+# mode enforces read-only discipline, so even ungated mutating tools (apply_patch)
+# are denied.
+MUTATING_TOOLS = frozenset(name for name, risk in TOOL_RISK.items() if risk.mutating)
+
+
+def tool_risk(tool_name: str) -> ToolRisk | None:
+    """The one table's answer for a runtime tool name (None = not a known tool)."""
+    return TOOL_RISK.get(tool_name)
+
+
+def runtime_tool_name(tool_id: str) -> str:
+    """Map a declarative contract id to the runtime name the policy sees."""
+    return CONTRACT_RUNTIME_NAME.get(tool_id, tool_id)
+
+
+def mission_class_order() -> tuple[str, ...]:
+    """Mission classes, most dangerous first (stable within a tier)."""
+    ranked = sorted(MISSION_CLASS_TIER, key=lambda c: -TIER_ORDER.index(MISSION_CLASS_TIER[c]))
+    return tuple(ranked)
+
+
 POLICY_CHOICES = ("allow", "ask", "deny")
 
 
@@ -66,17 +148,25 @@ def _prompt_approval(policy: "ApprovalPolicy", summary: str) -> str:
     return policy.input_fn(f"Approve {summary}? [y/N] ")
 
 
+def _refuse_auth_dir_access(tool_name: str, arguments: dict) -> None:
+    if tool_touches_auth_dir(arguments):
+        raise ApprovalDenied(
+            f"refused: {tool_name!r} touches the operator auth directory; "
+            "no tool may read or write the authenticator secret or unlock state"
+        )
+
+
 @dataclass
 class ApprovalPolicy:
     """Decide whether a tool call may run.
 
     Modes:
-      - allow: run without prompting.
-      - ask: prompt or queue only destructive commands; auto-allow normal tools.
-      - deny: refuse destructive commands.
+      - allow: run without prompting (explicit opt-in; never the default).
+      - ask: the default. Prompt or queue destructive commands; auto-allow normal tools.
+      - deny: refuse every risky tool, even when yolo authority is unlocked.
     """
 
-    mode: str = "allow"
+    mode: str = "ask"
     input_fn: Callable[[str], str] = input
     output_fn: Callable[[str], None] = print
     stdin_is_tty: Callable[[], bool] = field(default=lambda: sys.stdin.isatty())
@@ -124,6 +214,15 @@ class ApprovalPolicy:
                 f"approval policy must be one of {POLICY_CHOICES}, got {self.mode!r}"
             )
 
+    def describe(self) -> dict[str, object]:
+        """The effective policy, readable by the operator (`hydra doctor`)."""
+        return {
+            "mode": self.mode,
+            "gated_tools": sorted(RISKY_TOOLS),
+            "plan_mode": self.plan_mode,
+            "surface_trusted": self.surface_trusted,
+        }
+
     def set_plan_mode(self, enabled: bool) -> None:
         """Toggle PLAN (read-only) vs ACT mode.  Thread-safe assignment."""
         self.plan_mode = bool(enabled)
@@ -151,6 +250,9 @@ class ApprovalPolicy:
         # toggled per turn — so a snapshot clone would go stale).  Reset the
         # per-call resolved-request marker guarded() reads after we return.
         self._wait_this_call = self.wait_for_approval if wait is None else bool(wait)
+        # The operator's authenticator secret and unlock state are off limits to every
+        # tool call, in every mode, even self-heal and yolo. Refused, never queued.
+        _refuse_auth_dir_access(tool_name, arguments)
         self._last_approved_request_id = None
         # Slice 4 — PLAN/ACT gate (checked before everything else).
         # In plan_mode, only reads are allowed.  Any mutating tool is denied
@@ -192,18 +294,18 @@ class ApprovalPolicy:
             return
         if not is_risky_tool(tool_name):
             return
-        if self._operator_has_yolo_authority():
-            return
-        # 'allow' means ALLOW. On the operator's own trusted surface, a tool launched
-        # in allow mode executes in real time — no hidden destructive sub-gate, no
-        # "blocked" friction. The untrusted-surface gate above still protects
-        # public/non-operator input, and 'deny'/'ask' modes still classify below.
-        if self.mode == "allow":
-            return
         if self.mode == "deny":
-            # Deny mode refuses all risky tools, not just destructive ones
+            # Deny mode refuses all risky tools, not just destructive ones. It is
+            # checked BEFORE yolo: an explicit deny is never overridden by an unlock.
             summary = _summarize(tool_name, arguments)
             raise ApprovalDenied(f"approval denied for {summary}")
+        if self._operator_has_yolo_authority():
+            return
+        # 'allow' is an explicit opt-in: a caller who passes it gets real-time
+        # execution with no destructive sub-gate. The untrusted-surface gate above
+        # still protects public/non-operator input, and 'ask' classifies below.
+        if self.mode == "allow":
+            return
         autonomy = classify_tool_call(tool_name, arguments, self.mode, mission_level=mission_level)
         if autonomy["decision"] == "auto_allow" and non_destructive_auto_allow:
             return
