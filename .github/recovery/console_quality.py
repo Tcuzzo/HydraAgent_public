@@ -75,6 +75,8 @@ def junit(path):
     return {
         "tests": len(cases),
         "failures": [c.attrib["name"] for c in cases if c.find("failure") is not None],
+        "failure_types": {c.attrib["name"]: c.find("failure").attrib.get("type", "")
+                          for c in cases if c.find("failure") is not None},
         "errors": [c.attrib["name"] for c in cases if c.find("error") is not None],
         "skips": [c.attrib["name"] for c in cases if c.find("skipped") is not None],
     }
@@ -239,7 +241,9 @@ def mutant(number, candidate, output):
         }
         assertion_failure = (killed["returncode"] == 1 and cases["tests"] == 16
                              and not cases["errors"] and not cases["skips"]
-                             and all(any(name.startswith(prefix) for name in cases["failures"])
+                             and not any("TimeoutExpired" in kind for kind in cases["failure_types"].values())
+                             and all(any(name.startswith(prefix) and "AssertionError" in cases["failure_types"][name]
+                                         for name in cases["failures"])
                                      for prefix in prefixes[number]))
         killed["junit"] = cases
     finally:
