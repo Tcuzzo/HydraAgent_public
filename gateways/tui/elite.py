@@ -93,7 +93,8 @@ except ImportError:
     InMemoryHistory = None  # type: ignore[misc,assignment]
 
 # ── HydraAgent core ─────────────────────────────────────────────────────────
-from dataclasses import dataclass  # noqa: E402
+from dataclasses import asdict, dataclass  # noqa: E402
+from hydra.llm import NativeExecutionReceipt  # noqa: E402
 from hydra.inter_agent import redact_value  # noqa: E402
 from hydra.loop import AgentLoop, LoopStep, LoopResult, Tool  # noqa: E402
 from hydra.cli.tool_binding import bind_tools  # noqa: E402
@@ -1014,6 +1015,7 @@ class EliteTUI:
             final_text=final,
             tool_calls_made=result.tool_calls_made,
             rerun=_rerun_forcing_tools,
+            native_execution_receipts=getattr(result, "native_execution_receipts", ()),
         )
         return outcome.text
 
@@ -1223,6 +1225,12 @@ class EliteTUI:
         self, *, client, cfg, model: str, runtime: dict | None = None
     ) -> None:
         """Swap backing client/model after a profile slash command."""
+        from hydra.providers import bind_client_workspace
+
+        bind_client_workspace(
+            client, getattr(cfg, "name", ""),
+            root=self.root, approval_policy=self.approval_policy,
+        )
         self.client = client
         self.cfg = cfg
         self.model = model
@@ -1263,6 +1271,10 @@ class EliteTUI:
                 "trace_id": result.trace_id,
                 "iterations": result.iterations,
                 "tool_calls_made": result.tool_calls_made,
+                "native_execution_receipts": [
+                    asdict(receipt) for receipt in getattr(result, "native_execution_receipts", ())
+                    if isinstance(receipt, NativeExecutionReceipt)
+                ],
                 "halted_reason": result.halted_reason,
                 "final_response": result.final_response,
                 "tool_steps": tool_steps,

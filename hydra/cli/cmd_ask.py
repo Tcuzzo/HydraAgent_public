@@ -16,6 +16,7 @@ from hydra.loop import AgentLoop, LoopError
 from hydra.policy import POLICY_CHOICES
 from hydra.providers import (
     ProviderError,
+    bind_client_workspace,
     default_env_dir as provider_env_dir,
     is_local_provider,
     make_client,
@@ -28,8 +29,6 @@ from hydra.prompt_builder import PromptBuilderError, compose_operator_prompt
 from hydra.rubric_judge import RubricJudgeError
 from hydra.cli.cmd_chat import (
     DEFAULT_SYSTEM_PROMPT,
-    HYDRA_CONFIG,
-    HYDRA_SCHEMA,
     REPO_ROOT,
     _auto_route_role,
     _bind_tools,
@@ -262,6 +261,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         if not getattr(e, "hydra_reported", False):  # the helper already said it
             print(f"provider error: {e}", file=sys.stderr)
         return 2
+    bind_client_workspace(client, cfg.name, root=root, approval_policy=args.approval_policy)
     model = args.model or cfg.model
     if not model:
         print(
@@ -275,10 +275,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
     if auto_route_report is not None:
         # Resolve §10.34 role router and pick the model for the classified role.
         try:
-            roles = resolve_roles(
-                config_path=HYDRA_CONFIG,
-                schema_path=HYDRA_SCHEMA,
-            )
+            roles = resolve_roles(workspace=root)
         except RoleError as e:
             print(f"auto-route error: {e}", file=sys.stderr)
             return 2
@@ -372,6 +369,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
             failed_route = f"{cfg.name}/{model}"
             client, cfg, model = nxt
             args.provider, args.model = cfg.name, model
+            bind_client_workspace(client, cfg.name, root=root, approval_policy=args.approval_policy)
             print(f"hydra: {failed_route} failed ({_one_line(e)[:160]}); "
                   f"trying {fallback_role} fallback rung {cfg.name}/{model}", file=sys.stderr)
             loop = AgentLoop(_budgeted(client, cfg.name, model, args.prompt), model=model,

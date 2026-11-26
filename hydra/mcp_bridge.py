@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 import re
+import ssl
 from urllib.parse import urlsplit
 
 from hydra.specialists import read_json
@@ -86,7 +87,23 @@ async def connect(server: dict):
         headers = {}
         if server.get('bearer_token_env'):
             headers['Authorization'] = 'Bearer ' + os.environ[server['bearer_token_env']]
-        async with httpx2.AsyncClient(headers=headers, timeout=server['timeout'], follow_redirects=False) as http:
+        # A local MCP server must remain reachable when the shell configures a
+        # remote proxy, including SOCKS proxies whose adapter is not installed.
+        # Match only the loopback names accepted by load_servers; remote hosts
+        # keep the operator's proxy and certificate environment settings.
+        loopback = urlsplit(server['url']).hostname in {'localhost', '127.0.0.1', '::1'}
+        verify: bool | ssl.SSLContext = True
+        if loopback:
+            # Disabling proxy discovery also disables httpx2's CA environment.
+            # Preserve its file-before-directory precedence without adding roots
+            # to an explicitly configured trust store or changing platform defaults.
+            if cafile := os.environ.get('SSL_CERT_FILE'):
+                verify = ssl.create_default_context(cafile=cafile)
+            elif capath := os.environ.get('SSL_CERT_DIR'):
+                verify = ssl.create_default_context(capath=capath)
+        async with httpx2.AsyncClient(headers=headers, timeout=server['timeout'],
+                                     follow_redirects=False, trust_env=not loopback,
+                                     verify=verify) as http:
             transport = streamable_http_client(server['url'], http_client=http)
             async with Client(transport, read_timeout_seconds=server['timeout']) as client:
                 yield client

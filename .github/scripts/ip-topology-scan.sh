@@ -43,6 +43,9 @@ findings="$(printf '%s\n' "$candidates" | awk -F: '
   NF >= 3 {
     ip = $NF;
     if (ip in allow) next;
+    # Sealed MCP proxy test: this one private address is a negative control,
+    # never contacted. Keep the exception scoped to that exact test file/value.
+    if ($1 == "hydra/test_mcp_loopback_proxy.py" && ip ~ /^10[.]0[.]0[.]5$/) next;
     # RFC5737 documentation ranges are public-shaped and never real infra.
     if (ip ~ /^198\.51\.100\./ || ip ~ /^203\.0\.113\./ || ip ~ /^192\.0\.2\./) next;
     if (split(ip, o, ".") != 4) next;

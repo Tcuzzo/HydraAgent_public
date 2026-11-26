@@ -37,7 +37,7 @@ import tempfile
 import uuid
 from typing import Callable, Iterable
 
-from hydra.llm import ChatMessage, ChatResponse, LlmError
+from hydra.llm import ChatMessage, ChatResponse, LlmError, NativeExecutionReceipt
 
 
 # Default model label. The actual model is governed by the user's `codex login`
@@ -179,18 +179,22 @@ class CodexClient:
         # Only pass `-m` when the model differs from the generic default label —
         # otherwise let the user's `codex login` config pick the model.
         model_arg = chosen_model if chosen_model and chosen_model != _DEFAULT_MODEL else None
+        # UI commands may rebind this client while the native process is running.
+        # The invocation and its receipt must share the same launch snapshot.
+        launch_workspace = os.path.abspath(os.path.expanduser(str(self.cd)))
+        launch_sandbox = self.sandbox
         argv = codex_command(
             prompt,
-            cwd=self.cd,
+            cwd=launch_workspace,
             output_file=out_file,
             model=model_arg,
             codex_bin=self.codex_bin,
         )
         # --sandbox enforces an OS-level restriction (e.g. "read-only"). Only
         # inserted when explicitly set; omitting it keeps default behavior.
-        if self.sandbox is not None:
+        if launch_sandbox is not None:
             # insert right after `exec` so it precedes -C/-o/-.
-            argv[2:2] = ["--sandbox", self.sandbox]
+            argv[2:2] = ["--sandbox", launch_sandbox]
 
         try:
             proc = self._runner(
@@ -223,6 +227,12 @@ class CodexClient:
                 completion_tokens=0,
                 raw={"stdout": stdout, "stderr": stderr, "returncode": returncode},
                 tool_calls=[],
+                native_execution=NativeExecutionReceipt(
+                    transport="codex",
+                    workspace=launch_workspace,
+                    sandbox=launch_sandbox,
+                    returncode=returncode,
+                ),
             )
 
         # No valid final answer — diagnose the failure (surfaced, never swallowed).

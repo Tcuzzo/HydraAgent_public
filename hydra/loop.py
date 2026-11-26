@@ -38,7 +38,7 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from hydra.llm import LlmError, OllamaClient, ToolCall  # noqa: E402
+from hydra.llm import LlmError, NativeExecutionReceipt, OllamaClient, ToolCall  # noqa: E402
 from hydra.inter_agent import current_trace_id, new_trace_id, use_trace_id  # noqa: E402
 from hydra.reflex_gauntlet import guard_invoke  # noqa: E402
 from hydra.reflex_seam import maybe_handle  # noqa: E402
@@ -127,6 +127,9 @@ class LoopResult:
     # model hallucinated skill_route on a convo turn with tools=[]).  The loop
     # retried plain-text and the operator got a real answer.
     phantom_tool_recovery: bool = False
+    # Native transports execute their own tools. A process receipt is separate
+    # from Hydra tool activity and never constitutes independent verification.
+    native_execution_receipts: list[NativeExecutionReceipt] = field(default_factory=list)
 
 
 def _is_phantom_tool_call_error(exc: LlmError) -> bool:
@@ -255,6 +258,7 @@ class AgentLoop:
         halted_reason = "max_iterations"
         last_iteration = 0
         phantom_tool_recovery = False
+        native_execution_receipts: list[NativeExecutionReceipt] = []
         gauntlet_stop = False
         handled = maybe_handle(user_prompt, tools, root=repo_root)
         if handled is not None:
@@ -384,6 +388,7 @@ class AgentLoop:
                             completion_tokens=resp.completion_tokens,
                             raw=resp.raw,
                             tool_calls=[],
+                            native_execution=getattr(resp, "native_execution", None),
                         )
                     except LlmError:
                         # Recovery also failed — return a safe fallback text so
@@ -433,10 +438,20 @@ class AgentLoop:
                         substitution=fb["substitution"],
                         fallback_checkpoint_path=fb["checkpoint_path"],
                         operator_message=fb["operator_message"],
+                        native_execution_receipts=native_execution_receipts,
                     )
 
-            tool_calls = list(resp.tool_calls)
-            if not tool_calls and tools and not phantom_tool_recovery:
+            native_receipt = getattr(resp, "native_execution", None)
+            native_completed = (
+                isinstance(native_receipt, NativeExecutionReceipt)
+                and native_receipt.returncode == 0
+            )
+            if native_completed:
+                native_execution_receipts.append(native_receipt)
+            # A native final describes an execution that already happened;
+            # neither structured promotions nor the text bridge may replay it.
+            tool_calls = [] if native_completed else list(resp.tool_calls)
+            if not tool_calls and tools and not phantom_tool_recovery and not native_completed:
                 bridged = extract_bridged_tool_call(resp.content)
                 if bridged is not None:
                     tool_calls = [
@@ -623,6 +638,9 @@ class AgentLoop:
                         tools=None,
                     )
                     final_response = (synthesis_resp.content or "").strip()
+                    receipt = getattr(synthesis_resp, "native_execution", None)
+                    if isinstance(receipt, NativeExecutionReceipt) and receipt.returncode == 0:
+                        native_execution_receipts.append(receipt)
                 except LlmError:
                     final_response = ""
 
@@ -664,7 +682,7 @@ class AgentLoop:
             s.kind == "tool_result" and not s.tool_error
             for s in steps
         )
-        heartbeat_only = (len(steps) > 0 and tool_calls_made == 0)
+        heartbeat_only = (len(steps) > 0 and tool_calls_made == 0 and not native_execution_receipts)
         
         # Detect fake final output after real tools (scrub pattern from pi-heads)
         fake_final_scrubbed = False
@@ -688,4 +706,5 @@ class AgentLoop:
             fake_final_scrubbed=fake_final_scrubbed,
             trace_id=run_trace_id,
             phantom_tool_recovery=phantom_tool_recovery,
+            native_execution_receipts=native_execution_receipts,
         )

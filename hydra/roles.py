@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from core.config import ConfigError, load
+from hydra.config_paths import role_config_path
 from hydra.providers import (
     CLI_VENDOR_FAMILIES,
     ProviderError,
@@ -115,8 +116,21 @@ def _role_from_config(role: str, data: dict) -> RoleSpec:
 
 
 def resolve_roles_from_dict(config: dict) -> RoleSet:
-    agentic = config.get("agentic") or {}
-    roles = agentic.get("roles") or {}
+    if not isinstance(config, dict):
+        raise RoleError("config root must be a mapping")
+    agentic = config.get("agentic")
+    if agentic is None:
+        agentic = {}
+    if not isinstance(agentic, dict):
+        raise RoleError("agentic must be a mapping")
+    roles = agentic.get("roles")
+    if roles is None:
+        roles = {}
+    if not isinstance(roles, dict):
+        raise RoleError("agentic.roles must be a mapping")
+    for name, data in roles.items():
+        if data is not None and not isinstance(data, dict):
+            raise RoleError(f"agentic.roles.{name} must be a mapping")
     if "auditor" not in roles and "verifier" in roles:
         roles = {**roles, "auditor": roles["verifier"]}
     defaults = {
@@ -159,32 +173,44 @@ def resolve_roles_from_dict(config: dict) -> RoleSet:
 
 def resolve_roles(
     *,
-    config_path: str | Path,
-    schema_path: str | Path,
+    config_path: str | Path | None = None,
+    schema_path: str | Path | None = None,
+    workspace: str | Path | None = None,
 ) -> RoleSet:
+    """Resolve selected operator roles, or the shipped routing defaults.
+
+    A schema remains supported for legacy callers. Normal CLI use validates the
+    modern role mapping directly; no private checkout schema is required.
+    """
+    path = role_config_path(config_path, workspace=workspace)
+    if path is None:
+        return resolve_roles_from_dict({})
     try:
-        config = load(config_path, schema_path)
-    except ConfigError as e:
-        config_path_obj = Path(config_path)
-        if config_path_obj.name != "hydra.yaml":
-            raise RoleError(f"role config invalid: {e}") from e
-        config = _load_hydra_yaml_roles(config_path_obj, e)
-    return resolve_roles_from_dict(config)
+        if schema_path is None:
+            config = _load_role_config(path)
+        else:
+            try:
+                config = load(path, schema_path)
+            except ConfigError as e:
+                if path.name != "hydra.yaml":
+                    raise RoleError(str(e)) from e
+                # Preserve modern hydra.yaml compatibility with legacy schemas.
+                config = _load_role_config(path)
+        return resolve_roles_from_dict(config)
+    except (RoleError, OSError, UnicodeError) as e:
+        raise RoleError(f"role config invalid: {path}: {e}") from e
 
 
-def _load_hydra_yaml_roles(config_path: Path, original_error: ConfigError) -> dict:
-    """Load the modern hydra.yaml role section when the legacy schema is stale."""
+def _load_role_config(config_path: Path) -> dict:
+    """Read modern role YAML without depending on a checkout-only schema."""
     if not config_path.is_file():
-        raise RoleError(f"role config invalid: {original_error}") from original_error
+        raise RoleError("config file not found")
     try:
         data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as e:
-        raise RoleError(f"role config invalid: {config_path}: invalid YAML: {e}") from e
+        raise RoleError(f"invalid YAML: {e}") from e
     if not isinstance(data, dict):
-        raise RoleError(f"role config invalid: {config_path}: config root must be a mapping")
-    roles = (data.get("agentic") or {}).get("roles") or {}
-    if not isinstance(roles, dict):
-        raise RoleError(f"role config invalid: {config_path}: agentic.roles must be a mapping")
+        raise RoleError("config root must be a mapping")
     return data
 
 
