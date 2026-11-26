@@ -132,26 +132,14 @@ def validate_decision(payload: Any) -> dict[str, Any]:
 
 
 def resolve_route(rung: str) -> str:
-    """Resolve the reflex rung to a route token. Failure raises ReflexUnavailable."""
+    """Resolve a configured standalone decision tier without network discovery."""
+    from hydra.decision_ladder import configured_steps
+
     if not str(rung or "").strip():
         raise ReflexUnavailable("reflex rung name is empty")
-    route = ""
-    error: Exception | None = None
-    try:
-        from hydra.rung_resolver import resolve
-
-        _transport, route = resolve(rung, task="decide")
-    except ReflexUnavailable:
-        raise
-    except Exception as exc:
-        error = exc
-    if not isinstance(route, str) or not route.strip() or _MODEL_TAG.search(route):
-        from hydra.decision_ladder import configured_steps
-
-        if not configured_steps("llm"):
-            raise ReflexUnavailable(str(error or "reflex route is not a rung route"))
-        route = f"router/decide/{rung}"
-    return route
+    if _DECISION_CLIENT is None and not configured_steps("llm"):
+        raise ReflexUnavailable("configure a local or direct cloud decision model")
+    return f"decision/{rung}"
 
 
 def default_decider(*, prompt: str, hint: dict[str, Any] | None, rung: str, route: str) -> dict[str, Any]:

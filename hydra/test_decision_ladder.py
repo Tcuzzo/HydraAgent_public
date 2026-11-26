@@ -43,10 +43,6 @@ def _isolate(monkeypatch):
         jev_key_name(),
     ):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(
-        "hydra.decision_ladder.backs_origin",
-        lambda: "",
-    )
 
 
 def test_missing_instructions_never_calls_a_transport(monkeypatch):
@@ -64,33 +60,10 @@ def test_missing_instructions_never_calls_a_transport(monkeypatch):
     assert called["n"] == 0
 
 
-def test_backs_answers_first_and_the_receipt_names_that_rung(monkeypatch):
-    _isolate(monkeypatch)
-    monkeypatch.setenv("HYDRA_BACKS_URL", "http://backs.example")
-    monkeypatch.setenv("HYDRA_JEV_MODEL", "from-env")
-    monkeypatch.setenv(jev_key_name(), "test-key")
-    seen = {}
-
-    def post(url, body, headers):
-        seen["url"] = url
-        seen["body"] = body
-        seen["headers"] = headers
-        return 200, {"ok": True, "answer": {"choice": "models"}, "rung": "backs"}
-
-    receipt = decide(_question(), post=post)
-    assert receipt["rung"] == "backs"
-    assert receipt["tier"] == "llm"
-    assert receipt["tier_rung"] == tier_rung("llm")
-    assert receipt["answer"]["choice"] == "models"
-    assert seen["url"] == "http://backs.example/api/router/complete"
-    assert seen["body"]["instructions"] == _question()["instructions"]
-    assert "Authorization" not in seen["headers"]
-    assert seen["body"].get("model") not in ("", None) or "model" not in seen["body"]
 
 
 def test_auth_statuses_step_to_the_next_configured_rung(monkeypatch):
     _isolate(monkeypatch)
-    monkeypatch.setenv("HYDRA_BACKS_URL", "http://backs.example")
     monkeypatch.setenv("HYDRA_LAYA_MODEL", "local-checkpoint")
     monkeypatch.setenv("HYDRA_JEV_MODEL", "from-env")
     monkeypatch.setenv(jev_key_name(), "test-key")
@@ -98,9 +71,6 @@ def test_auth_statuses_step_to_the_next_configured_rung(monkeypatch):
 
     def post(url, body, headers):
         order.append(url)
-        if url.endswith("/api/router/complete"):
-            assert body["instructions"]
-            return 401, {"error": "refused"}
         assert body["model"] == "from-env"
         assert body["instructions"] == _question()["instructions"]
         assert body["model"]
@@ -113,9 +83,8 @@ def test_auth_statuses_step_to_the_next_configured_rung(monkeypatch):
         raise LlmError("HTTP 402 budget")
 
     receipt = decide(_question(), post=post, laya=laya)
-    assert order[0].endswith("/api/router/complete")
-    assert order[1] == "laya"
-    assert order[2].endswith("/chat/completions")
+    assert order[0] == "laya"
+    assert order[1].endswith("/chat/completions")
     assert receipt["rung"] == "jev"
     assert receipt["answer"]["choice"] == "tools"
 
@@ -140,8 +109,7 @@ def test_nothing_configured_names_each_way_to_set_a_rung(monkeypatch):
     with pytest.raises(DecisionError) as exc:
         decide(_question(), post=lambda *a, **k: (_ for _ in ()).throw(AssertionError("called")))
     text = str(exc.value)
-    assert "HYDRA_BACKS_URL" in text
-    assert "BACKS_ENDPOINT" in text
+    assert "BACKS" not in text
     assert "HYDRA_LAYA_MODEL" in text
     assert "HYDRA_KEV_MODEL" in text
     assert jev_key_name() in text

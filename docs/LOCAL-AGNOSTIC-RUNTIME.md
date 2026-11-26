@@ -202,7 +202,7 @@ A tick claims one due local maintenance job and exits. Cron or Task Scheduler ca
 invoke it. Use a unique scheduled-slot key; replaying a key cannot duplicate the
 job. Leases, ownership tokens, capacity limits and three-attempt backoff prevent
 unbounded retries. This maintenance queue runs index refresh and memory inventory;
-it does not schedule external app actions or replace every existing BACKS loop.
+it does not schedule external app actions or replace external agent runtimes.
 Terminal receipts remain in the queue database for operator retention/archival.
 
 `memory-audit --archive /new/snapshot` makes a content-addressed snapshot of text

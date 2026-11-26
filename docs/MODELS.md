@@ -56,13 +56,12 @@ disabled for this worker; initial model downloads still need network access.
 
 ## Laya: typed decisions
 
-Install `hydraagent[laya]`. This extra declares `laya>=0.4.2,<0.5`. It is an open
+Install `hydraagent[laya]`. This extra declares `laya>=0.4.2,<0.6`. It is an open
 Jev-style decision model, with `choice`, `score`, and `noul` question types. It
 is separate from chat roles. Pass `--model <your-checkpoint>` or set
 `HYDRA_LAYA_MODEL`. If both are unset, `hydra/decision_models.py` uses the
 checkpoint id compiled in that file. The upstream checkpoint page is linked below;
-it is a starting point you can replace. Direct Jev calls and the decision
-service are separate rungs. See
+it is a starting point you can replace. Direct Jev calls are a separate configured rung. See
 [Jev typed decisions](../QUICKSTART.md#jev-typed-decisions-optional).
 
 ```python
@@ -103,8 +102,7 @@ Laya only when `HYDRA_LAYA_MODEL` is set.
 
 `hydra/model_routing.yaml` names `llm_decision`, `vision_decision`, and
 `text_decision`. No model id is stored there. At call time the ladder in
-[Quickstart](../QUICKSTART.md#jev-typed-decisions-optional) tries a decision
-service, then a local model, then direct Jev.
+[Quickstart](../QUICKSTART.md#jev-typed-decisions-optional) tries configured local models, then direct Jev.
 
 Direct Jev needs both `OPENROUTER_API_KEY` and `HYDRA_JEV_MODEL`. Create the
 key at [openrouter.ai/keys](https://openrouter.ai/keys). The HTTP shape is the

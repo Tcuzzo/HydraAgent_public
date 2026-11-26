@@ -48,6 +48,10 @@ gateway = [
 #   Without the plugin pytest cannot run them ("async def functions are not
 #   natively supported") and asyncio_mode is an unknown config option.
 test = [
+  # Distribution boundary tests build a wheel without build isolation.
+  "pip>=23",
+  "setuptools>=68",
+  "wheel",
   "pytest>=8.0",
   "pytest-asyncio>=0.24",
 ]

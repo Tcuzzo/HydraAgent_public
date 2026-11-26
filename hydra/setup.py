@@ -53,7 +53,7 @@ class CommissioningReport:
 AUTOMATION_POLICIES = frozenset({"ask", "auto", "yolo"})
 SUDO_POLICIES = frozenset({"ask", "never", "yolo"})
 # Hydra names no model provider: setup links are only for hosts the operator
-# brings. Routing lives in hydra/model_routing.yaml as BACKS rung names.
+# brings. Routing lives in hydra/model_routing.yaml as standalone role names.
 SETUP_LINKS: dict[str, str] = {}
 
 
@@ -190,7 +190,7 @@ def setup_local_ollama(
 ) -> SetupResult:
     """Point Hydra at the local rung. An empty model lets the rung pick its own."""
     if api_key:
-        raise SetupError("the local rung takes no key; cloud keys are held by BACKS (Needle)")
+        raise SetupError("the local provider takes no key; configure cloud credentials with cloud setup")
     values = {"OLLAMA_ENDPOINT": endpoint}
     if model:
         values["OLLAMA_MODEL"] = model

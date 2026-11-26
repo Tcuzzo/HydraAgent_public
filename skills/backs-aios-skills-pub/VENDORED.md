@@ -11,8 +11,15 @@ To refresh: copy the upstream `skills/` tree at the new commit over this
 directory, keep `hive-clone-boot/`, and update the pinned commit above.
 Do not hand-edit mirrored skills here; fix them upstream and re-sync.
 
-Local public-scrub edits (keep these when re-syncing, and carry them upstream):
-`cam-iot-inventory/SKILL.md` and `fleet-ladder/SKILL.md` use placeholders
-(`<BACKS_DEPLOY_ROOT>`, `<camera-mac-N>`, `<camera-lan-host-N>`, `<proven-tip-sha>`,
-`<deploy-head-sha>`) instead of operator paths, device addresses and private commit ids.
-`hydra/test_public_scrub_guard.py` fails if those come back.
+Local public adaptations (preserve when refreshing and carry upstream where appropriate):
+
+- `hive-clone-boot/` contains generic public profiles.
+- `cam-iot-inventory`, `backs-pack-sync`, `fleet-ladder`, `fleet-dispatch`,
+  `wayfinder`, `turn-and-burn`, `optimus`, `architecture-engineer`, and the
+  observation skills (`co-health`, `conscientious-objector`, `osha-bot`) retain portable methodology while removing private
+  serving-code, API, deployment and promotion bindings. Public Hydra uses only
+  its configured local or direct-cloud transports.
+- `hydra/test_public_scrub_guard.py` guards against reintroducing private literals.
+
+These adaptations do not change upstream ownership or license terms. A refresh
+must retain the standalone boundary rather than restore private instructions.

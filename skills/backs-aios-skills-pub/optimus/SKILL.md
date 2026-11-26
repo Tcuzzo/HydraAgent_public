@@ -81,11 +81,6 @@ hashing a file is not an invocation of that skill.
 
 ## Fleet ladder rung policy (thin pointer)
 
-Before any model dispatch or frontier design/reason lift, invoke
-[fleet-ladder](../fleet-ladder/SKILL.md). It forces agents to **read**
-`config/fleet_ladder.yaml` + `config/gpu_nodes.yaml` (deploy paths), honor the live
-builder seat, and HARD-gate realtime research seams (web + GitHub + Reddit + papers)
-when the rung marks frontier / `research_seams`. Never hardcode model IDs; Patch owns yaml.
-Cite: `observe/SECURITY_OPERATOR_BUILDER_SEAT_ORDER_20260926.md`.
+Before model dispatch, read [fleet-ladder](../fleet-ladder/SKILL.md) and the active public host's actual role/provider configuration. Use only available, authorized transports. No private deployment, private node inventory or external service is required by public Hydra. Report unavailable capabilities explicitly.
 
 Honor [fleet-ladder](../fleet-ladder/SKILL.md): use a medium-or-higher reasoning baseline where supported, research before heavy lifts, and do not truncate context.

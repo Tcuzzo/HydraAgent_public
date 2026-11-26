@@ -155,7 +155,7 @@ def test_decision_configuration_names_tiers_and_hides_secrets(monkeypatch):
     monkeypatch.delenv("HYDRA_LIVE_KEY", raising=False)
     report = decision_configuration()
     assert report["paid_calls"] is False
-    assert report["backs"] == "set"
+    assert "backs" not in report
     assert report["jev_key"] == "set"
     assert report["jev_model"] == "set"
     assert report["laya_model"] == "set"

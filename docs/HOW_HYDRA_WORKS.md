@@ -1,255 +1,102 @@
 # How Hydra works (plain English)
 
-This page is for anyone, engineer or not. It explains what Hydra is, what it needs to run,
-what every placeholder in these docs means, and what happens when a model is unavailable.
-Words in **bold** are explained the first time they appear.
+Hydra is a standalone assistant you run in a terminal. Give it a project folder and a goal such as “explain how login works” or “fix the failing test.” Hydra connects to the model you configure, offers tools that can read or change the project, and applies your approval policy before an action runs.
 
-## What Hydra is
-
-Hydra is a helper you run in a terminal (the text window where you type commands). You give it
-a folder of code and a goal in plain words, such as "explain how login works" or "fix the failing
-test". Hydra reads the files, decides what to do, and follows the task's **approval policy** for
-changes and commands. The policy can ask for permission, allow those actions, or block them.
-Hydra then tells you what it did.
-
-Hydra does not contain an AI model itself. A **model** is the AI service that writes the answers,
-for example one running on your own computer or one you pay for online. Hydra is the part that
-reads your files, keeps the model inside the rules, and keeps a record.
-
-## The short version
-
-```mermaid
-flowchart LR
-    You(["You type a goal"]) --> Hydra["Hydra reads your folder<br/>and plans the work"]
-    Hydra --> Model{"Which model?"}
-    Model -->|"Your own computer"| Local["Local model<br/>(Ollama)"]
-    Model -->|"Online service"| Cloud["Cloud model<br/>(your own key)"]
-    Model -->|"Optional"| Router["BACKS decision service<br/>picks the model for you"]
-    Local --> Answer(["Answer, plus what<br/>Hydra changed"])
-    Cloud --> Answer
-    Router --> Answer
-    classDef ok fill:#e6fffa,stroke:#2c7a7b,color:#1a202c;
-    class Answer ok;
-```
+Hydra does not contain a conversational model. You supply one through local Ollama, a direct cloud provider, or your signed-in Codex CLI. The public package does not discover or call a private routing service.
 
 ## What you need
 
-### Required
-
-| What | Why | How to check |
+| Requirement | Purpose | Check |
 |---|---|---|
-| **Python** 3.11 or newer | Hydra is written in Python, a programming language. Your computer needs it installed to run Hydra. | `python3 --version` |
-| One model source | Something has to write the answers. Pick one: a local model, a cloud key, or the ChatGPT sign-in through the Codex CLI. | `hydra setup` walks you through it |
-
-The quickstart uses **pipx**, which installs Hydra in its own Python environment.
+| Python 3.11 or newer | Runs Hydra | `python3 --version` |
+| One configured model source | Produces answers and tool requests | `hydra setup` |
+| A project directory | Defines the file tools' workspace | Run inside it or pass `--root` |
 
 ```bash
 pipx install git+https://github.com/Tcuzzo/HydraAgent_public.git
+hydra setup
+hydra ask "Explain this project's entry point" --approval-policy deny
 ```
 
-For a VM installation with Python's `venv` and `pip`, see the [VM installation guide](VM-INSTALL.md#clean-installation).
+The [VM installation guide](VM-INSTALL.md) covers an Ubuntu installation with Python's `venv` and `pip`. The [quickstart](../QUICKSTART.md) covers provider settings and optional capabilities.
 
-### Optional
+## Choose a model source
 
-Hydra runs without any of these. Each one adds a capability.
-
-| What | What it adds | Where you turn it on |
+| Source | How it connects | What you configure |
 |---|---|---|
-| **Ollama** (a free program that runs models on your own computer) | Downloaded models can run offline. Configured network tools, remote endpoints and cloud fallbacks can still use the network. | Install from [ollama.com](https://ollama.com). Hydra looks at `http://localhost:11434` unless you set `OLLAMA_ENDPOINT`. |
-| A **GPU** (graphics card) | Makes local models fast. Without one, local models still work, only slower. | Nothing to set. Ollama uses it automatically. |
-| A cloud model key | Answers from a paid online model. | `hydra setup --mode cloud`. Keys are stored under `~/.hydraAgent/workspace/` by default. |
-| The **BACKS decision service** (deployed separately) | A separate server you run that picks the best available model for each job, and switches to another one when a model fails. Hydra does not ship this server. | `HYDRA_BACKS_URL` (see placeholders below). |
-| **Telegram** (a chat app) | Talk to Hydra from your phone. | `HYDRA_TELEGRAM_BOT_TOKEN` and `HYDRA_OPERATOR_DM_CHAT_ID` in your environment. |
-| **Bubblewrap** (a Linux tool that fences a program in) | Lets Hydra run checks in a locked box on Linux. | `sudo apt-get install bubblewrap` |
-| **MCP** (a standard way for AI tools to talk to each other) | Lets other tools use Hydra, and Hydra use them. | `pip install "hydraagent[mcp]"` |
-| Memory embeddings | Lets Hydra find past notes by meaning, not only by exact words. | `pip install "hydraagent[memory]"` plus Ollama |
+| Local Ollama | Directly to your Ollama endpoint | `OLLAMA_ENDPOINT` and `OLLAMA_MODEL`, or local setup |
+| Cloud provider | Directly to the selected provider's compatible API | Provider endpoint, model and your own key |
+| Codex CLI | Through the installed, signed-in `codex` process | Codex setup and login; an explicit model is optional |
 
-The full list, with the exact check for each, is in
-[Optional capabilities](../QUICKSTART.md#optional-capabilities-and-how-to-enable-them).
-
-### How the pieces fit together
-
-```mermaid
-flowchart TB
-    subgraph Required["pipx quickstart path"]
-        Py["Python 3.11+"] --> Px["pipx"] --> H["Hydra"]
-        H --> M{"One model source"}
-    end
-    M --> O["Ollama on your computer<br/>(free, private)"]
-    M --> C["Cloud model<br/>(your key)"]
-    M --> X["ChatGPT sign-in<br/>(Codex CLI)"]
-    subgraph Optional["Optional add-ons"]
-        B["BACKS decision service<br/>HYDRA_BACKS_URL"]
-        G["GPU<br/>(faster local models)"]
-        T["Telegram<br/>(phone remote)"]
-        W["Bubblewrap<br/>(locked-box checks)"]
-        P["MCP<br/>(tool sharing)"]
-        E["Memory embeddings"]
-    end
-    H -.-> B
-    O -.-> G
-    H -.-> T
-    H -.-> W
-    H -.-> P
-    H -.-> E
-    classDef req fill:#e8f4ff,stroke:#2b6cb0,color:#1a202c;
-    classDef opt fill:#fdf6e3,stroke:#b7791f,color:#1a202c;
-    class Py,Px,H,M req;
-    class B,G,T,W,P,E opt;
-```
-
-Solid lines show this install path and its core requirements. Dotted lines show optional add-ons.
-
-## Placeholders: what they mean and where to set them
-
-These docs never show anyone's real computer names, network addresses, user names or keys.
-Wherever you would type your own value, you see a **placeholder** in angle brackets, like
-`<backs-host>`. Replace the whole thing, brackets included, with your value. In a terminal,
-keep quotes around it so the brackets are not read as special characters.
-
-| Placeholder | What it means | Where you set it |
-|---|---|---|
-| `<your-model>` | The name of a model you installed or pay for. | On the command line (`--model '<your-model>'`), or in `hydra setup`. |
-| `<provider>`, `<model>`, `<family>` | Who serves a model, its name, and its maker. Used per role (planner, doer, worker, auditor). | `.hydraAgent/hydra.yaml`, copied from [`.hydraAgent/hydra.example.yaml`](../.hydraAgent/hydra.example.yaml). That file stays out of git. |
-| `<base-url>`, `<key-env>` | The web address of a model service, and the *name* of the environment variable that holds its key (not the key itself). | Same `hydra.yaml`. |
-| `<backs-host>` | The name or network address of the computer running your BACKS decision service. Examples: `localhost` if it is the same computer, or your server's address on your home network. | `HYDRA_BACKS_URL`, or `BACKS_ENDPOINT` in `~/.hydraAgent/workspace/.env.backs`. |
-| `<port>` | The "door number" that service listens on. Your BACKS setup tells you which one. | Part of the same URL: `http://<backs-host>:<port>`. |
-| `<needle-url>` | The same decision service address, when a doc talks about the Needle part of it. | Same as above. |
-| `<YOUR_USER>` | Your login name on your computer. | Nowhere. Hydra uses `~` (your home folder) so it never needs it. |
-| `<BACKS_DEPLOY_ROOT>` | The folder that holds your own BACKS deployment, used by some vendored skills. | Your own machine's notes or environment. Never commit it. |
-| `<camera-mac-N>`, `<camera-lan-host-N>` | A camera's hardware address and its address on your home network, in the camera-inventory skill. | Filled from your own cameras' live data. Never commit real values. |
-
-An **environment variable** is a named setting your terminal passes to programs. You set one for
-the current terminal like this:
+For a local model:
 
 ```bash
-export HYDRA_BACKS_URL='http://<backs-host>:<port>'
+hydra setup --mode local --model '<your-model>' --non-interactive
+hydra models --provider ollama
+hydra ask "Read README.md and summarize it" --provider ollama --approval-policy deny
 ```
 
-Rules Hydra keeps:
+`<your-model>` is a placeholder: replace it with a model available on your server. A default endpoint does not prove that the server or model is installed. If no local model is configured, Hydra can inspect that endpoint's loaded and installed model lists. It does not ask another service to choose the model.
 
-- **Configure the deployment you intend to use.** Setup, environment settings, role files and
-  the optional BACKS service select providers, endpoints and models. Shipped role routing names
-  **rungs** (see below); some optional selectors have default model names. A default does not
-  establish that the model is installed.
-- **Provider settings default to `~/.hydraAgent/workspace/`.** `HYDRA_ENV_DIR` can override that location. Keep key-bearing files outside your repository.
-- The test `hydra/test_public_scrub_guard.py` and the CI check `.github/scripts/ip-topology-scan.sh`
-  fail if a real private address, device address, personal home folder or private machine name
-  is committed.
+For a direct cloud provider, setup writes provider-specific settings under `~/.hydraAgent/workspace/` by default. `HYDRA_ENV_DIR` selects another directory. Keep credentials outside the repository. Process environment settings override saved provider settings.
+
+`--provider` selects a provider for one command. `HYDRA_PROVIDER` selects a configured default. These explicit choices take precedence over profile discovery. A named custom provider is supported when its endpoint and model are configured; a native proprietary API may require a compatible adapter.
 
 ## A request, step by step
 
-A **role** is the kind of job: chatting, planning, building code, or grading work.
-A **rung** is one step on a ladder of models for that role, best first. The BACKS decision
-service owns the ladder; Hydra only names the rung it wants. A **receipt** is the short note
-Hydra prints showing which rung actually answered.
+1. **Choose the workspace and policy.** Hydra resolves the project root and the requested approval mode.
+2. **Resolve the provider and model.** Explicit command options, provider settings and optional role configuration determine the route.
+3. **Send the task and allowed tool descriptions.** The model returns text or requests tools.
+4. **Execute permitted tools.** Hydra checks policy and workspace constraints, runs the selected tool, and sends its result back to the model.
+5. **Return the answer and execution evidence.** The trace records actual calls and results. A model's claim alone is not proof that a file changed or a check passed.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor You
-    participant H as Hydra
-    participant R as BACKS decision service
-    participant L as Rung chain (models)
-    You->>H: "Fix the failing test"
-    H->>H: Pick the role (chat, plan, build, grade)
-    H->>R: Which rungs serve this role? (resolve)
-    R-->>H: Ordered rung chain, best first
-    H->>L: Try rung 1
-    L-->>H: Answer (or a refusal, see next chart)
-    H->>R: Report how that rung did (outcome)
-    H-->>You: Answer + receipt naming the rung that answered
-```
+For Codex, the native process performs its own tool work. Hydra records its launch workspace, sandbox mode and return code separately from Hydra-local tool counts. Process success alone does not certify edits.
 
-Without the BACKS service, Hydra skips the middle step and talks to the model you configured
-directly (your Ollama or your cloud key).
+## Roles and fallbacks
 
-## When a model fails
+A **role** is a kind of work: planning, coding, or auditing. The packaged `hydra/model_routing.yaml` names role entries and their fallback order. It contains no credentials or deployment-specific model IDs.
 
-Models fail for ordinary reasons: a key expired, credit ran out, a model was retired, a server
-is busy. Hydra does not stop at the first failure. It works down the list and only gives up when
-nothing on the list can answer, and then it tells you in one line what it tried.
+The operator configures each provider. `HYDRA_<RUNG>_PROVIDER` can choose a configured provider for a routing entry: `HYDRA_PLAN_PROVIDER`, for example, selects the `plan` entry. An optional role file can explicitly assign provider, model and family. Copy [the example](../.hydraAgent/hydra.example.yaml) and replace its placeholders.
 
-What the codes mean:
+Role configuration is selected from an explicit path, `$HYDRA_CONFIG`, the requested workspace, then `~/.hydra/hydra.yaml`. When no role file is selected, Hydra uses the packaged mapping. An invalid selected file is an error.
 
-- **401 / 403**: the key was refused (wrong, expired, or no credit left).
-- **402**: payment required.
-- **404 / 410**: that model is not available any more.
-- **408 / 429**: too slow, or too many requests right now.
-- **5xx** (500 and up): the service itself had a problem.
+Fallback depends on the caller and configured route. Role and decision ladders can try another configured option after a failure. Hydra does not supply a remote model, key or private service as an emergency fallback. If no eligible model answers, it reports a failure.
 
-```mermaid
-flowchart TD
-    Start(["Hydra needs an answer"]) --> R1["Try rung 1 of the chain"]
-    R1 -->|"Answered"| Done(["Answer + receipt"])
-    R1 -->|"401 / 402 / 403<br/>404 / 410, 408 / 429<br/>5xx or timeout"| Rn["Try the next rung<br/>in the chain"]
-    Rn -->|"Answered"| Done
-    Rn -->|"Also failed"| More{"More rungs<br/>in the chain?"}
-    More -->|"Yes"| Rn
-    More -->|"No"| Cap["Try the role's own<br/>capability rung last"]
-    Cap -->|"Answered"| Done
-    Cap -->|"Failed"| FB["Try the role's fallbacks<br/>from model_routing.yaml"]
-    FB -->|"Answered"| Done
-    FB -->|"All failed"| GPU{"Is a local GPU rung<br/>configured with a real model?"}
-    GPU -->|"Yes"| Local["Try the local GPU rung"]
-    Local -->|"Answered"| Done
-    GPU -->|"No"| Err(["One-line error naming<br/>every rung tried and why"])
-    Local -->|"Failed"| Err
-    classDef ok fill:#e6fffa,stroke:#2c7a7b,color:#1a202c;
-    classDef bad fill:#fff5f5,stroke:#c53030,color:#1a202c;
-    classDef step fill:#f7fafc,stroke:#4a5568,color:#1a202c;
-    class Done ok;
-    class Err bad;
-    class R1,Rn,Cap,FB,Local step;
-    R1 -->|"Other 4xx: the request<br/>itself was wrong"| FB
-```
+Common provider failures include refused credentials, exhausted credit, an unavailable model, rate limits and server errors. The error and trace should be used to identify which configured route failed. A successful fallback does not mean that the original provider recovered.
 
-In order:
+## Optional capabilities
 
-1. **The rung chain.** The BACKS service returns the rungs for this job, best first. Hydra tries
-   each one. A refused key, missing credit, a retired model, a rate limit, a server error or a
-   timeout moves it to the next rung. Every attempt is reported back to the service so it learns
-   which rungs are healthy.
-2. **The role's capability rung** is the last try inside the chain.
-3. **Role fallbacks.** If `hydra ask` still has no answer, it walks the fallbacks listed for that
-   role in `hydra/model_routing.yaml` (for example `chat: [cloud-doer, cloud-auto]`).
-4. **Local GPU, only if configured.** If your setup has a local GPU rung *with a real model
-   assigned*, Hydra tries it last. If not, Hydra skips it rather than pretend.
-5. **One-line error.** If nothing answered, you see a single line such as
-   `ask error: no rung answered: <rung>: 403; <rung>: 429; local GPU rung [not available]` and
-   the command exits with code 1 (a signal to scripts that it failed). No long crash report.
+| Capability | What it adds | Configuration |
+|---|---|---|
+| Needle | Local tool selection; Hydra still executes tools | `hydraagent[needle]` and a configured model |
+| Kev, text and vision decisions | Typed decisions through configured local models | The matching `HYDRA_*_MODEL` setting and Ollama endpoint |
+| Laya | Optional local typed-decision SDK | `hydraagent[laya]`, `HYDRA_LAYA_MODEL` |
+| Direct Jev | Typed decisions through a direct cloud API | `OPENROUTER_API_KEY`, `HYDRA_JEV_MODEL` |
+| Bubblewrap | Confined worker verification on supported Linux hosts | Install `bubblewrap`; the host must permit the required namespaces |
+| MCP | Tools shared with explicitly configured servers | `hydraagent[mcp]` and a server configuration |
+| Memory embeddings | Recall by meaning alongside keyword recall | Optional memory extra and configured embedding backend |
+| Telegram | A separate chat surface | Your bot token and authorized operator chat |
 
-Any other 4xx code means the request itself was the problem, so Hydra stops walking that chain
-instead of sending the same bad request to every rung in it. `hydra ask` then goes to step 3.
+Typed decisions and conversational chat are separate paths. The decision ladder tries configured local models and direct Jev. `hydra doctor --rungs` reports which settings are present without placing a paid call. Question validation and model-specific checks do not constitute a universal guarantee that every returned answer matches a schema; callers must use the decision contract's validation rules.
 
-The rung chain for tool turns and the check for a configured local GPU fallback in `hydra ask`
-landed in [PR #54](https://github.com/Tcuzzo/HydraAgent_public/pull/54).
+Downloaded local models can run offline. Explicit network tools, remote endpoints and configured cloud fallbacks may still use the network. “Local model” does not make every enabled tool offline.
 
-## Where things live
+## Approval, verification and undo
 
-| Location | What is there |
+Use `--approval-policy deny` for a read-only task. Mutating tools require the applicable approval policy; scripted work must explicitly allow them. File tools stay inside the requested workspace, and shell confinement depends on the platform and available sandbox.
+
+Hydra's file mutation tools create checkpoints for supported edits. `hydra undo` restores the latest checkpoint for the workspace. Check the actual file and command result after an edit or undo. External tools and native processes may have their own change history; a Hydra-local checkpoint cannot represent an action it did not perform.
+
+## Where settings live
+
+| Location | Contents |
 |---|---|
-| Your project folder | Your code. Hydra's file tools stay inside it (or inside `--root`). |
-| `.hydraAgent/hydra.yaml` | Optional role file: which provider and model each role uses. Not in git. |
-| `~/.hydraAgent/workspace/` | Default provider settings and keys (`.env.*` files); `HYDRA_ENV_DIR` can select another directory. |
-| `$HYDRA_CONFIG`, workspace role files, or `~/.hydra/hydra.yaml` | Optional role configuration, checked in that order after an explicit path; otherwise Hydra uses its packaged routing defaults. |
-| `hydra/model_routing.yaml` | Shipped with Hydra. Names rungs and fallbacks only, no models or keys. |
+| Your project folder or `--root` | The workspace visible to file tools |
+| `.hydraAgent/hydra.yaml` | Optional workspace role settings |
+| `~/.hydraAgent/workspace/` | Default provider settings; `HYDRA_ENV_DIR` can override it |
+| `$HYDRA_CONFIG` or `~/.hydra/hydra.yaml` | Optional selected role settings |
+| Packaged `hydra/model_routing.yaml` | Role mapping and fallback order |
 
-## Words used on this page
+Placeholders such as `<provider>`, `<your-model>`, `<base-url>` and `<key-env>` stand for your own configuration. `<key-env>` means the name of an environment variable containing a key, not the key itself. Do not publish real credentials or private infrastructure details.
 
-| Word | Meaning |
-|---|---|
-| Terminal | The text window where you type commands. |
-| Model | The AI service that writes answers. |
-| Provider | Whoever serves the model: your own computer (Ollama) or a company. |
-| Role | The kind of job: chat, plan, build, grade. |
-| Rung | One model option on a ladder for a role, best first. |
-| Fallback | The next option to try when one fails. |
-| Receipt | The line Hydra prints naming which rung answered. |
-| BACKS decision service | An optional server you run that owns the model ladder and keys. |
-| Environment variable | A named setting your terminal passes to programs. |
-| Placeholder | A `<name-in-brackets>` you replace with your own value. |
-| GPU | A graphics card. It makes local models faster. |
-
-More detail: [Quickstart](../QUICKSTART.md) · [Models](MODELS.md) ·
-[BACKS router contract](BACKS_ROUTER_CONTRACT.md) · [Command reference](CLI-REFERENCE.md)
+More detail: [Quickstart](../QUICKSTART.md) · [Models](MODELS.md) · [Command reference](CLI-REFERENCE.md) · [VM installation](VM-INSTALL.md)

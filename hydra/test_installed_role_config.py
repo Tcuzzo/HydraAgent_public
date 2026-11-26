@@ -132,7 +132,8 @@ def test_ask_auto_route_uses_defaults_or_explicit_workspace(workspace, monkeypat
     target.mkdir()
     if with_config:
         _write_config(target / ".hydraAgent" / "hydra.yaml", "doer")
-    expected = resolve_roles_from_dict({"agentic": {"roles": {"planner": {"route": "doer"}}}} if with_config else {}).planner.model
+    # Neither an absent config nor a route-only role supplies a model override.
+    expected = "initial"
     seen = []
 
     class Client:

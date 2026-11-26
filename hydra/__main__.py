@@ -45,6 +45,8 @@ Maturity: SCAFFOLDED. Promoted by §10.29.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import os
 import sys
 from pathlib import Path
 
@@ -217,6 +219,28 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+@contextmanager
+def _provider_directory_scope(env_dir):
+    """Own the provider directory for one CLI command, including its threads/children.
+
+    CLI dispatch owns the process environment; concurrent embedded main() calls
+    are unsupported. Library callers retain explicit provider-directory arguments.
+    Always restore the caller's environment, including when dispatch raises.
+    """
+    if env_dir is None:
+        yield
+        return
+    previous = os.environ.get("HYDRA_ENV_DIR")
+    os.environ["HYDRA_ENV_DIR"] = str(Path(env_dir).expanduser().resolve())
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("HYDRA_ENV_DIR", None)
+        else:
+            os.environ["HYDRA_ENV_DIR"] = previous
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -227,7 +251,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         args = parser.parse_args(["chat"])
         args.setup_if_needed = True
-    return {
+    command = {
         "ask": cmd_ask,
         "watch": cmd_watch,
         "doctor": cmd_doctor,
@@ -284,7 +308,9 @@ def main(argv: list[str] | None = None) -> int:
         "maintenance": cmd_personal,
         "connections": cmd_personal,
         "tribunal": cmd_personal,
-    }[args.cmd](args)
+    }[args.cmd]
+    with _provider_directory_scope(getattr(args, "env_dir", None)):
+        return command(args)
 
 
 if __name__ == "__main__":

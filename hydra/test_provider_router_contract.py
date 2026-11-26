@@ -58,7 +58,7 @@ def test_model_router_uses_provider_factory_and_falls_back(monkeypatch) -> None:
     # The router rung (local GPU) is tried first; when it errors, the classifier falls
     # through the remaining rungs, and with every rung down it still answers by heuristic.
     from hydra.providers import is_local_provider
-    from hydra.rung_resolver import GATEWAY
+    GATEWAY = "mock-cloud"
 
     assert seen and is_local_provider(seen[0])
     assert all(p == GATEWAY for p in seen[1:])

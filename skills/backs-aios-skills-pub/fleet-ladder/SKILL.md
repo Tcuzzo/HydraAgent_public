@@ -29,17 +29,9 @@ provenance, never authority. Review independence comes from the execution sessio
 
 ## Source of truth (READ — never fork)
 
-Resolution lives only in the deploy ladder files. Skills teach agents to
-**honor** them; Patch owns yaml edits. This file does not own routing.
+Resolve through the active host's documented, operator-configured routing. In public Hydra, read `hydra/model_routing.yaml` for role order, the selected `hydra.yaml` for explicit roles, and the selected provider configuration for endpoint and model. The adjacent `ladder.example.yaml` is a template, not an executable resolver or a live source of truth.
 
-| File | Absolute path (deploy parent) |
-|------|-------------------------------|
-| Fleet ladder | `<BACKS_DEPLOY_ROOT>/config/fleet_ladder.yaml` |
-| GPU nodes | `<BACKS_DEPLOY_ROOT>/config/gpu_nodes.yaml` |
-| Public ladder example | `skills/fleet-ladder/ladder.example.yaml` (template only) |
-
-`<BACKS_DEPLOY_ROOT>` is a placeholder for the folder that holds your own BACKS
-deployment checkout. Set it per machine; never commit a real path.
+Do not discover a private deployment, private GPU-node file or private service to complete a missing route. If the configured public host cannot serve the requested capability, report the missing capability.
 
 **NEVER** hardcode model IDs in skill text, prompts, or call sites as source of truth.
 You may name **roles** in prose (`builder`, `grader`, `worker`, and the
@@ -50,12 +42,7 @@ list this skill names is a desire; the role list a live ladder actually
 configures is the only authority. This skill does not invent a `planner`
 rung; if the live yaml has no configured planning role, do not add one here.
 
-Public pack note: this skill ships no Fleet executable and no resolver. The
-actual fallback mechanism lives wherever the operator's host runs the ladder
-runner. Current native Fleet public build flags are
-`--role --repo --spec --timeout --refresh --dry-run`. Flags this skill
-mentions beyond that list are **desired** surface, not deployed surface —
-name a gap; do not invent.
+Public pack note: this skill supplies selection discipline, not a Fleet executable. Use only commands and flags advertised by the active public host. A different host's example is not proof of an installed capability.
 
 ## The steps
 
@@ -85,9 +72,8 @@ name a gap; do not invent.
    in the packet. Record the authoring execution and the actual model, provider,
    transport, host, and fallback reason; identify the review session separately.
 2. **Read the role order from the configured ladder (only authority).**
-   Load `fleet_ladder.yaml` (+ `gpu_nodes.yaml` for local survival / organ
-   placement). Each role lists candidates **in the order the live config
-   chooses** — Patch owns that order. Selection within that order is the
+   Load the active host's role and provider configuration. Each role lists
+   candidates **in the order that configuration chooses**; its owner controls that order. Selection within that order is the
    agent's job and follows this skill's discipline:
 
    - **Planner / spec / heavy design lift:** strongest SUITABLE reasoning
@@ -233,14 +219,13 @@ provider label:
 The proposed `config/fleet_ladder.yaml` keys (`thinking_floor`, `thinking_scale`,
 `research_seams`, `requires_research_seams`, `capabilities`) and their shapes are in
 [references/ladder-keys.md](references/ladder-keys.md). Absent keys on the live deploy
-are a **GAP** for Patch, never a reason to hardcode model IDs; resolve seats via
-ladder + `gpu_nodes.yaml` only.
+are a **GAP** for Patch, never a reason to hardcode model IDs; resolve roles through the documented public host configuration only.
 
 ## Hard rules — break one and the skill failed
 
 - **No model name at a call site.** Code asks for a role and a capability; the
   ladder answers with a model. Grep for model-name literals — each one is a bug.
-- **No model IDs as skill source of truth.** Point at `fleet_ladder.yaml` + `gpu_nodes.yaml`.
+- **No model IDs as skill source of truth.** Point at the active host's configured role and provider settings.
 - **The live probe outranks the config — and the probe must prove inference, not
   catalog access.** Checked-and-it-answers is settled; a stale list is not. A
   listing in the catalog is provenance; live availability + a bounded
@@ -265,10 +250,7 @@ ladder + `gpu_nodes.yaml` only.
   hardware** in every probe and every failure. Conflating them is the bug.
 - **No universal cloud-first / local-last default.** The live config owns
   preference; the agent reads it.
-- **No fabricated runner flags.** This skill names current native Fleet public
-  build flags (`--role --repo --spec --timeout --refresh --dry-run`) and no
-  others as deployed surface. Hypothetical flags such as `--builder` or `--capability` are not part of the deployed CLI
-  surface and must not be pasted into a runner or claimed as enforcement.
+- **No fabricated runner flags.** Read the active host's help and configuration before dispatch. A desired capability is not an installed command.
 - **No resolver / no Fleet executable in this skill.** The public pack ships
   none. Where a step needs runtime support that is not in the public pack,
   name the gap; do not silently bypass.

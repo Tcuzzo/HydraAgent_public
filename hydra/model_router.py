@@ -117,7 +117,7 @@ class RoutingDecision:
 def _rung_fallbacks(routing: Any, role: str) -> list[dict[str, str]]:
     """Call-time fall-through for a role: the next rungs that resolve now, local GPU
     last. Never-fail: a failing key, quota or outage moves the call down the chain;
-    BACKS Kev/Needle still pick every model."""
+    The operator configures every provider and model."""
     try:
         return [{"provider": p, "model": m} for p, m in routing.chain_pairs(role)]
     except (RungResolutionError, KeyError) as exc:
