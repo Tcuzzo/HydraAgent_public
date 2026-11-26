@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from hydra.policy import ApprovalPolicy
+from hydra.policy import ApprovalPolicy, TOOL_RISK, runtime_tool_name
 
 
 class DeclarativeRuntimeError(Exception):
@@ -262,6 +262,8 @@ def doctor_runtime_catalog(catalog: RuntimeCatalog) -> dict[str, Any]:
         except (ImportError, AttributeError) as exc:
             findings.append({"level": "error", "target": tool_id, "message": f"executor unavailable: {exc}"})
 
+    findings.extend(_risk_authority_findings(catalog))
+
     skills = catalog.skills.get("skills", [])
     if not isinstance(skills, list):
         findings.append({"level": "error", "target": "skills", "message": "skill index must contain a skills list"})
@@ -302,6 +304,38 @@ def doctor_runtime_catalog(catalog: RuntimeCatalog) -> dict[str, Any]:
         "counts": {"tools": len(catalog.tools), "skills": len(skills), "findings": len(findings)},
         "findings": findings,
     }
+
+
+TRUST_TIERS_SCHEMA = "hydra.policies.trust_tiers.v2"
+
+
+def _risk_authority_findings(catalog: RuntimeCatalog) -> list[dict[str, str]]:
+    """Report where the contracts disagree with the one risk table (hydra.policy.TOOL_RISK).
+
+    A workspace override of trust-tiers.yaml or a tool contract wins over the bundled
+    file, so a stale copy would otherwise disagree with the runtime in silence.
+    """
+    trust = catalog.policies.get("trust_tiers", {})
+    found: list[dict[str, str]] = []
+    if trust.get("schema") != TRUST_TIERS_SCHEMA:
+        found.append({"level": "error", "target": "trust-tiers", "message": f"stale trust-tiers schema {trust.get('schema')!r}; expected {TRUST_TIERS_SCHEMA} (regenerate with `hydra capabilities risk --write`)"})
+    for orphan in sorted(set(trust.get("tool_risks") or {}) - set(catalog.tools)):
+        found.append({"level": "error", "target": orphan, "message": "orphan risk id: declared in trust-tiers but no tool contract defines it"})
+    for tool_id, contract in sorted(catalog.tools.items()):
+        found.extend(_contract_vs_table(tool_id, contract))
+    return found
+
+
+def _contract_vs_table(tool_id: str, contract: dict[str, Any]) -> list[dict[str, str]]:
+    entry = TOOL_RISK.get(runtime_tool_name(tool_id))
+    if entry is None:
+        return [{"level": "error", "target": tool_id, "message": "tool has no entry in hydra.policy.TOOL_RISK"}]
+    found = []
+    if str(contract.get("risk") or "") != entry.tier:
+        found.append({"level": "error", "target": tool_id, "message": f"contract risk {contract.get('risk')!r} disagrees with TOOL_RISK tier {entry.tier!r}"})
+    if _contract_requires_approval(contract) != entry.gated:
+        found.append({"level": "error", "target": tool_id, "message": f"contract approval.required={_contract_requires_approval(contract)} disagrees with the runtime gate ({entry.gated})"})
+    return found
 
 
 def run_declarative_turn(
@@ -743,6 +777,7 @@ def _invoke_tool(contract: dict[str, Any], arguments: dict[str, Any], *, root: P
     merged = _default_arguments(contract)
     merged.update(arguments)
     tool_id = str(contract.get("tool_id") or "")
+    merged = _file_tool_arguments(tool_id, merged, root=root)
     if _executor_requires_root(contract):
         merged.setdefault("root", root)
     if tool_id == "git_diff" and merged.get("worktree") in {None, "", "."}:
@@ -751,6 +786,26 @@ def _invoke_tool(contract: dict[str, Any], arguments: dict[str, Any], *, root: P
         merged.pop("cwd", None)
         merged.setdefault("root", root)
     return fn(**merged)
+
+
+def _file_tool_arguments(tool_id: str, arguments: dict[str, Any], *, root: Path) -> dict[str, Any]:
+    """Bind file mutations to the execution workspace, outside planner control."""
+    if tool_id not in {"fs_write", "fs_edit"}:
+        return arguments
+    bound = {**arguments, "root": root}
+    if tool_id == "fs_edit":
+        _translate_edit_arguments(bound)
+    return bound
+
+
+def _translate_edit_arguments(arguments: dict[str, Any]) -> None:
+    """Translate public edit names on an adapter-owned copy; reject ambiguity."""
+    for public, native in (("old", "old_string"), ("new", "new_string")):
+        if public not in arguments:
+            continue
+        if native in arguments:
+            raise DeclarativeRuntimeError(f"fs_edit arguments contain both {public!r} and {native!r}")
+        arguments[native] = arguments.pop(public)
 
 
 def _executor_requires_root(contract: dict[str, Any]) -> bool:
@@ -787,8 +842,7 @@ def _contract_non_destructive_auto_allow(contract: dict[str, Any]) -> bool:
 
 
 def _policy_tool_name(contract: dict[str, Any]) -> str:
-    tool_id = str(contract.get("tool_id") or "")
-    return "bash" if tool_id == "shell" else tool_id
+    return runtime_tool_name(str(contract.get("tool_id") or ""))
 
 
 def _default_arguments(contract: dict[str, Any]) -> dict[str, Any]:

@@ -20,6 +20,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+from hydra.policy import tool_risk
+
 
 class ActionTier(Enum):
     """Permission tiers for actions."""
@@ -173,6 +175,26 @@ def get_confidence_band(confidence: float) -> ConfidenceBand:
     return CONFIDENCE_BANDS[-1]  # Default to very_high
 
 
+# Action types -> the runtime tool whose risk row (hydra.policy.TOOL_RISK) decides the
+# tier. External calls ride the remote-write row; destructive shapes ride bash.
+_ACTION_TOOL = {
+    "read_file": "fs_read", "list_directory": "list_directory", "grep": "grep",
+    "glob": "glob", "http_fetch_read": "http_fetch",
+    "write_file": "fs_write", "edit_file": "fs_edit", "create_directory": "fs_write",
+    "http_post": "mcp_call", "send_email": "mcp_call", "send_message": "mcp_call",
+    "api_call": "mcp_call",
+    "delete_file": "bash", "delete_directory": "bash", "run_shell": "bash",
+    "execute_code": "bash",
+}
+_IDENTITY_ACTIONS = frozenset({"update_config", "change_identity", "modify_guardrails"})
+_RISK_TO_ACTION_TIER = {
+    "read_only": ActionTier.READ_ONLY,
+    "guarded_write": ActionTier.BOUNDED_WRITE,
+    "remote_write": ActionTier.EXTERNAL_CALL,
+    "destructive": ActionTier.DESTRUCTIVE,
+}
+
+
 class Guardrails:
     """Main guardrails enforcement system."""
     
@@ -187,38 +209,24 @@ class Guardrails:
         self._memory_writes_this_hour: list[float] = []
     
     def classify_action_tier(self, action_type: str, action_details: dict[str, Any]) -> ActionTier:
-        """Classify an action into a permission tier."""
-        # Read operations
-        if action_type in ("read_file", "list_directory", "grep", "glob", "http_fetch_read"):
-            return ActionTier.READ_ONLY
-        
-        # Bounded writes
-        if action_type in ("write_file", "edit_file", "create_directory"):
-            path = action_details.get("path", "")
-            # Check if path is within safe bounds
-            if self._is_safe_path(path):
-                return ActionTier.BOUNDED_WRITE
-            return ActionTier.DESTRUCTIVE
-        
-        # External calls
-        if action_type in ("http_post", "send_email", "send_message", "api_call"):
-            return ActionTier.EXTERNAL_CALL
-        
-        # Destructive operations
-        if action_type in ("delete_file", "delete_directory", "run_shell", "execute_code"):
-            return ActionTier.DESTRUCTIVE
-        
-        # Identity changes
-        if action_type in ("update_config", "change_identity", "modify_guardrails"):
-            return ActionTier.IDENTITY_CHANGE
+        """Classify an action into a permission tier.
 
-        # Unknown action types FAIL CLOSED — classify as DESTRUCTIVE so they
-        # require approval. Returning BOUNDED_WRITE here (the old default)
-        # combined with allow_bounded_write_auto=True AUTO-APPROVED unknown
-        # actions, a fail-OPEN security gate. An unrecognized action is, by
-        # definition, not known to be bounded — treat it as requiring approval.
-        return ActionTier.DESTRUCTIVE  # Default: fail CLOSED for unknown actions
-    
+        The tier comes from the one risk table (hydra.policy.TOOL_RISK) through the
+        runtime tool the action maps to - this method keeps no risk list of its own.
+        """
+        if action_type in _IDENTITY_ACTIONS:
+            return ActionTier.IDENTITY_CHANGE
+        risk = tool_risk(_ACTION_TOOL.get(action_type, ""))
+        if risk is None:
+            # Unknown action types FAIL CLOSED: not known to be bounded, so they
+            # require approval. (Returning BOUNDED_WRITE here auto-approved unknown
+            # actions - a fail-OPEN security gate.)
+            return ActionTier.DESTRUCTIVE
+        tier = _RISK_TO_ACTION_TIER[risk.tier]
+        if tier is ActionTier.BOUNDED_WRITE and not self._is_safe_path(action_details.get("path", "")):
+            return ActionTier.DESTRUCTIVE
+        return tier
+
     def _is_safe_path(self, path: str) -> bool:
         """Check if a path is within safe bounds."""
         try:

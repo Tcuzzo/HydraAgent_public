@@ -2,7 +2,7 @@ schema: hydra.tool_contract.v1
 tool_id: shell
 name: Shell
 description: Run a local shell command from the workspace when policy allows it.
-risk: guarded_write
+risk: destructive
 executor: skills.bash:run
 input_schema:
   type: object
