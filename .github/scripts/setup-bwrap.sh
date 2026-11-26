@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Scope namespace permission to the CI-owned helper on restricted Ubuntu hosts.
+# Scope namespace permission to an administrator-owned helper on restricted Ubuntu hosts.
 set -euo pipefail
 
 sudo apt-get update
@@ -15,7 +15,9 @@ include <tunables/global>
 PROFILE
   sudo apparmor_parser -r /etc/apparmor.d/hydra-ci-bwrap
   export PATH="/usr/local/libexec/hydra-ci:$PATH"
-  echo /usr/local/libexec/hydra-ci >> "$GITHUB_PATH"
+  if [ -n "${GITHUB_PATH:-}" ]; then
+    printf '%s\n' /usr/local/libexec/hydra-ci >> "$GITHUB_PATH"
+  fi
 fi
 bwrap --unshare-net --ro-bind /usr /usr --ro-bind /bin /bin \
   --ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64 \

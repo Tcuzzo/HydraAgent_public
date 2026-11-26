@@ -25,15 +25,96 @@ from hydra.workbench_runs import append_record as append_run_record
 from hydra.workbench_runs import create_run
 
 
-RISKY_TOOLS = frozenset({"bash", "fs_write", "fs_edit", "memory_remember", "worker_job", "mcp_call"})
+@dataclass(frozen=True)
+class ToolRisk:
+    """One tool's risk, as the runtime enforces it.
 
-# Tools that mutate state — blocked in plan mode.  This is a broader list than
-# RISKY_TOOLS: plan mode enforces read-only discipline so even low-risk mutating
-# tools (apply_patch, etc.) are denied.
-MUTATING_TOOLS = frozenset({
-    "bash", "fs_write", "fs_edit", "apply_patch",
-    "memory_remember", "worker_job", "mcp_call",
-})
+    ``tier`` is the trust tier (read_only / guarded_write / remote_write /
+    destructive). ``gated`` means ApprovalPolicy.require() consults the operator
+    policy for this tool. ``mutating`` means plan mode blocks it. ``note`` names a
+    gap the runtime has today so a report can say it out loud instead of hiding it.
+    """
+
+    tier: str
+    gated: bool = False
+    mutating: bool = False
+    note: str = ""
+
+
+# THE one risk table. Keyed by RUNTIME tool name (``bash``, not the contract id
+# ``shell``). RISKY_TOOLS, MUTATING_TOOLS, hydra.guardrails, hydra.mission_gate and
+# the generated trust-tiers / danger-gates YAMLs all read it - nothing keeps a
+# second copy. To change what a tool may do, change it here and regenerate with
+# ``hydra capabilities risk --write``.
+TOOL_RISK: dict[str, ToolRisk] = {
+    "fs_read": ToolRisk("read_only"),
+    "list_directory": ToolRisk("read_only"),
+    "grep": ToolRisk("read_only"),
+    "glob": ToolRisk("read_only"),
+    "git_diff": ToolRisk("read_only"),
+    "http_fetch": ToolRisk("read_only"),
+    "web_extract": ToolRisk("read_only"),
+    "system_stats": ToolRisk("read_only"),
+    "skill_list": ToolRisk("read_only"),
+    "skill_search": ToolRisk("read_only"),
+    "skill_show": ToolRisk("read_only"),
+    "skill_route": ToolRisk("read_only"),
+    "skill_library.search": ToolRisk("read_only"),
+    "fs_write": ToolRisk("guarded_write", gated=True, mutating=True),
+    "fs_edit": ToolRisk("guarded_write", gated=True, mutating=True),
+    "apply_patch": ToolRisk(
+        "guarded_write", mutating=True,
+        note="mutates files but is not approval-gated; plan mode blocks it",
+    ),
+    "todo": ToolRisk(
+        "guarded_write",
+        note="guarded_write tier, but not approval-gated and not blocked by plan mode",
+    ),
+    "spawn_subagent": ToolRisk("guarded_write"),
+    "spawn_subagents": ToolRisk("guarded_write"),
+    "memory_remember": ToolRisk("guarded_write", gated=True, mutating=True),
+    "worker_job": ToolRisk("guarded_write", gated=True, mutating=True),
+    "mcp_call": ToolRisk("remote_write", gated=True, mutating=True),
+    "bash": ToolRisk("destructive", gated=True, mutating=True),
+}
+
+# Contract ids that differ from the runtime tool name the policy sees.
+CONTRACT_RUNTIME_NAME = {"shell": "bash"}
+
+# Trust tiers, least to most dangerous. Mission classes ride the same ladder.
+TIER_ORDER = ("read_only", "guarded_write", "remote_write", "destructive")
+MISSION_CLASS_TIER = {
+    "dangerous": "destructive",
+    "destructive_or_off_lan": "destructive",
+    "huge_batch": "remote_write",
+    "normal": "read_only",
+}
+
+# Gated tools: the operator approval policy is consulted for these.
+RISKY_TOOLS = frozenset(name for name, risk in TOOL_RISK.items() if risk.gated)
+
+# Tools that mutate state - blocked in plan mode. Broader than RISKY_TOOLS: plan
+# mode enforces read-only discipline, so even ungated mutating tools (apply_patch)
+# are denied.
+MUTATING_TOOLS = frozenset(name for name, risk in TOOL_RISK.items() if risk.mutating)
+
+
+def tool_risk(tool_name: str) -> ToolRisk | None:
+    """The one table's answer for a runtime tool name (None = not a known tool)."""
+    return TOOL_RISK.get(tool_name)
+
+
+def runtime_tool_name(tool_id: str) -> str:
+    """Map a declarative contract id to the runtime name the policy sees."""
+    return CONTRACT_RUNTIME_NAME.get(tool_id, tool_id)
+
+
+def mission_class_order() -> tuple[str, ...]:
+    """Mission classes, most dangerous first (stable within a tier)."""
+    ranked = sorted(MISSION_CLASS_TIER, key=lambda c: -TIER_ORDER.index(MISSION_CLASS_TIER[c]))
+    return tuple(ranked)
+
+
 POLICY_CHOICES = ("allow", "ask", "deny")
 
 
