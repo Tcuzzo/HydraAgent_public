@@ -67,7 +67,10 @@ def test_the_graders_chain_grants_no_yolo(world) -> None:
     #    obfuscated path so no literal name appears in the command.
     state = json.dumps(_signed_yolo_state(secret))
     script = f"open('au'+'th/unlock'+'_state.json','w').write({state!r})"
-    tools["bash"].invoke(command=f"python3 -c {json.dumps(script)}")
+    # Name the interpreter the way this platform names it: python3 on POSIX,
+    # python on Windows, where python3 is not on PATH.
+    python = "python" if sys.platform.startswith("win") else "python3"
+    tools["bash"].invoke(command=f"{python} -c {json.dumps(script)}")
 
     # The file exists, but a file is never authority.
     assert (auth_dir / "unlock_state.json").exists()
