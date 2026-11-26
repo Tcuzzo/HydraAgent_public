@@ -44,8 +44,10 @@ _IDENT = {
 
 
 def _git(cwd, *args):
+    # Keep fixture repos quiescent: detached maintenance creates transient files
+    # inside .git, which must not race the sandbox's byte-for-byte assertions.
     return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
+        ["git", "-c", "maintenance.auto=false", *args], cwd=cwd, check=True, capture_output=True, text=True,
         env={**os.environ, **_IDENT},
     ).stdout.strip()
 
