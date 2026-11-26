@@ -74,22 +74,9 @@ def assemble_context(
     if query is not None and not isinstance(query, str):
         raise ContextEngineError("query must be a string or None")
 
-    repo_root_path = Path(repo_root).expanduser().resolve()
-    if not repo_root_path.is_dir():
-        raise ContextEngineError(f"repo_root is not a directory: {repo_root_path}")
-    try:
-        memory_root_path = (
-            Path(memory_root).expanduser().resolve()
-            if memory_root
-            else confined_source(DEFAULT_MEMORY_ROOT, DEFAULT_MEMORY_ROOT.parent)
-        )
-        evidence_root_path = (
-            Path(evidence_root).expanduser().resolve()
-            if evidence_root
-            else confined_source(repo_root_path / "evidence", repo_root_path)
-        )
-    except ValueError as exc:
-        raise ContextEngineError("context source escapes its selected root") from exc
+    repo_root_path, memory_root_path, evidence_root_path = _context_source_roots(
+        repo_root, memory_root, evidence_root
+    )
 
     query_tokens = _query_tokens(query) if query else []
 
@@ -140,6 +127,31 @@ def assemble_context(
         "proof": proof,
         "policy": "priority: lessons → clusters → promotions; query-rerank within each bucket if provided; hard byte budget; read-only",
     }
+
+
+def _context_source_roots(
+    repo_root: str | Path,
+    memory_root: str | Path | None,
+    evidence_root: str | Path | None,
+) -> tuple[Path, Path, Path]:
+    """Resolve chosen roots while confining automatic context sources."""
+    repo_root_path = Path(repo_root).expanduser().resolve()
+    if not repo_root_path.is_dir():
+        raise ContextEngineError(f"repo_root is not a directory: {repo_root_path}")
+    try:
+        memory_root_path = (
+            Path(memory_root).expanduser().resolve()
+            if memory_root
+            else confined_source(DEFAULT_MEMORY_ROOT, DEFAULT_MEMORY_ROOT.parent)
+        )
+        evidence_root_path = (
+            Path(evidence_root).expanduser().resolve()
+            if evidence_root
+            else confined_source(repo_root_path / "evidence", repo_root_path)
+        )
+    except ValueError as exc:
+        raise ContextEngineError("context source escapes its selected root") from exc
+    return repo_root_path, memory_root_path, evidence_root_path
 
 
 def render_text(report: dict[str, Any]) -> str:

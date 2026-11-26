@@ -28,6 +28,28 @@ class EnvironmentError(Exception):
     """Operator-facing environment lifecycle failure."""
 
 
+def _create_session_workspace(source: Path, session_path: Path) -> Path:
+    """Copy one new session transactionally, preserving only internal links."""
+    workspace = session_path / "workspace"
+    session_path.mkdir(parents=True)
+    try:
+        shutil.copytree(
+            source,
+            workspace,
+            ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "node_modules"),
+            symlinks=True,
+        )
+        _relocate_session_links(source, workspace)
+    except (OSError, RuntimeError, shutil.Error, EnvironmentError) as exc:
+        # This directory was created by this invocation. Never remove the
+        # environment root, a pre-existing session, or a symlink's target.
+        shutil.rmtree(session_path)
+        if isinstance(exc, EnvironmentError):
+            raise
+        raise EnvironmentError("could not copy source repo into a session workspace") from exc
+    return workspace
+
+
 def create_session(
     *,
     source_repo: str | Path,
@@ -46,23 +68,7 @@ def create_session(
     while session_path.exists():
         suffix += 1
         session_path = root / f"{session_id}-{suffix}"
-    workspace = session_path / "workspace"
-    session_path.mkdir(parents=True)
-    try:
-        shutil.copytree(
-            source,
-            workspace,
-            ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "node_modules"),
-            symlinks=True,
-        )
-        _relocate_session_links(source, workspace)
-    except (OSError, RuntimeError, shutil.Error, EnvironmentError) as exc:
-        # This directory was created by this invocation. Never remove the
-        # environment root, a pre-existing session, or a symlink's target.
-        shutil.rmtree(session_path)
-        if isinstance(exc, EnvironmentError):
-            raise
-        raise EnvironmentError("could not copy source repo into a session workspace") from exc
+    workspace = _create_session_workspace(source, session_path)
     session = {
         "schema": SESSION_SCHEMA,
         "session_id": session_path.name,

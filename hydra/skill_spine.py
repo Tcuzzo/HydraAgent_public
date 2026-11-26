@@ -164,6 +164,11 @@ def skills_root(root: str | Path | None = None) -> Path:
 def skill_roots(root: str | Path | None = None) -> list[Path]:
     if root is not None or os.environ.get("HYDRA_SKILLS_ROOT"):
         return [skills_root(root)]
+    return _bundled_skill_roots()
+
+
+def _bundled_skill_roots() -> list[Path]:
+    """Select package-owned catalogs once, preserving their discovery order."""
     roots: list[Path] = []
     for candidate in (DEFAULT_SKILLS_ROOT, DEFAULT_REPO_SKILLS_ROOT, DEFAULT_HYDRA_SKILLS_ROOT):
         resolved = candidate.expanduser().resolve()
@@ -185,14 +190,22 @@ def iter_skill_paths(root: str | Path, *, boundary: str | Path | None = None) ->
     if not base.is_relative_to(scope) or not base.is_dir():
         return
     for path in sorted(base.rglob("SKILL.md")):
-        if path.parent == base or any(part.startswith(".") for part in path.relative_to(base).parts):
-            continue
-        try:
-            resolved = path.resolve(strict=True)
-        except (OSError, RuntimeError):
-            continue
-        if resolved.is_relative_to(base) and resolved.is_file():
+        resolved = _visible_skill_source(path, base)
+        if resolved is not None:
             yield resolved
+
+
+def _visible_skill_source(path: Path, base: Path) -> Path | None:
+    """Validate one discovered entry without following hidden or external files."""
+    if path.parent == base or any(part.startswith(".") for part in path.relative_to(base).parts):
+        return None
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if resolved.is_relative_to(base) and resolved.is_file():
+        return resolved
+    return None
 
 
 def list_skill_records(root: str | Path | None = None) -> list[SkillRecord]:

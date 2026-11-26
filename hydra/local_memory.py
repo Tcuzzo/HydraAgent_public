@@ -7,7 +7,7 @@ does not read credential lanes; local files are the source of truth.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 import os
 import re
 from typing import Any
@@ -76,10 +76,11 @@ def _resolve_workspace_root(workspace_root: str | Path | None) -> Path | None:
 
 
 def _claude_project_slug(workspace_root: Path) -> str:
-    slug = str(workspace_root).replace("/", "-")
-    if isinstance(workspace_root, PureWindowsPath):
-        slug = slug.replace("\\", "-").replace(":", "-")
-    return slug
+    """Encode separators and drive syntax while preserving POSIX name characters."""
+    path = workspace_root.as_posix()
+    drive_length = len(workspace_root.drive)
+    drive = path[:drive_length].replace(":", "-")
+    return (drive + path[drive_length:]).replace("/", "-")
 
 
 def _claude_project_memory_candidates(workspace_root: Path | None) -> list[Path]:
@@ -93,6 +94,11 @@ def _claude_project_memory_candidates(workspace_root: Path | None) -> list[Path]
         / "memory"
     )
     memory_dir = confined_source(memory_dir, Path.home())
+    return _indexed_memory_files(memory_dir)
+
+
+def _indexed_memory_files(memory_dir: Path) -> list[Path]:
+    """Return a confined Markdown index followed by its sorted companion files."""
     index_path = confined_source(memory_dir / "MEMORY.md", memory_dir)
     if not index_path.is_file():
         return []

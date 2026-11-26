@@ -43,13 +43,7 @@ def cluster_failures(evidence_root: str | Path) -> dict[str, Any]:
         raise FailureClusterError(f"evidence root is not a directory: {root}")
 
     eval_results: list[Path] = sorted(root.rglob("results.tsv"))
-    try:
-        ops_root = confined_source(root / "ops", root)
-    except ValueError as exc:
-        raise FailureClusterError("operations evidence escapes its selected root") from exc
-    ops_bundles: list[Path] = sorted(
-        p for p in ops_root.iterdir() if p.is_dir()
-    ) if ops_root.is_dir() else []
+    ops_bundles = _ops_bundle_paths(root)
 
     raw_findings: list[dict[str, Any]] = []
     raw_findings.extend(_scan_eval_failures(eval_results, root))
@@ -91,6 +85,17 @@ def cluster_failures(evidence_root: str | Path) -> dict[str, Any]:
         "proof": proof,
         "policy": "read-only scan over evidence; never writes to source files",
     }
+
+
+def _ops_bundle_paths(root: Path) -> list[Path]:
+    """Select operations bundles inside the evidence root in stable order."""
+    try:
+        ops_root = confined_source(root / "ops", root)
+    except ValueError as exc:
+        raise FailureClusterError("operations evidence escapes its selected root") from exc
+    return sorted(
+        p for p in ops_root.iterdir() if p.is_dir()
+    ) if ops_root.is_dir() else []
 
 
 def render_text(report: dict[str, Any]) -> str:

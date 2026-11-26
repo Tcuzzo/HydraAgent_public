@@ -4,7 +4,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from hydra.source_boundary import confined_source
 
@@ -65,19 +65,25 @@ class CapabilityCard:
 
 def load_cards(root: Path) -> list[CapabilityCard]:
     root = root.expanduser().resolve()
-    if not root.is_dir():
-        raise CapabilityCardError(f"capability directory not found: {root}")
     cards: list[CapabilityCard] = []
-    for path in sorted(root.glob("*.y*ml")):
-        try:
-            path = confined_source(path, root)
-        except ValueError as exc:
-            raise CapabilityCardError("capability source escapes its selected root") from exc
+    for path in _card_sources(root):
         for raw in _parse_simple_yaml_list(path):
             cards.append(_card_from_dict(raw, path))
     if not cards:
         raise CapabilityCardError(f"no capability cards found in {root}")
     return cards
+
+
+def _card_sources(root: Path) -> Iterator[Path]:
+    """Enumerate a selected catalog in order, confining each source before use."""
+    if not root.is_dir():
+        raise CapabilityCardError(f"capability directory not found: {root}")
+    for path in sorted(root.glob("*.y*ml")):
+        try:
+            path = confined_source(path, root)
+        except ValueError as exc:
+            raise CapabilityCardError("capability source escapes its selected root") from exc
+        yield path
 
 
 def route_cards(prompt: str, cards: list[CapabilityCard]) -> list[CapabilityCard]:

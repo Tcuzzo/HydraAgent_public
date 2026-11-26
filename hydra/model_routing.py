@@ -329,6 +329,14 @@ class RoutingConfigError(RuntimeError):
 _CACHE: dict[str, ModelRouting] = {}
 
 
+def _read_routing_config(path: Path) -> dict[str, Any]:
+    """Read YAML and enforce the mapping contract before typed construction."""
+    data = yaml.safe_load(path.read_text()) or {}
+    if not isinstance(data, dict):
+        raise ValueError("model_routing.yaml top-level must be a mapping")
+    return data
+
+
 def load_routing(path: str | Path | None = None, *, refresh: bool = False) -> ModelRouting:
     """Load + cache the model routing config.
 
@@ -342,10 +350,7 @@ def load_routing(path: str | Path | None = None, *, refresh: bool = False) -> Mo
             resolved = confined_source(resolved, Path(__file__).resolve().parent)
         if not refresh and key in _CACHE:
             return _CACHE[key]
-        text = resolved.read_text()
-        data = yaml.safe_load(text) or {}
-        if not isinstance(data, dict):
-            raise ValueError("model_routing.yaml top-level must be a mapping")
+        data = _read_routing_config(resolved)
         mr = _build(data, source_path=key)
     except Exception as exc:  # missing file, malformed YAML, bad ids — fail loudly.
         raise RoutingConfigError(

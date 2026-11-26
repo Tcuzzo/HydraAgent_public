@@ -23,21 +23,9 @@ def search_skill_library(
     """Return compact skill hits from the materialized library ("schemes")."""
     query = str(query or "").strip()
     limit = max(1, min(int(limit), 25))
-    base = (root / skills_root).resolve()
-    # Default workspace catalogs cannot redirect discovery to an external tree.
-    # A non-default library root is an explicit operator selection.
-    boundary = root.resolve() if skills_root in {"hydra/schemes", "hydra/skills"} else base
+    base, boundary = _select_skill_catalog(root, skills_root)
     if not base.is_relative_to(boundary):
         return _report(query=query, skills_root=base, hits=[], total_scanned=0)
-    # Safety: if the requested root is missing, fall back to the legacy name so a
-    # stale checkout never "loses" the library (renamed hydra/skills -> hydra/schemes).
-    if not base.is_dir():
-        for alt in ("hydra/schemes", "hydra/skills"):
-            cand = (root / alt).resolve()
-            if cand.is_relative_to(root.resolve()) and cand.is_dir():
-                base = cand
-                boundary = root.resolve()
-                break
     if not query:
         return _report(query=query, skills_root=base, hits=[], total_scanned=0)
     if not base.is_dir():
@@ -64,6 +52,25 @@ def search_skill_library(
 
     hits = [hit for _score, hit in sorted(scored, key=lambda item: (-item[0], item[1]["path"]))[:limit]]
     return _report(query=query, skills_root=base, hits=hits, total_scanned=total)
+
+
+def _select_skill_catalog(root: Path, skills_root: str) -> tuple[Path, Path]:
+    """Select a catalog and its owner, preserving the legacy-name fallback."""
+    base = (root / skills_root).resolve()
+    # Default workspace catalogs cannot redirect discovery to an external tree.
+    # A non-default library root is an explicit operator selection.
+    boundary = root.resolve() if skills_root in {"hydra/schemes", "hydra/skills"} else base
+    if not base.is_relative_to(boundary):
+        return base, boundary
+    # A missing requested root may fall back; an escaping default never does.
+    if not base.is_dir():
+        for alt in ("hydra/schemes", "hydra/skills"):
+            cand = (root / alt).resolve()
+            if cand.is_relative_to(root.resolve()) and cand.is_dir():
+                base = cand
+                boundary = root.resolve()
+                break
+    return base, boundary
 
 
 def _report(*, query: str, skills_root: Path, hits: list[dict[str, Any]], total_scanned: int) -> dict[str, Any]:
