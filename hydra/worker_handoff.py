@@ -65,7 +65,7 @@ def run_planner_worker_handoff(
 
     if policy is not None:
         job_id = planner_packet.get("job_id", handoff_id)
-        policy.require("worker_job", {"job_id": job_id})
+        policy.require("worker_job", {"job_id": job_id, "packet": planner_packet})
 
     schema = planner_packet.get("schema")
     if schema == WORKER_JOB_SCHEMA:

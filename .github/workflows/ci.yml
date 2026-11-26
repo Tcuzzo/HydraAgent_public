@@ -81,29 +81,41 @@ jobs:
           python -c "import hydra.cli.cmd_ask, hydra.cli.cmd_chat, hydra.loop, hydra.proc"
       - name: Install and verify Linux sandbox
         if: runner.os == 'Linux'
-        # Give only this CI-owned helper namespace permission on Ubuntu.
-        # Global AppArmor/userns restrictions remain enabled.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap
-          if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = 1 ]; then
-            sudo install -D -m 0755 /usr/bin/bwrap /usr/local/libexec/hydra-ci/bwrap
-            sudo tee /etc/apparmor.d/hydra-ci-bwrap >/dev/null <<'PROFILE'
-          abi <abi/4.0>,
-          include <tunables/global>
-          /usr/local/libexec/hydra-ci/bwrap flags=(default_allow) {
-            userns,
-          }
-          PROFILE
-            sudo apparmor_parser -r /etc/apparmor.d/hydra-ci-bwrap
-            export PATH="/usr/local/libexec/hydra-ci:$PATH"
-            echo /usr/local/libexec/hydra-ci >> "$GITHUB_PATH"
-          fi
-          bwrap --unshare-net --ro-bind /usr /usr --ro-bind /bin /bin \
-            --ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64 \
-            --proc /proc --dev /dev --die-with-parent --new-session /usr/bin/true
-          bwrap --version
+        run: bash .github/scripts/setup-bwrap.sh
       - name: tests
         run: |
           pip install -e ".[test,mcp]" -c constraints.txt
           pytest -q
+
+  installed-package:
+    name: installed package (Ubuntu 24.04 / py${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install and verify sandbox
+        run: bash .github/scripts/setup-bwrap.sh
+      - name: Build and install a wheel into a fresh environment
+        run: |
+          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/wheels" .
+          python -m venv "$RUNNER_TEMP/hydra-installed"
+          "$RUNNER_TEMP/hydra-installed/bin/python" -m pip install -c constraints.txt "$RUNNER_TEMP"/wheels/*.whl
+          "$RUNNER_TEMP/hydra-installed/bin/python" -m pip check
+      - name: Verify installed CLI end to end outside the checkout
+        run: |
+          "$RUNNER_TEMP/hydra-installed/bin/python" tools/verify_install.py \
+            --require-sandbox --output "$RUNNER_TEMP/install-verification.json"
+      - name: Preserve installation receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-verification-py${{ matrix.python }}
+          path: ${{ runner.temp }}/install-verification.json
+          if-no-files-found: warn
