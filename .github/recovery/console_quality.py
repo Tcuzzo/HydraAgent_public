@@ -182,14 +182,14 @@ def complexities(text):
     return found
 
 def quality(root, output, label):
-    coverage = Coverage(data_file=str(output / label / ".coverage"),
+    analyzer = Coverage(data_file=str(output / label / ".coverage"),
                         config_file=str(output / label / "coverage.ini"))
-    coverage.load()
+    analyzer.load()
     found = {}
     for relative in SOURCE:
         path = root / relative
         text = path.read_text()
-        _filename, statement_lines, excluded_lines, missing_lines, _formatted = coverage.analysis2(str(path))
+        _filename, statement_lines, excluded_lines, missing_lines, _formatted = analyzer.analysis2(str(path))
         cc = complexities(text)
         statements = set(statement_lines)
         executed = statements - set(missing_lines)
@@ -216,7 +216,9 @@ def compare_quality(baseline, candidate, output):
         old = before.get(key)
         if old and row["ast"] == old["ast"]:
             continue
-        result = {"function": key, "before": old, "after": row}
+        result = {"function": key, "before": old, "after": row,
+                  "classification": "inherited_extraction" if key.endswith("EliteTUI._print_terminal_welcome")
+                                    else ("existing_changed" if old else "new_helper")}
         if old:
             result["gate"] = "PASS" if row["cc"] <= old["cc"] and row["crap"] <= old["crap"] + 1e-9 else "WORSENED"
         else:
@@ -278,7 +280,8 @@ def mutant(number, candidate, output):
                              and not cases["errors"] and not cases["skips"]
                              and not any(kind in text for text in evidence.values() for kind in infrastructure)
                              and all(any(name.startswith(prefix) and
-                                         re.search(r"(?m)(?:AssertionError|^E\s+assert\b|^assert\b)", evidence[name])
+                                         (re.search(r"(?m)^E\s+(?:AssertionError\b|assert\b)", cases["failure_tracebacks"][name]) or
+                                          re.match(r"(?:AssertionError\b|assert\b)", cases["failure_messages"][name]))
                                          for name in cases["failures"])
                                      for prefix in prefixes[number]))
         killed["junit"] = cases
