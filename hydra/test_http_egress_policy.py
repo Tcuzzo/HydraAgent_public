@@ -17,7 +17,7 @@ What this file pins:
      the refusal names the blocked address class;
   2. a redirect to such a target is refused even when the allow-list names it
      (the allow-list must not be able to widen past the guard);
-  3. the operator's own loopback service stays reachable through the bound
+  3. the operator's explicitly configured loopback service stays reachable through the bound
      tool (the guard is not a blanket ban), and the strict posture still
      refuses it for the paths that need strict;
   4. a private LAN address is permitted only under the permissive posture;
@@ -150,10 +150,10 @@ def test_redirect_to_a_metadata_address_is_refused(stub_server, monkeypatch):
 def test_loopback_stays_reachable_for_the_operator(stub_server, monkeypatch):
     """The guard is not a blanket ban: the operator's own service still works.
 
-    This is the capability the product has today. A fix that refuses it would
-    be a regression dressed as a guard.
+    The private service is explicitly configured by the operator; automatic
+    discovery must not be needed for this positive control.
     """
-    monkeypatch.delenv("HYDRA_HTTP_FETCH_ALLOWED_HOSTS", raising=False)
+    monkeypatch.setenv("HYDRA_HTTP_FETCH_ALLOWED_HOSTS", "127.0.0.1")
     out = _http_fetch_tool().invoke(url=f"{stub_server}/page.html", timeout=5)
     assert out["ok"] is True and out["status"] == 200
     assert "Local Service" in out["text"]

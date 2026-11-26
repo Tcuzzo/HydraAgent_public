@@ -6,7 +6,8 @@ Constraints:
   - The host must also pass the egress address guard: link-local (where the
     cloud metadata service answers with the host's credentials), multicast,
     unspecified and reserved addresses are refused under every allow-list.
-    The operator's own loopback and LAN addresses are reachable.
+    Loopback and LAN access also requires the caller's explicit private-access
+    posture. The public CLI enables it only for an operator-configured host list.
   - Hard timeout (default 15s).
   - Max response size (default 256 KiB). Anything larger raises.
 
@@ -45,6 +46,8 @@ def run(
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     max_bytes: int = DEFAULT_MAX_BYTES,
     user_agent: str = DEFAULT_USER_AGENT,
+    *,
+    allow_private: bool = True,
 ) -> dict:
     if not allowed_hosts:
         raise SkillError("allowed_hosts is empty; refusing fetch")
@@ -61,7 +64,7 @@ def run(
         # the cloud metadata service answers with the host's credentials),
         # multicast, unspecified or reserved.
         try:
-            guard_host(host, allow_private=True)
+            guard_host(host, allow_private=allow_private)
         except EgressDenied as exc:
             raise SkillError(str(exc)) from exc
 

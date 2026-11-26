@@ -146,4 +146,5 @@ Model ids, key signup, and the local decision models are in [Quickstart](QUICKST
 | Platform differences | [Platform notes](docs/PLATFORM-NOTES.md) |
 | Full-stack skills | [Full-stack workflow](docs/FULLSTACK-WORKFLOW.md) |
 | Report a vulnerability | [Security policy](SECURITY.md) |
+| Separate public Hydra from private data | [Privacy boundaries](docs/PRIVACY.md) |
 | Origins and third-party notices | [PROVENANCE.md](PROVENANCE.md) · [NOTICE.md](NOTICE.md) |

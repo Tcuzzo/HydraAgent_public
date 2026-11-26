@@ -44,7 +44,7 @@ def _fetch_tool():
 
 
 def test_bound_http_fetch_reads_a_page_with_just_a_url(server, monkeypatch):
-    monkeypatch.delenv("HYDRA_HTTP_FETCH_ALLOWED_HOSTS", raising=False)
+    monkeypatch.setenv("HYDRA_HTTP_FETCH_ALLOWED_HOSTS", "127.0.0.1")
     out = _fetch_tool().invoke(url=server)
     assert out["ok"] is True and out["status"] == 200
     assert out["url"] == server
@@ -52,7 +52,7 @@ def test_bound_http_fetch_reads_a_page_with_just_a_url(server, monkeypatch):
 
 
 def test_bound_http_fetch_accepts_explicit_get_and_defaults(server, monkeypatch):
-    monkeypatch.delenv("HYDRA_HTTP_FETCH_ALLOWED_HOSTS", raising=False)
+    monkeypatch.setenv("HYDRA_HTTP_FETCH_ALLOWED_HOSTS", "127.0.0.1")
     out = _fetch_tool().invoke(url=server, method="get", headers={"Accept": "text/html"}, timeout=5, max_bytes=100000)
     assert out["ok"] is True and "Python 9.9" in out["text"]
 
@@ -73,7 +73,7 @@ def test_operator_allow_list_still_binds_when_set(server, monkeypatch):
 def test_html_comes_back_as_readable_text_not_markup(server, monkeypatch):
     """84 KB of raw HTML pushed the question out of a local model's context;
     the tool hands back the page's readable text (raw=True keeps markup)."""
-    monkeypatch.delenv("HYDRA_HTTP_FETCH_ALLOWED_HOSTS", raising=False)
+    monkeypatch.setenv("HYDRA_HTTP_FETCH_ALLOWED_HOSTS", "127.0.0.1")
     out = _fetch_tool().invoke(url=server)
     assert "What's New In Python 9.9" in out["text"]
     assert "<h1>" not in out["text"] and "body" not in out

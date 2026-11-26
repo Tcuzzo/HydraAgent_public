@@ -33,6 +33,7 @@ from hydra.local_memory import (
     MEMORY_CANDIDATES,
     LocalMemoryResult,
     _claude_project_memory_candidates,
+    _memory_source,
     _is_sensitive,
     _read_excerpt,
     _recent_daily_memory,
@@ -216,7 +217,7 @@ def _collect_chunks(
     seen: set[Path] = set()
     collected: list[tuple[str, str]] = []
     for path in _candidate_paths(resolved, claude_candidates):
-        path = path.resolve()
+        path = _memory_source(path, resolved, claude_candidates)
         if path in seen or not path.is_file():
             continue
         seen.add(path)
@@ -245,9 +246,9 @@ def resolve_corpus_sources(
     * ``resolved`` = ``_resolve_root(root)`` (defaults to ``~/.hydra-memory``);
     * ``ws`` = the resolved workspace root, defaulting to
       :data:`DEFAULT_WORKSPACE_ROOT` (the live repo root cmd_chat/operator pass)
-      so the ``~/.claude/projects/<slug>/memory`` corpus is always discovered —
-      this is the drift fix: a ``None`` workspace_root no longer silently drops
-      the 25 ``.claude`` project/feedback memories + MEMORY.md;
+      so explicitly enabled Claude imports resolve the same workspace for
+      live recall and migration; external imports require
+      ``HYDRA_IMPORT_CLAUDE_MEMORY=1``;
     * ``claude`` = ``_claude_project_memory_candidates(ws)``.
 
     Returns ``(resolved, ws, claude)``. Both live recall and the migration

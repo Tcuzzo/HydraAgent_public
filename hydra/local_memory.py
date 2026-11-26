@@ -8,8 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import os
 import re
 from typing import Any
+
+from hydra.source_boundary import confined_source
 
 
 DEFAULT_MEMORY_ROOT = Path.home() / ".hydra-memory"
@@ -63,7 +66,7 @@ class LocalMemoryResult:
 
 
 def _resolve_root(root: str | Path | None) -> Path:
-    return Path(root).expanduser().resolve() if root else DEFAULT_MEMORY_ROOT
+    return Path(root).expanduser().resolve() if root else confined_source(DEFAULT_MEMORY_ROOT, DEFAULT_MEMORY_ROOT.parent)
 
 
 def _resolve_workspace_root(workspace_root: str | Path | None) -> Path | None:
@@ -77,7 +80,7 @@ def _claude_project_slug(workspace_root: Path) -> str:
 
 
 def _claude_project_memory_candidates(workspace_root: Path | None) -> list[Path]:
-    if workspace_root is None:
+    if workspace_root is None or os.environ.get("HYDRA_IMPORT_CLAUDE_MEMORY") != "1":
         return []
     memory_dir = (
         Path.home()
@@ -86,18 +89,25 @@ def _claude_project_memory_candidates(workspace_root: Path | None) -> list[Path]
         / _claude_project_slug(workspace_root)
         / "memory"
     )
-    index_path = memory_dir / "MEMORY.md"
+    memory_dir = confined_source(memory_dir, Path.home())
+    index_path = confined_source(memory_dir / "MEMORY.md", memory_dir)
     if not index_path.is_file():
         return []
     paths = [index_path]
     paths.extend(
         sorted(
-            p
+            confined_source(p, memory_dir)
             for p in memory_dir.glob("*.md")
             if p.is_file() and p.name != "MEMORY.md"
         )
     )
     return paths
+
+
+def _memory_source(path: Path, root: Path, claude_candidates: list[Path]) -> Path:
+    """Confine ordinary memory and explicitly enabled Claude imports separately."""
+    owner = path.parent if path in claude_candidates else root
+    return confined_source(path, owner)
 
 
 def _safe_relative(path: Path, root: Path) -> str:
@@ -141,7 +151,7 @@ def _read_excerpt(path: Path, *, max_chars: int) -> tuple[str, str | None]:
 
 
 def _recent_daily_memory(root: Path, *, limit: int = 5) -> list[Path]:
-    memory_dir = root / "workspace" / "memory"
+    memory_dir = confined_source(root / "workspace" / "memory", root)
     if not memory_dir.is_dir():
         return []
     paths = [
@@ -213,7 +223,7 @@ def build_local_memory_context(
     remaining = max_chars - sum(len(c) for c in chunks)
 
     for path in candidate_paths:
-        path = path.resolve()
+        path = _memory_source(path, resolved, claude_candidates)
         if path in seen or not path.is_file():
             continue
         seen.add(path)

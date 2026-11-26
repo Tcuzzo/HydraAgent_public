@@ -4,16 +4,19 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from hydra.inter_agent import INTER_AGENT_PROTOCOL_PROMPT
+from hydra.source_boundary import confined_source
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_SKILLS_ROOT = Path(os.path.expanduser("~/.codex/superpowers/skills"))
 DEFAULT_REPO_SKILLS_ROOT = REPO_ROOT / "skills"
+# Public Hydra imports only its own catalogs unless the operator selects a root.
+DEFAULT_SKILLS_ROOT = DEFAULT_REPO_SKILLS_ROOT
 # The skill library lives under "schemes" (formerly "skills"). Fall back to the old
 # name if a checkout still has hydra/skills, so existing skills are never lost.
 DEFAULT_HYDRA_SKILLS_ROOT = (
@@ -164,19 +167,38 @@ def skill_roots(root: str | Path | None = None) -> list[Path]:
     roots: list[Path] = []
     for candidate in (DEFAULT_SKILLS_ROOT, DEFAULT_REPO_SKILLS_ROOT, DEFAULT_HYDRA_SKILLS_ROOT):
         resolved = candidate.expanduser().resolve()
-        if resolved not in roots:
+        if resolved.is_relative_to(REPO_ROOT) and resolved not in roots:
             roots.append(resolved)
     return roots
+
+
+def iter_skill_paths(root: str | Path, *, boundary: str | Path | None = None) -> Iterator[Path]:
+    """Yield visible skill files that resolve inside the selected catalog.
+
+    A caller discovering a catalog under a workspace supplies that workspace as
+    ``boundary`` so the catalog directory itself cannot be an external link.
+    An explicitly selected catalog may live anywhere; its descendants still
+    cannot import files from a different root through symlinks.
+    """
+    base = Path(root).expanduser().resolve()
+    scope = Path(boundary).expanduser().resolve() if boundary is not None else base
+    if not base.is_relative_to(scope) or not base.is_dir():
+        return
+    for path in sorted(base.rglob("SKILL.md")):
+        if path.parent == base or any(part.startswith(".") for part in path.relative_to(base).parts):
+            continue
+        try:
+            resolved = path.resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if resolved.is_relative_to(base) and resolved.is_file():
+            yield resolved
 
 
 def list_skill_records(root: str | Path | None = None) -> list[SkillRecord]:
     records: list[SkillRecord] = []
     for base in skill_roots(root):
-        if not base.is_dir():
-            continue
-        for path in sorted(base.rglob("SKILL.md")):
-            if path.parent == base or any(part.startswith(".") for part in path.relative_to(base).parts):
-                continue
+        for path in iter_skill_paths(base):
             records.append(_parse_skill(path))
     return records
 
@@ -360,8 +382,8 @@ def render_route_json(prompt: str, root: str | Path | None = None) -> str:
 
 
 def route_capability_cards(prompt: str, root: str | Path | None = None) -> list[Any]:
-    base = Path(root) if root is not None else DEFAULT_CAPABILITIES_ROOT
     try:
+        base = Path(root) if root is not None else confined_source(DEFAULT_CAPABILITIES_ROOT, REPO_ROOT)
         from hydra.capability_cards import load_cards, route_cards
 
         return route_cards(prompt, load_cards(base))

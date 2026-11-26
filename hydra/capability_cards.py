@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from hydra.source_boundary import confined_source
+
 
 SCHEMA = "hydra.capability_cards.v1"
 REQUIRED_FIELDS = (
@@ -62,10 +64,15 @@ class CapabilityCard:
 
 
 def load_cards(root: Path) -> list[CapabilityCard]:
+    root = root.expanduser().resolve()
     if not root.is_dir():
         raise CapabilityCardError(f"capability directory not found: {root}")
     cards: list[CapabilityCard] = []
     for path in sorted(root.glob("*.y*ml")):
+        try:
+            path = confined_source(path, root)
+        except ValueError as exc:
+            raise CapabilityCardError("capability source escapes its selected root") from exc
         for raw in _parse_simple_yaml_list(path):
             cards.append(_card_from_dict(raw, path))
     if not cards:

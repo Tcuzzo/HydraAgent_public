@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from hydra.memory_kernel import assemble_memory_briefing
+from hydra.source_boundary import confined_source
 
 
 WORKER_MEMORY_CONTEXT_SCHEMA = "hydra.worker_memory_context.v1"
@@ -47,7 +48,7 @@ def build_worker_memory_context(
 def _repo_conventions(repo: Path) -> list[dict[str, str]]:
     conventions = []
     for rel in (".hydraAgent/PRINCIPLES.md", ".hydraAgent/PHILOSOPHY.md", "docs/HYDRA_BUILD_LEDGER.md"):
-        path = repo / rel
+        path = confined_source(repo / rel, repo)
         if path.is_file():
             conventions.append({"path": rel, "summary": _first_meaningful_line(path)})
     return conventions

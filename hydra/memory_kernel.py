@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from hydra.lessons import LESSON_RELATIVE_PATH
+from hydra.local_memory import _resolve_root
 from hydra.wiki_memory import WIKI_ROOT
+from hydra.source_boundary import confined_source
 
 
 INDEX_SCHEMA = "hydra.memory_kernel.index.v1"
@@ -22,7 +24,7 @@ TOKEN_RE = re.compile(r"[A-Za-z0-9_§\.\-]{2,}")
 
 def build_memory_index(*, repo_root: Path, memory_root: Path | None = None) -> dict[str, Any]:
     repo = Path(repo_root).expanduser().resolve()
-    memory = Path(memory_root).expanduser().resolve() if memory_root else Path.home() / ".hydra-memory"
+    memory = _resolve_root(memory_root)
     records: list[dict[str, Any]] = []
     records.extend(_lesson_records(memory, repo))
     records.extend(_wiki_records(repo))
@@ -175,7 +177,7 @@ def assemble_memory_briefing(
 
 
 def _lesson_records(memory_root: Path, repo_root: Path) -> list[dict[str, Any]]:
-    path = memory_root / LESSON_RELATIVE_PATH
+    path = confined_source(memory_root / LESSON_RELATIVE_PATH, memory_root)
     if not path.is_file():
         return []
     text = _read_text(path)
@@ -188,13 +190,14 @@ def _lesson_records(memory_root: Path, repo_root: Path) -> list[dict[str, Any]]:
 
 
 def _wiki_records(repo_root: Path) -> list[dict[str, Any]]:
-    root = repo_root / WIKI_ROOT
+    root = confined_source(repo_root / WIKI_ROOT, repo_root)
     if not root.is_dir():
         return []
     records = []
     for path in sorted(root.rglob("*.md")):
         if path.name == "index.md":
             continue
+        path = confined_source(path, root)
         text = _read_text(path)
         title = _first_heading(text) or path.stem
         records.append(_record("wiki", title, _redact(text), path, repo_root))
@@ -202,11 +205,12 @@ def _wiki_records(repo_root: Path) -> list[dict[str, Any]]:
 
 
 def _mission_evidence_records(repo_root: Path) -> list[dict[str, Any]]:
-    root = repo_root / "evidence" / "missions"
+    root = confined_source(repo_root / "evidence" / "missions", repo_root)
     if not root.is_dir():
         return []
     records = []
     for path in sorted(root.glob("*/mission_loop.json")):
+        path = confined_source(path, root)
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -219,11 +223,12 @@ def _mission_evidence_records(repo_root: Path) -> list[dict[str, Any]]:
 
 
 def _source_receipt_records(repo_root: Path) -> list[dict[str, Any]]:
-    root = repo_root / "evidence" / "source-reengineering"
+    root = confined_source(repo_root / "evidence" / "source-reengineering", repo_root)
     if not root.is_dir():
         return []
     records = []
     for path in sorted(root.glob("*/receipts.jsonl")):
+        path = confined_source(path, root)
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             if not line.strip():
                 continue

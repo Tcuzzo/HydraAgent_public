@@ -95,6 +95,7 @@ def test_installed_dev_mode_loads_real_packaged_contracts(tmp_path, monkeypatch)
         destination = packaged / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO / ".hydraAgent" / relative, destination)
+    monkeypatch.setattr(dev_mode_seam, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(dev_mode_seam, "DEV_MODE_ROOT", tmp_path / "missing-source-root")
     monkeypatch.setattr(dev_mode_seam, "BUNDLED_DEV_MODE_ROOT", packaged, raising=False)
 

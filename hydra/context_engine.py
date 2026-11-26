@@ -23,6 +23,7 @@ from typing import Any
 from hydra.failure_clusters import FailureClusterError, cluster_failures
 from hydra.local_memory import DEFAULT_MEMORY_ROOT
 from hydra.lessons import LESSON_RELATIVE_PATH
+from hydra.source_boundary import confined_source
 
 
 SCHEMA = "hydra.context_engine.v1"
@@ -76,14 +77,19 @@ def assemble_context(
     repo_root_path = Path(repo_root).expanduser().resolve()
     if not repo_root_path.is_dir():
         raise ContextEngineError(f"repo_root is not a directory: {repo_root_path}")
-    memory_root_path = (
-        Path(memory_root).expanduser().resolve() if memory_root else DEFAULT_MEMORY_ROOT
-    )
-    evidence_root_path = (
-        Path(evidence_root).expanduser().resolve()
-        if evidence_root
-        else repo_root_path / "evidence"
-    )
+    try:
+        memory_root_path = (
+            Path(memory_root).expanduser().resolve()
+            if memory_root
+            else confined_source(DEFAULT_MEMORY_ROOT, DEFAULT_MEMORY_ROOT.parent)
+        )
+        evidence_root_path = (
+            Path(evidence_root).expanduser().resolve()
+            if evidence_root
+            else confined_source(repo_root_path / "evidence", repo_root_path)
+        )
+    except ValueError as exc:
+        raise ContextEngineError("context source escapes its selected root") from exc
 
     query_tokens = _query_tokens(query) if query else []
 
@@ -191,12 +197,12 @@ def _rerank_by_query(
 def _lesson_candidates(memory_root: Path, max_lessons: int) -> list[dict[str, Any]]:
     if max_lessons == 0:
         return []
-    path = memory_root / LESSON_RELATIVE_PATH
-    if not path.is_file():
-        return []
     try:
+        path = confined_source(memory_root / LESSON_RELATIVE_PATH, memory_root)
+        if not path.is_file():
+            return []
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except (OSError, ValueError):
         return []
     entries = _parse_lesson_entries(text)
     # Most-recent first
@@ -252,12 +258,12 @@ def _cluster_candidates(evidence_root: Path, max_clusters: int) -> list[dict[str
 def _promotion_candidates(repo_root: Path, max_promotions: int) -> list[dict[str, Any]]:
     if max_promotions == 0:
         return []
-    status_path = repo_root / "STATUS.md"
-    if not status_path.is_file():
-        return []
     try:
+        status_path = confined_source(repo_root / "STATUS.md", repo_root)
+        if not status_path.is_file():
+            return []
         text = status_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except (OSError, ValueError):
         return []
     in_log = False
     rows: list[str] = []

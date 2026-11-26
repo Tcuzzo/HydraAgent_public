@@ -633,6 +633,7 @@ def _seed_full_corpus(tmp_path, monkeypatch):
     """
     home = tmp_path / "home"
     home.mkdir()
+    monkeypatch.setenv("HYDRA_IMPORT_CLAUDE_MEMORY", "1")
     monkeypatch.setattr("hydra.local_memory.Path.home", lambda: home, raising=False)
 
     # tmp ~/.hydra-memory root (the migration's ``root`` default).

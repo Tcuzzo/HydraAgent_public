@@ -22,6 +22,8 @@ from typing import Any
 
 import yaml
 
+from hydra.source_boundary import confined_source
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEV_MODE_ROOT = REPO_ROOT / ".hydraAgent"
 BUNDLED_DEV_MODE_ROOT = Path(__file__).resolve().parent / "runtime_data" / "catalog"
@@ -83,10 +85,11 @@ def load_dev_mode_contracts(root: str | Path | None = None) -> dict[str, Any]:
     if root is not None:
         base = Path(root).expanduser().resolve()
     else:
-        base = BUNDLED_DEV_MODE_ROOT if BUNDLED_DEV_MODE_ROOT.is_dir() else DEV_MODE_ROOT
+        bundled = confined_source(BUNDLED_DEV_MODE_ROOT, REPO_ROOT)
+        base = bundled if bundled.is_dir() else confined_source(DEV_MODE_ROOT, REPO_ROOT)
     out: dict[str, Any] = {}
     for key, (rel, _) in _CONTRACTS.items():
-        out[key] = _read_yaml(base / rel)
+        out[key] = _read_yaml(confined_source(base / rel, base))
     out["loaded"] = {k: bool(v) for k, v in out.items()}
     out["root"] = str(base)
     return out

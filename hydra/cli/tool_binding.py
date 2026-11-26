@@ -57,9 +57,9 @@ def _http_fetch_tool(
 
     The skill requires an allow-list. When the operator sets
     HYDRA_HTTP_FETCH_ALLOWED_HOSTS (comma separated) that list binds; otherwise
-    the host the agent asked for is the allow-list, which is what this tool
-    promises ("reachable docs"). Non-GET requests are refused plainly instead
-    of crashing with a TypeError.
+    public hosts remain reachable, while private services require an explicit
+    operator host entry. Non-GET requests are refused plainly instead of
+    crashing with a TypeError.
     """
     import urllib.parse
 
@@ -68,7 +68,11 @@ def _http_fetch_tool(
         raise skill_http_fetch.SkillError(f"http_fetch only does GET (asked for {verb}{' with a body' if body else ''})")
     configured = [h.strip() for h in os.environ.get("HYDRA_HTTP_FETCH_ALLOWED_HOSTS", "").split(",") if h.strip()]
     allowed = configured or [urllib.parse.urlparse(str(url)).hostname or ""]
-    kwargs: dict[str, object] = {"timeout": float(timeout), "max_bytes": int(max_bytes)}
+    kwargs: dict[str, object] = {
+        "timeout": float(timeout),
+        "max_bytes": int(max_bytes),
+        "allow_private": bool(configured),
+    }
     agent = next((str(v) for k, v in (headers or {}).items() if str(k).lower() == "user-agent"), None)
     if agent:
         kwargs["user_agent"] = agent

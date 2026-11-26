@@ -45,7 +45,7 @@ def register_chat_support_commands(sub: argparse._SubParsersAction) -> None:
         default=None,
         help=(
             "trusted local skills root; default scans HYDRA_SKILLS_ROOT when set, "
-            "otherwise ~/.codex/superpowers/skills plus repo skills/"
+            "otherwise only Hydra's packaged skills/ and hydra/schemes catalogs"
         ),
     )
     skills_sub = p_skills.add_subparsers(dest="skills_cmd", required=True)

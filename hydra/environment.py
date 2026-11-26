@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as _dt
 import difflib
 import json
+import os
 import shutil
 import socket  # noqa: F401 — the security bar patches environment.socket.getaddrinfo
 import subprocess
@@ -46,12 +47,21 @@ def create_session(
         session_path = root / f"{session_id}-{suffix}"
     workspace = session_path / "workspace"
     session_path.mkdir(parents=True)
-    shutil.copytree(
-        source,
-        workspace,
-        ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "node_modules"),
-        symlinks=False,
-    )
+    try:
+        shutil.copytree(
+            source,
+            workspace,
+            ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "node_modules"),
+            symlinks=True,
+        )
+        _relocate_session_links(source, workspace)
+    except (OSError, RuntimeError, shutil.Error, EnvironmentError) as exc:
+        # This directory was created by this invocation. Never remove the
+        # environment root, a pre-existing session, or a symlink's target.
+        shutil.rmtree(session_path)
+        if isinstance(exc, EnvironmentError):
+            raise
+        raise EnvironmentError("could not copy source repo into a session workspace") from exc
     session = {
         "schema": SESSION_SCHEMA,
         "session_id": session_path.name,
@@ -65,6 +75,29 @@ def create_session(
     }
     _write_json(session_path / "session.json", session)
     return session
+
+
+def _relocate_session_links(source: Path, workspace: Path) -> None:
+    """Keep project links internal without opening any linked file contents."""
+    for parent, directories, filenames in os.walk(workspace, followlinks=False):
+        for name in directories + filenames:
+            link = Path(parent) / name
+            if not link.is_symlink():
+                continue
+            relative = link.relative_to(workspace)
+            target = link.readlink()
+            source_target = target if target.is_absolute() else (source / relative).parent / target
+            try:
+                resolved = source_target.resolve(strict=True)
+            except (OSError, RuntimeError) as exc:
+                raise EnvironmentError(f"source repo has an unresolvable symlink: {relative}") from exc
+            if not resolved.is_relative_to(source):
+                raise EnvironmentError(f"source repo symlink escapes its root: {relative}")
+            destination = workspace / resolved.relative_to(source)
+            replacement = os.path.relpath(destination, link.parent)
+            directory_link = resolved.is_dir()
+            link.unlink()
+            link.symlink_to(replacement, target_is_directory=directory_link)
 
 
 def run_session_command(

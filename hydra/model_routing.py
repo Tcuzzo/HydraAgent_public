@@ -36,6 +36,7 @@ import yaml
 
 from hydra import rung_resolver
 from hydra.rung_resolver import RungResolutionError  # noqa: F401 - re-export
+from hydra.source_boundary import confined_source
 
 _LOG = logging.getLogger(__name__)
 
@@ -336,9 +337,11 @@ def load_routing(path: str | Path | None = None, *, refresh: bool = False) -> Mo
     """
     resolved = Path(path) if path is not None else DEFAULT_ROUTING_PATH
     key = str(resolved)
-    if not refresh and key in _CACHE:
-        return _CACHE[key]
     try:
+        if path is None:
+            resolved = confined_source(resolved, Path(__file__).resolve().parent)
+        if not refresh and key in _CACHE:
+            return _CACHE[key]
         text = resolved.read_text()
         data = yaml.safe_load(text) or {}
         if not isinstance(data, dict):

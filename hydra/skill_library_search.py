@@ -7,6 +7,8 @@ from typing import Any
 
 import yaml
 
+from hydra.skill_spine import iter_skill_paths
+
 
 SCHEMA = "hydra.skill_library_search.v1"
 
@@ -22,13 +24,19 @@ def search_skill_library(
     query = str(query or "").strip()
     limit = max(1, min(int(limit), 25))
     base = (root / skills_root).resolve()
+    # Default workspace catalogs cannot redirect discovery to an external tree.
+    # A non-default library root is an explicit operator selection.
+    boundary = root.resolve() if skills_root in {"hydra/schemes", "hydra/skills"} else base
+    if not base.is_relative_to(boundary):
+        return _report(query=query, skills_root=base, hits=[], total_scanned=0)
     # Safety: if the requested root is missing, fall back to the legacy name so a
     # stale checkout never "loses" the library (renamed hydra/skills -> hydra/schemes).
     if not base.is_dir():
         for alt in ("hydra/schemes", "hydra/skills"):
             cand = (root / alt).resolve()
-            if cand.is_dir():
+            if cand.is_relative_to(root.resolve()) and cand.is_dir():
                 base = cand
+                boundary = root.resolve()
                 break
     if not query:
         return _report(query=query, skills_root=base, hits=[], total_scanned=0)
@@ -38,7 +46,7 @@ def search_skill_library(
     tokens = _tokens(query)
     scored: list[tuple[int, dict[str, Any]]] = []
     total = 0
-    for path in sorted(base.rglob("SKILL.md")):
+    for path in iter_skill_paths(base, boundary=boundary):
         total += 1
         hit = _skill_hit(root, path)
         haystack = " ".join(

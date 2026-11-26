@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 
 from hydra.policy import ApprovalPolicy, TOOL_RISK, runtime_tool_name
+from hydra.source_boundary import confined_source
 
 
 class DeclarativeRuntimeError(Exception):
@@ -64,10 +65,10 @@ def load_runtime_catalog(root: Path) -> RuntimeCatalog:
     if not root.is_dir():
         raise DeclarativeRuntimeError(f"workspace is not a directory: {root}")
     package_root = Path(__file__).resolve().parent.parent
-    bundled = package_root / "hydra/runtime_data/catalog"
+    bundled = _confined_catalog_path(package_root, Path("hydra/runtime_data/catalog"))
     if not bundled.is_dir():
-        bundled = package_root / ".hydraAgent"  # source/editable checkout
-    workspace = root / ".hydraAgent"
+        bundled = _confined_catalog_path(package_root, Path(".hydraAgent"))
+    workspace = _confined_catalog_path(root, Path(".hydraAgent"))
 
     def contract_path(reference: str) -> Path:
         relative = _catalog_relative_path(reference)
@@ -133,10 +134,12 @@ def _catalog_relative_path(reference: str) -> Path:
 
 
 def _confined_catalog_path(base: Path, relative: Path) -> Path:
-    target = (base / relative).resolve()
-    if not target.is_relative_to(base.resolve()):
-        raise DeclarativeRuntimeError(f"catalog reference must stay within .hydraAgent: {relative}")
-    return target
+    try:
+        return confined_source(base / relative, base)
+    except ValueError as exc:
+        raise DeclarativeRuntimeError(
+            f"catalog reference must stay within its selected root: {relative}"
+        ) from exc
 
 
 def _brief_models() -> dict[str, str]:
@@ -633,7 +636,10 @@ def _merge_materialized_skills(
         if isinstance(item, dict)
     }
     merged = list(declared)
-    for path in sorted(((source_root or root) / "hydra" / "schemes").rglob("SKILL.md")):
+    from hydra.skill_spine import iter_skill_paths
+
+    source = source_root or root
+    for path in iter_skill_paths(source / "hydra" / "schemes", boundary=source):
         item = _materialized_skill_index_item(root, path, available_tools=available_tools)
         skill_id = item["skill_id"]
         if skill_id in seen:
@@ -737,7 +743,7 @@ def _approval_required_when(policies: dict[str, Any]) -> list[str]:
 
 
 def _recent_episodes(root: Path, *, limit: int = 5) -> list[str]:
-    path = root / ".hydraAgent/memory/episodic.jsonl"
+    path = _confined_catalog_path(root, Path(".hydraAgent/memory/episodic.jsonl"))
     if not path.is_file():
         return []
     lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -751,9 +757,9 @@ def _append_episodic_memory(
     decision: dict[str, Any],
     execution: dict[str, Any],
 ) -> None:
-    memory_dir = root / ".hydraAgent" / "memory"
+    path = _confined_catalog_path(root, Path(".hydraAgent/memory/episodic.jsonl"))
+    memory_dir = path.parent
     memory_dir.mkdir(parents=True, exist_ok=True)
-    path = memory_dir / "episodic.jsonl"
     record = {
         "schema": "hydra.memory.episodic.v1",
         "timestamp": _dt.datetime.now(_dt.UTC).isoformat(),

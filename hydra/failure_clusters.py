@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from hydra.source_boundary import confined_source
+
 
 SCHEMA = "hydra.failure_clusters.v1"
 MAX_CLUSTER_SOURCES = 25
@@ -41,9 +43,13 @@ def cluster_failures(evidence_root: str | Path) -> dict[str, Any]:
         raise FailureClusterError(f"evidence root is not a directory: {root}")
 
     eval_results: list[Path] = sorted(root.rglob("results.tsv"))
+    try:
+        ops_root = confined_source(root / "ops", root)
+    except ValueError as exc:
+        raise FailureClusterError("operations evidence escapes its selected root") from exc
     ops_bundles: list[Path] = sorted(
-        p for p in (root / "ops").iterdir() if p.is_dir()
-    ) if (root / "ops").is_dir() else []
+        p for p in ops_root.iterdir() if p.is_dir()
+    ) if ops_root.is_dir() else []
 
     raw_findings: list[dict[str, Any]] = []
     raw_findings.extend(_scan_eval_failures(eval_results, root))
@@ -123,8 +129,9 @@ def _scan_eval_failures(results_files: list[Path], root: Path) -> list[dict[str,
     for path in results_files:
         rel = str(path.relative_to(root))
         try:
+            path = confined_source(path, root)
             text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        except (OSError, ValueError):
             continue
         for line in text.splitlines():
             parts = line.split("\t")
@@ -173,8 +180,9 @@ def _scan_commands(path: Path, root: Path) -> list[dict[str, Any]]:
     rel = str(path.relative_to(root))
     out: list[dict[str, Any]] = []
     try:
+        path = confined_source(path, root)
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except (OSError, ValueError):
         return out
     for line in text.splitlines():
         line = line.strip()
@@ -217,8 +225,9 @@ def _scan_commands(path: Path, root: Path) -> list[dict[str, Any]]:
 def _scan_rot_signals(path: Path, root: Path) -> list[dict[str, Any]]:
     rel = str(path.relative_to(root))
     try:
+        path = confined_source(path, root)
         data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return []
     if not isinstance(data, list):
         return []
