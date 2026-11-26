@@ -14,7 +14,7 @@ import time
 import xml.etree.ElementTree as ET
 
 from radon.complexity import cc_visit
-from coverage import CoverageData
+from coverage import Coverage, CoverageData
 
 RELEASE_TREE = "b2531f1da6bb01aff2814a622e2a95d8d9cba643"
 BASE_TREE = "d18e377cba26d61107f2de1f2b548c89f241335a"
@@ -79,8 +79,10 @@ def junit(path):
         "failures": [c.attrib["name"] for c in cases if c.find("failure") is not None],
         "failure_types": {c.attrib["name"]: c.find("failure").attrib.get("type", "")
                           for c in cases if c.find("failure") is not None},
-        "failure_messages": {c.attrib["name"]: c.find("failure").attrib.get("message", "")[:1200]
+        "failure_messages": {c.attrib["name"]: c.find("failure").attrib.get("message", "")
                              for c in cases if c.find("failure") is not None},
+        "failure_tracebacks": {c.attrib["name"]: c.find("failure").text or ""
+                               for c in cases if c.find("failure") is not None},
         "errors": [c.attrib["name"] for c in cases if c.find("error") is not None],
         "skips": [c.attrib["name"] for c in cases if c.find("skipped") is not None],
     }
@@ -180,16 +182,17 @@ def complexities(text):
     return found
 
 def quality(root, output, label):
-    report = json.loads((output / label / "coverage.json").read_text())
+    coverage = Coverage(data_file=str(output / label / ".coverage"),
+                        config_file=str(output / label / "coverage.ini"))
+    coverage.load()
     found = {}
     for relative in SOURCE:
         path = root / relative
         text = path.read_text()
-        entry = next(value for name, value in report["files"].items()
-                     if (root / name).resolve() == path.resolve())
+        _filename, statement_lines, excluded_lines, missing_lines, _formatted = coverage.analysis2(str(path))
         cc = complexities(text)
-        executed = set(entry["executed_lines"])
-        statements = executed | set(entry["missing_lines"])
+        statements = set(statement_lines)
+        executed = statements - set(missing_lines)
         for name, node in functions(text).items():
             start = min([node.lineno] + [d.lineno for d in node.decorator_list])
             own = statements & set(range(start, node.end_lineno + 1))
@@ -199,7 +202,7 @@ def quality(root, output, label):
                 "cc": complexity, "coverage": coverage,
                 "crap": complexity ** 2 * (1 - coverage) ** 3 + complexity,
                 "statements": sorted(own), "executed": sorted(own & executed),
-                "excluded_lines": sorted(set(entry["excluded_lines"]) & set(range(start, node.end_lineno + 1))),
+                "excluded_lines": sorted(set(excluded_lines) & set(range(start, node.end_lineno + 1))),
                 "ast": ast.dump(node, include_attributes=False),
             }
     return found
@@ -267,11 +270,15 @@ def mutant(number, candidate, output):
             2: ["test_ask_respects_existing_cp1252_policy"],
             3: ["test_dispatch_restores_each_stream_after_return_or_exception"],
         }
+        evidence = {name: cases["failure_messages"][name] + "\n" + cases["failure_tracebacks"][name]
+                    for name in cases["failures"]}
+        infrastructure = ("TimeoutExpired", "ModuleNotFoundError", "ImportError",
+                          "FileNotFoundError", "SyntaxError", "INTERNALERROR", "PermissionError")
         assertion_failure = (killed["returncode"] == 1 and cases["tests"] == 16
                              and not cases["errors"] and not cases["skips"]
-                             and not any("TimeoutExpired" in kind for kind in cases["failure_types"].values())
-                             and all(any(name.startswith(prefix) and "AssertionError" in cases["failure_types"][name]
-                                         and "assert" in cases["failure_messages"][name].lower()
+                             and not any(kind in text for text in evidence.values() for kind in infrastructure)
+                             and all(any(name.startswith(prefix) and
+                                         re.search(r"(?m)(?:AssertionError|^E\s+assert\b|^assert\b)", evidence[name])
                                          for name in cases["failures"])
                                      for prefix in prefixes[number]))
         killed["junit"] = cases
@@ -305,6 +312,7 @@ def main():
     assert git(baseline, "rev-parse", "HEAD^{tree}") == BASE_TREE
     assert not git(candidate, "status", "--porcelain", "--untracked-files=no")
     initial = source_hashes(candidate)
+    baseline_initial = source_hashes(baseline)
     seals(candidate)
     for path in SEALS:
         shutil.copy2(candidate / path, baseline / path)
@@ -314,6 +322,8 @@ def main():
          "baseline_tree": BASE_TREE, "candidate_source_hashes": initial,
          "baseline_source_hashes": source_hashes(baseline), "seals": SEALS,
          "runner_sha256": sha(Path(__file__)), "python": sys.version,
+         "measurement_tools": {name: __import__("importlib.metadata", fromlist=["version"]).version(name)
+                               for name in ("coverage", "radon", "pytest")},
          "karpathy": "Already completed unchanged engine KEEP: 9/16 to16/16 on exact reviewed tree; not rerun here."})
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(measure, label, root, output) for label, root in
@@ -321,7 +331,18 @@ def main():
         measurements = [f.result() for f in futures]
     baseline_result, candidate_result = measurements
     assert baseline_result["returncode"] == 1
-    assert len(baseline_result["junit"]["failures"]) == 7
+    assert baseline_result["source_hashes"] == baseline_initial
+    assert baseline_result["junit"]["tests"] == 21
+    expected_red = {
+        "test_dispatch_restores_each_stream_after_return_or_exception[False]",
+        "test_dispatch_restores_each_stream_after_return_or_exception[True]",
+        "test_redirected_chat_welcomes_lists_unicode_skill_and_exits[cp1252]",
+        "test_redirected_ask_prints_unicode_reply_in_selected_encoding[cp1252]",
+        "test_chat_with_windows_default_output_policy_completes_exit",
+        "test_ask_output_bytes_under_windows_policies[ordinary-unicode]",
+        "test_ask_output_bytes_under_windows_policies[mixed-raw-and-unicode]",
+    }
+    assert set(baseline_result["junit"]["failures"]) == expected_red
     assert not baseline_result["junit"]["errors"] and not baseline_result["junit"]["skips"]
     assert candidate_result["returncode"] == 0
     assert candidate_result["junit"]["tests"] == 21
