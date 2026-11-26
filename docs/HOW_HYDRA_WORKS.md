@@ -8,8 +8,9 @@ Words in **bold** are explained the first time they appear.
 
 Hydra is a helper you run in a terminal (the text window where you type commands). You give it
 a folder of code and a goal in plain words, such as "explain how login works" or "fix the failing
-test". Hydra reads the files, decides what to do, asks your permission before it changes anything
-or runs a command, and then tells you what it did.
+test". Hydra reads the files, decides what to do, and follows the task's **approval policy** for
+changes and commands. The policy can ask for permission, allow those actions, or block them.
+Hydra then tells you what it did.
 
 Hydra does not contain an AI model itself. A **model** is the AI service that writes the answers,
 for example one running on your own computer or one you pay for online. Hydra is the part that
@@ -38,14 +39,15 @@ flowchart LR
 | What | Why | How to check |
 |---|---|---|
 | **Python** 3.11 or newer | Hydra is written in Python, a programming language. Your computer needs it installed to run Hydra. | `python3 --version` |
-| **pipx** | A small installer that puts Hydra in its own private space so it cannot break other programs. | `pipx --version` |
 | One model source | Something has to write the answers. Pick one: a local model, a cloud key, or the ChatGPT sign-in through the Codex CLI. | `hydra setup` walks you through it |
 
-Install with one command:
+The quickstart uses **pipx**, which installs Hydra in its own Python environment.
 
 ```bash
 pipx install git+https://github.com/Tcuzzo/HydraAgent_public.git
 ```
+
+For a VM installation with Python's `venv` and `pip`, see the [VM installation guide](VM-INSTALL.md#clean-installation).
 
 ### Optional
 
@@ -53,10 +55,10 @@ Hydra runs without any of these. Each one adds a capability.
 
 | What | What it adds | Where you turn it on |
 |---|---|---|
-| **Ollama** (a free program that runs models on your own computer) | Private, offline answers. Nothing leaves your machine. | Install from [ollama.com](https://ollama.com). Hydra looks at `http://localhost:11434` unless you set `OLLAMA_ENDPOINT`. |
+| **Ollama** (a free program that runs models on your own computer) | Downloaded models can run offline. Configured network tools, remote endpoints and cloud fallbacks can still use the network. | Install from [ollama.com](https://ollama.com). Hydra looks at `http://localhost:11434` unless you set `OLLAMA_ENDPOINT`. |
 | A **GPU** (graphics card) | Makes local models fast. Without one, local models still work, only slower. | Nothing to set. Ollama uses it automatically. |
-| A cloud model key | Answers from a paid online model. | `hydra setup --mode cloud`. Keys are stored under `~/.hydraAgent/workspace/`, never in your project. |
-| The **BACKS decision service** (also called the router or Kev/Needle) | A separate server you run that picks the best available model for each job, and switches to another one when a model fails. Hydra does not ship this server. | `HYDRA_BACKS_URL` (see placeholders below). |
+| A cloud model key | Answers from a paid online model. | `hydra setup --mode cloud`. Keys are stored under `~/.hydraAgent/workspace/` by default. |
+| The **BACKS decision service** (deployed separately) | A separate server you run that picks the best available model for each job, and switches to another one when a model fails. Hydra does not ship this server. | `HYDRA_BACKS_URL` (see placeholders below). |
 | **Telegram** (a chat app) | Talk to Hydra from your phone. | `HYDRA_TELEGRAM_BOT_TOKEN` and `HYDRA_OPERATOR_DM_CHAT_ID` in your environment. |
 | **Bubblewrap** (a Linux tool that fences a program in) | Lets Hydra run checks in a locked box on Linux. | `sudo apt-get install bubblewrap` |
 | **MCP** (a standard way for AI tools to talk to each other) | Lets other tools use Hydra, and Hydra use them. | `pip install "hydraagent[mcp]"` |
@@ -69,7 +71,7 @@ The full list, with the exact check for each, is in
 
 ```mermaid
 flowchart TB
-    subgraph Required["Required"]
+    subgraph Required["pipx quickstart path"]
         Py["Python 3.11+"] --> Px["pipx"] --> H["Hydra"]
         H --> M{"One model source"}
     end
@@ -96,7 +98,7 @@ flowchart TB
     class B,G,T,W,P,E opt;
 ```
 
-Solid lines are required. Dotted lines are optional.
+Solid lines show this install path and its core requirements. Dotted lines show optional add-ons.
 
 ## Placeholders: what they mean and where to set them
 
@@ -126,10 +128,11 @@ export HYDRA_BACKS_URL='http://<backs-host>:<port>'
 
 Rules Hydra keeps:
 
-- **No hard-coded hosts, models or keys.** The code reads every address from the environment or
-  a config file. Model names come from the role file or from the BACKS decision service, never
-  from Hydra's source code. `hydra/model_routing.yaml` names only **rungs** (see below).
-- **Keys stay outside your project**, under `~/.hydraAgent/workspace/`.
+- **Configure the deployment you intend to use.** Setup, environment settings, role files and
+  the optional BACKS service select providers, endpoints and models. Shipped role routing names
+  **rungs** (see below); some optional selectors have default model names. A default does not
+  establish that the model is installed.
+- **Provider settings default to `~/.hydraAgent/workspace/`.** `HYDRA_ENV_DIR` can override that location. Keep key-bearing files outside your repository.
 - The test `hydra/test_public_scrub_guard.py` and the CI check `.github/scripts/ip-topology-scan.sh`
   fail if a real private address, device address, personal home folder or private machine name
   is committed.
@@ -219,9 +222,8 @@ In order:
 Any other 4xx code means the request itself was the problem, so Hydra stops walking that chain
 instead of sending the same bad request to every rung in it. `hydra ask` then goes to step 3.
 
-Steps 1 to 5 describe Hydra once the rung-chain change in
-[PR #54](https://github.com/Tcuzzo/HydraAgent_public/pull/54) is merged. Before that, tool
-turns try only the role's capability rung, and `hydra ask` falls back straight to the local GPU.
+The rung chain for tool turns and the check for a configured local GPU fallback in `hydra ask`
+landed in [PR #54](https://github.com/Tcuzzo/HydraAgent_public/pull/54).
 
 ## Where things live
 
@@ -229,7 +231,7 @@ turns try only the role's capability rung, and `hydra ask` falls back straight t
 |---|---|
 | Your project folder | Your code. Hydra's file tools stay inside it (or inside `--root`). |
 | `.hydraAgent/hydra.yaml` | Optional role file: which provider and model each role uses. Not in git. |
-| `~/.hydraAgent/workspace/` | Your provider settings and keys (`.env.*` files), outside any project. |
+| `~/.hydraAgent/workspace/` | Default provider settings and keys (`.env.*` files); `HYDRA_ENV_DIR` can select another directory. |
 | `$HYDRA_CONFIG`, workspace role files, or `~/.hydra/hydra.yaml` | Optional role configuration, checked in that order after an explicit path; otherwise Hydra uses its packaged routing defaults. |
 | `hydra/model_routing.yaml` | Shipped with Hydra. Names rungs and fallbacks only, no models or keys. |
 
