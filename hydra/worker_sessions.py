@@ -32,7 +32,7 @@ def run_worker_job_session(
 ) -> dict[str, Any]:
     if policy is not None:
         job_id = job.get("job_id", session_id)
-        policy.require("worker_job", {"job_id": job_id})
+        policy.require("worker_job", {"job_id": job_id, "job": job})
     root = repo_root.expanduser().resolve()
     if not root.is_dir():
         raise WorkerSessionError(f"repo_root is not a directory: {root}")

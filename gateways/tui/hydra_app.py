@@ -861,6 +861,7 @@ class HydraApp(App[int]):
             final_text=final,
             tool_calls_made=result.tool_calls_made,
             rerun=_rerun_forcing_tools,
+            native_execution_receipts=getattr(result, "native_execution_receipts", ()),
         )
         result.final_response = outcome.text
         return result

@@ -56,6 +56,12 @@ model/route without calling the model.
 | `roles` | Show planner/doer/auditor model routing. |
 | `tools` | List the agent's tool set. |
 
+Role configuration is optional. `roles`, `execute`, and `ask --auto-route` use an
+explicit `--config` where available, then `HYDRA_CONFIG`, the active workspace's
+`.hydraAgent/hydra.yaml` or `hydra.yaml`, `~/.hydra/hydra.yaml`, and the packaged
+routing defaults. `--root` selects the workspace for `execute` and `ask`.
+An explicitly selected missing or invalid file produces an error.
+
 **Skills & memory**
 
 | Command | What it does |

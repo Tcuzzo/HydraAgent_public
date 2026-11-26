@@ -11,9 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from hydra.inter_agent import redact_text
-from hydra.llm import LlmError
+from hydra.llm import LlmError, native_execution_trace
 from hydra.policy import POLICY_CHOICES
 from hydra.providers import (
+    bind_client_workspace,
     default_env_dir as provider_env_dir,
     ProviderError,
     list_providers as list_providers_fn,
@@ -134,6 +135,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "call live_research before you answer and cite the sources it returns."
 )
 
+# Compatibility exports; ask role discovery no longer depends on package paths.
 HYDRA_CONFIG = REPO_ROOT / ".hydraAgent" / "hydra.yaml"
 HYDRA_SCHEMA = REPO_ROOT / ".hydraAgent" / "schemas" / "hydra.schema.yaml"
 OPS_PACKS_DIR = REPO_ROOT / ".hydraAgent" / "ops-packs"
@@ -242,6 +244,7 @@ def _build_ask_trace(
         "context_proof": list(context_proof),
         "iterations": getattr(result, "iterations", 0),
         "tool_calls_made": getattr(result, "tool_calls_made", 0),
+        "native_execution_receipts": native_execution_trace(getattr(result, "native_execution_receipts", ())),
         "halted_reason": getattr(result, "halted_reason", ""),
         "final_response": getattr(result, "final_response", ""),
         "messages": [
@@ -801,6 +804,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
         if not _already_reported(e):
             print(f"provider error: {e}", file=sys.stderr)
         return 2
+    bind_client_workspace(client, cfg.name, root=root, approval_policy=args.approval_policy)
     model = args.model or cfg.model or model
     if not model:
         print(f"no model resolved for provider {args.provider!r}; pass --model", file=sys.stderr)
@@ -808,6 +812,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
 
     def _elite_command_handler(tui: EliteTUI, stripped: str) -> bool:
         nonlocal root, memory_workspace_root, tools, runtime, provider_name, model
+        nonlocal client, cfg
         nonlocal current_mission_id, last_audit_target, last_locate_target
 
         if _handle_chat_terminal_control(stripped):
@@ -825,6 +830,9 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 return True
             root = new_root
             memory_workspace_root = new_root
+            # /setup can replace the TUI client without using a profile callback.
+            client, cfg = tui.client, tui.cfg
+            bind_client_workspace(client, cfg.name, root=root, approval_policy=args.approval_policy)
             tools = _bind_tools(
                 root,
                 approval_policy=args.approval_policy,
@@ -916,6 +924,7 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 if not _already_reported(e):
                     print(f"provider error: {e}", file=sys.stderr)
                 return True
+            bind_client_workspace(client, cfg.name, root=root, approval_policy=args.approval_policy)
             model = args.model or cfg.model or runtime["model"]
             tui.reconfigure_runtime(client=client, cfg=cfg, model=model, runtime=runtime)
             tui._chat_messages.append(
@@ -969,21 +978,30 @@ def cmd_chat(args: argparse.Namespace) -> int:
         return False
 
     def _rebind_for_app(path: Path):
-        return _bind_tools(
-            path,
+        nonlocal root, memory_workspace_root, tools
+        root = Path(path).expanduser().resolve()
+        memory_workspace_root = root
+        bind_client_workspace(client, cfg.name, root=root, approval_policy=args.approval_policy)
+        tools = _bind_tools(
+            root,
             approval_policy=args.approval_policy,
             memory_root=memory_root,
-            memory_workspace_root=path,
+            memory_workspace_root=memory_workspace_root,
             notify_telegram=True,
         )
+        return tools
 
     def _switch_profile_for_app(name: str):
+        nonlocal client, cfg, model, runtime, provider_name
         args.profile = name
         args.provider = None
         switched = _resolve_chat_runtime(args)
         args.provider = switched["provider"]
         switched_client, switched_cfg = _make_client_or_setup(args)
         switched_model = args.model or switched_cfg.model or switched["model"]
+        bind_client_workspace(switched_client, switched_cfg.name, root=root, approval_policy=args.approval_policy)
+        client, cfg, model = switched_client, switched_cfg, switched_model
+        runtime, provider_name = switched, switched["provider"]
         return switched_client, switched_cfg, switched_model, f"chat profile changed to: {switched['profile']}"
 
     tui = EliteTUI(

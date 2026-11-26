@@ -83,6 +83,7 @@ def _hermetic_environment(monkeypatch, tmp_path_factory):
     """
     env_dir = tmp_path_factory.mktemp("hermetic-env-dir")
     monkeypatch.setenv("HYDRA_ENV_DIR", str(env_dir))
+    monkeypatch.setenv("HYDRA_CHECKPOINTS_DIR", str(env_dir / "checkpoints"))
 
     for name in ENDPOINT_VARS + CREDENTIAL_VARS + ROUTING_VARS:
         monkeypatch.delenv(name, raising=False)
