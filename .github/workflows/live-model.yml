@@ -5,6 +5,21 @@ on:
   pull_request:
     paths:
       - .github/workflows/live-model.yml
+      - .github/scripts/setup-bwrap.sh
+      - hydra/**
+      - core/**
+      - gateways/**
+      - skills/**
+      - .hydraAgent/tools/**
+      - .hydraAgent/skills/**
+      - .hydraAgent/ux/**
+      - .hydraAgent/policies/**
+      - .hydraAgent/playbooks/**
+      - pyproject.toml
+      - setup.py
+      - MANIFEST.in
+      - constraints.txt
+      - tools/verify_install.py
       - tools/verify_live_model.py
 
 permissions:

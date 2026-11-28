@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>HydraAgent Public — 4K True-Black Showcase</title>
+  <title>HydraAgent Public — True-Black Showcase</title>
   <style>
     :root {
       --canvas: #000000;
@@ -76,13 +76,6 @@
       text-transform: uppercase;
       color: var(--cyan-soft);
     }
-    video {
-      display: block;
-      width: 100%;
-      border-radius: 6px;
-      border: 1px solid rgba(255, 42, 95, 0.35);
-      background: #000000;
-    }
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -153,66 +146,68 @@
 </head>
 <body>
   <main class="wrap">
-    <span class="badge">Hydra 3-Twins · 4K True-Black OLED Edition</span>
+    <span class="badge">Hydra CLI · True-Black Showcase</span>
     <h1><span class="accent-cyan">HydraAgent</span> <span class="accent-crimson">Public</span></h1>
     <p class="lead">
       A local-first, operator-owned coding and operations agent engineered for real terminals,
-      explicit approval gates, and zero fake telemetry. Built in the open under MIT license.
+      explicit approval gates, configurable models, and durable file undo. Built in the open under MIT license.
     </p>
 
     <div class="links">
       <a href="https://github.com/Tcuzzo/HydraAgent_public">GitHub · HydraAgent_public</a>
-      <a href="https://github.com/Tcuzzo/B.A.C..K.S-AI">B.A.C.K.S AIOS</a>
-      <a href="https://tcuzzo.github.io/">Cuzzo Lab Docs</a>
+      <a href="https://backsaios.io/">BACKS AIOS</a>
+      <a href="VM-INSTALL.md">VM Installation Guide</a>
     </div>
 
-    <section class="panel" aria-label="Real recorded terminal demo">
-      <h2>Real Recorded CLI Session (No Mocks)</h2>
+    <section class="panel" aria-label="Real-model virtual machine verification">
+      <h2>A Real Model on an Ubuntu VM</h2>
       <p class="lead">
-        Recorded directly from real local executions of <code>hydra --version</code>,
-        <code>hydra self-audit</code>, <code>hydra tools</code>, and <code>hydra skills list</code>
-        with RFC5737 placeholder host hygiene (<code>192.0.2.10</code>).
+        On November 26, 2026, a GitHub Actions Ubuntu 24.04 VM installed a fresh wheel
+        from revision <code>dd86bbbf440a50c35d6c0e1be5d9501868340bd1</code>.
+        A real Qwen3 4B model wrote and read one file through Hydra's tools.
+        A separate CLI process then undid the write. The downloadable receipts record
+        the model digest, package hashes, tool results, and independently checked file bytes.
       </p>
-      <video controls preload="none" width="1280" height="720" aria-label="HydraAgent Public real CLI recording">
-        <source src="../assets/hydra-real-demo.webm" type="video/webm" />
-        Your browser does not support WebM playback. Open <code>assets/hydra-real-demo.webm</code> directly.
-      </video>
+      <p class="lead">
+        This is evidence for that task and revision. The run used the main model with
+        reflex disabled; it does not measure System 1 speed or comparative model quality.
+      </p>
+      <div class="links">
+        <a href="https://github.com/Tcuzzo/HydraAgent_public/actions/runs/45879019418">VM Run and Receipts</a>
+        <a href="https://github.com/Tcuzzo/HydraAgent_public/blob/dd86bbbf440a50c35d6c0e1be5d9501868340bd1/tools/verify_live_model.py">Verification Source</a>
+      </div>
     </section>
 
-    <section class="panel" aria-label="Public custom agent roster">
-      <h2>Public Role Slots via AGENT_ROSTER.json</h2>
+    <section class="panel" aria-label="Configurable model roles">
+      <h2>Planner, Doer, and Auditor</h2>
       <p class="lead">
-        HydraAgent Public never hardcodes private operator names or private LAN topology.
-        Customize your local team names and endpoints in <code>AGENT_ROSTER.json</code>:
+        Configure model roles in your project's <code>.hydraAgent/hydra.yaml</code>.
+        The routing defaults live in <code>hydra/model_routing.yaml</code>;
+        provider endpoints and model choices come from your setup files or environment.
+        Run <code>hydra roles</code> from that project to inspect the resolved configuration.
       </p>
       <div class="grid">
         <div class="card">
-          <strong>Slot 01 · Planner</strong>
-          <p>Architecture decomposition, risk framing, and bounded execution plans.</p>
+          <strong>Planner</strong>
+          <p>Uses the configured planner route to propose the work.</p>
         </div>
         <div class="card">
-          <strong>Slot 02 · Deep Builder</strong>
-          <p>Parallel code edits behind path confinement and real failing-test-first proof.</p>
+          <strong>Doer</strong>
+          <p>Uses the configured coding route for the requested changes.</p>
         </div>
         <div class="card">
-          <strong>Slot 03 · Blind Grader</strong>
-          <p>Independent verification seat running sniper tests and inspecting side effects.</p>
-        </div>
-        <div class="card">
-          <strong>Slot 04 · Local Ops</strong>
-          <p>Read-only diagnostics, dependency CVE checks, and operator-approved shell commands.</p>
+          <strong>Auditor</strong>
+          <p>Uses the configured grading route. A separate role label alone does not establish independent review.</p>
         </div>
       </div>
-      <pre>{
-  "version": 1,
-  "network_example": "http://192.0.2.10:11434",
-  "slots": [
-    { "role": "planner", "display_name": "Architect", "tier": "reasoning" },
-    { "role": "builder", "display_name": "Hydra Builder", "tier": "coding" },
-    { "role": "grader", "display_name": "Independent Auditor", "tier": "judge" },
-    { "role": "ops", "display_name": "Field Ops", "tier": "fast" }
-  ]
-}</pre>
+      <pre>agentic:
+  roles:
+    planner:
+      route: planner
+    doer:
+      route: doer
+    auditor:
+      route: independent_auditor</pre>
     </section>
   </main>
 </body>

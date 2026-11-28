@@ -9,13 +9,13 @@ Hydra is a coding agent for your terminal. Give it a repository and a goal. It c
 Python 3.11+ · Linux, macOS, Windows · [MIT](LICENSE.md)
 
 
-> **4K True-Black Showcase:** [`docs/4K_BLACK_SHOWCASE.html`](docs/4K_BLACK_SHOWCASE.html) · **Real Recorded CLI Demo:** [`assets/hydra-real-demo.webm`](assets/hydra-real-demo.webm) · **Docs:** [tcuzzo.github.io](https://tcuzzo.github.io/)
+> **True-Black Showcase:** [`docs/4K_BLACK_SHOWCASE.html`](docs/4K_BLACK_SHOWCASE.html) · **VM verification:** [real-model run and receipts](https://github.com/Tcuzzo/HydraAgent_public/actions/runs/45879019418) · **Docs:** [backsaios.io](https://backsaios.io/)
 
-## Real Recorded Demo & 4K True-Black Showcase
+## VM Verification & True-Black Showcase
 
-- **Live terminal clip (no mocks):** [`assets/hydra-real-demo.webm`](assets/hydra-real-demo.webm) captures real local executions of `hydra --version`, `hydra self-audit`, `hydra tools`, and `hydra skills list` with RFC5737 sanitized hosts (`192.0.2.10`).
-- **4K True-Black HTML showcase:** open [`docs/4K_BLACK_SHOWCASE.html`](docs/4K_BLACK_SHOWCASE.html) locally in any browser (pure `#000000` matte canvas, lazy-loaded WebM video, reduced-motion safe).
-- **Custom agent naming (`AGENT_ROSTER.json`):** customize role-slot display names locally without hardcoding private topology or secrets.
+- **Real-model VM check:** [the November 26, 2026 run](https://github.com/Tcuzzo/HydraAgent_public/actions/runs/45879019418) installed a wheel at revision `dd86bbbf440a50c35d6c0e1be5d9501868340bd1`, used Qwen3 4B to write and read one file, and verified undo from a separate CLI process. Its downloadable receipts bind the model, package hashes, tool results, and file bytes. This is one task with reflex disabled, not a System 1 benchmark.
+- **True-Black HTML showcase:** open [`docs/4K_BLACK_SHOWCASE.html`](docs/4K_BLACK_SHOWCASE.html) locally in a browser for the verification scope and supported role configuration.
+- **Model roles:** choose the planner, doer, and auditor through `.hydraAgent/hydra.yaml` and inspect the resolved configuration with `hydra roles`. See [role configuration](docs/VM-INSTALL.md#restart-configuration-and-recovery).
 
 ## What Hydra is
 
