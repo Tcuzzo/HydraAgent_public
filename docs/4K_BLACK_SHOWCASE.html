@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HydraAgent Public — 4K True-Black Showcase</title>
+  <style>
+    :root {
+      --canvas: #000000;
+      --surface: #05080b;
+      --cyan: #00d4ff;
+      --cyan-soft: #79e3e5;
+      --crimson: #ff2a5f;
+      --amber: #efc17a;
+      --ink: #eef4f7;
+      --muted: #8ea3b0;
+      --line: rgba(0, 212, 255, 0.18);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background-color: #000000;
+      background-image:
+        linear-gradient(rgba(0, 212, 255, 0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 212, 255, 0.06) 1px, transparent 1px);
+      background-size: 36px 36px;
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+    .wrap {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 2.5rem 1.25rem 4rem;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.25rem 0.7rem;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 42, 95, 0.45);
+      background: #05080b;
+      color: var(--crimson);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 1rem 0 0.5rem;
+      font-size: clamp(2.1rem, 5vw, 3.6rem);
+      letter-spacing: -0.03em;
+      line-height: 1.05;
+    }
+    .accent-cyan { color: var(--cyan); }
+    .accent-crimson { color: var(--crimson); }
+    .lead {
+      max-width: 68ch;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+    .panel {
+      margin-top: 2rem;
+      padding: 1.25rem;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .panel h2 {
+      margin: 0 0 0.75rem;
+      font-size: 1.15rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--cyan-soft);
+    }
+    video {
+      display: block;
+      width: 100%;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 42, 95, 0.35);
+      background: #000000;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 0.9rem;
+      margin-top: 1rem;
+    }
+    .card {
+      padding: 0.9rem 1rem;
+      border-radius: 6px;
+      border: 1px solid rgba(0, 212, 255, 0.14);
+      background: #000000;
+    }
+    .card strong {
+      display: block;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: var(--amber);
+      font-size: 0.85rem;
+      margin-bottom: 0.25rem;
+    }
+    .card p {
+      margin: 0;
+      font-size: 0.86rem;
+      color: #c7d6df;
+    }
+    pre {
+      margin: 0.75rem 0 0;
+      padding: 0.9rem 1rem;
+      overflow-x: auto;
+      border-radius: 6px;
+      border: 1px solid rgba(0, 212, 255, 0.18);
+      background: #000000;
+      color: var(--cyan-soft);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.82rem;
+    }
+    .links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-top: 1.5rem;
+    }
+    .links a {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.55rem 0.95rem;
+      border-radius: 4px;
+      border: 1px solid var(--line);
+      background: #000000;
+      color: var(--cyan-soft);
+      text-decoration: none;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .links a:hover {
+      border-color: var(--crimson);
+      color: #ffffff;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <span class="badge">Hydra 3-Twins · 4K True-Black OLED Edition</span>
+    <h1><span class="accent-cyan">HydraAgent</span> <span class="accent-crimson">Public</span></h1>
+    <p class="lead">
+      A local-first, operator-owned coding and operations agent engineered for real terminals,
+      explicit approval gates, and zero fake telemetry. Built in the open under MIT license.
+    </p>
+
+    <div class="links">
+      <a href="https://github.com/Tcuzzo/HydraAgent_public">GitHub · HydraAgent_public</a>
+      <a href="https://github.com/Tcuzzo/B.A.C..K.S-AI">B.A.C.K.S AIOS</a>
+      <a href="https://tcuzzo.github.io/">Cuzzo Lab Docs</a>
+    </div>
+
+    <section class="panel" aria-label="Real recorded terminal demo">
+      <h2>Real Recorded CLI Session (No Mocks)</h2>
+      <p class="lead">
+        Recorded directly from real local executions of <code>hydra --version</code>,
+        <code>hydra self-audit</code>, <code>hydra tools</code>, and <code>hydra skills list</code>
+        with RFC5737 placeholder host hygiene (<code>192.0.2.10</code>).
+      </p>
+      <video controls preload="none" width="1280" height="720" aria-label="HydraAgent Public real CLI recording">
+        <source src="../assets/hydra-real-demo.webm" type="video/webm" />
+        Your browser does not support WebM playback. Open <code>assets/hydra-real-demo.webm</code> directly.
+      </video>
+    </section>
+
+    <section class="panel" aria-label="Public custom agent roster">
+      <h2>Public Role Slots via AGENT_ROSTER.json</h2>
+      <p class="lead">
+        HydraAgent Public never hardcodes private operator names or private LAN topology.
+        Customize your local team names and endpoints in <code>AGENT_ROSTER.json</code>:
+      </p>
+      <div class="grid">
+        <div class="card">
+          <strong>Slot 01 · Planner</strong>
+          <p>Architecture decomposition, risk framing, and bounded execution plans.</p>
+        </div>
+        <div class="card">
+          <strong>Slot 02 · Deep Builder</strong>
+          <p>Parallel code edits behind path confinement and real failing-test-first proof.</p>
+        </div>
+        <div class="card">
+          <strong>Slot 03 · Blind Grader</strong>
+          <p>Independent verification seat running sniper tests and inspecting side effects.</p>
+        </div>
+        <div class="card">
+          <strong>Slot 04 · Local Ops</strong>
+          <p>Read-only diagnostics, dependency CVE checks, and operator-approved shell commands.</p>
+        </div>
+      </div>
+      <pre>{
+  "version": 1,
+  "network_example": "http://192.0.2.10:11434",
+  "slots": [
+    { "role": "planner", "display_name": "Architect", "tier": "reasoning" },
+    { "role": "builder", "display_name": "Hydra Builder", "tier": "coding" },
+    { "role": "grader", "display_name": "Independent Auditor", "tier": "judge" },
+    { "role": "ops", "display_name": "Field Ops", "tier": "fast" }
+  ]
+}</pre>
+    </section>
+  </main>
+</body>
+</html>

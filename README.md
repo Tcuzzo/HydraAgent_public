@@ -8,6 +8,15 @@ Hydra is a coding agent for your terminal. Give it a repository and a goal. It c
 
 Python 3.11+ · Linux, macOS, Windows · [MIT](LICENSE.md)
 
+
+> **4K True-Black Showcase:** [`docs/4K_BLACK_SHOWCASE.html`](docs/4K_BLACK_SHOWCASE.html) · **Real Recorded CLI Demo:** [`assets/hydra-real-demo.webm`](assets/hydra-real-demo.webm) · **Docs:** [tcuzzo.github.io](https://tcuzzo.github.io/)
+
+## Real Recorded Demo & 4K True-Black Showcase
+
+- **Live terminal clip (no mocks):** [`assets/hydra-real-demo.webm`](assets/hydra-real-demo.webm) captures real local executions of `hydra --version`, `hydra self-audit`, `hydra tools`, and `hydra skills list` with RFC5737 sanitized hosts (`192.0.2.10`).
+- **4K True-Black HTML showcase:** open [`docs/4K_BLACK_SHOWCASE.html`](docs/4K_BLACK_SHOWCASE.html) locally in any browser (pure `#000000` matte canvas, lazy-loaded WebM video, reduced-motion safe).
+- **Custom agent naming (`AGENT_ROSTER.json`):** customize role-slot display names locally without hardcoding private topology or secrets.
+
 ## What Hydra is
 
 - Explores a codebase, makes the change you asked for, and runs the checks you approve.
